@@ -1,6 +1,6 @@
 #!/bin/bash
 # Выкладывает плагин kb «база в коробке» в магазин.
-# 1) упаковщик исходника (kb-plugin/scripts/pack-boxed.py, папка уровнем выше магазина) собирает копию
+# 1) упаковщик из папки разработки (~/Code/dev-plugins/kb/scripts/pack-boxed.py; другой путь — KB_SRC) собирает копию
 #    из готовой базы во временную папку;
 # 2) копия переносится в claude-code/kb; README.md магазина (инструкция для пользователя)
 #    не затирается.
@@ -9,7 +9,7 @@
 #   пример: scripts/sync-kb.sh ~/.kb/tcr --title "Теория каст и ролей" --example "Как перейти из одной касты в другую?"
 set -euo pipefail
 
-SRC="${KB_SRC:-$(cd "$(dirname "$0")/../.." && pwd)}"
+SRC="${KB_SRC:-$HOME/Code/dev-plugins/kb}"
 DST="$(cd "$(dirname "$0")/.." && pwd)/claude-code/kb"
 BASE="${1:?нужна папка собранной базы, например ~/.kb/tcr}"; shift
 
