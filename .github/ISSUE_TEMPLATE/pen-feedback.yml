@@ -1,0 +1,28 @@
+name: "pen: idea, bug or wish"
+description: Suggest what to add, improve, change or remove in the pen plugin
+title: "[pen] "
+labels: ["pen", "feedback"]
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is it?
+      options:
+        - Idea / new feature
+        - Something works badly
+        - Something should be removed
+        - Question
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: What happened or what you want. Any language is fine.
+    validations:
+      required: true
+  - type: textarea
+    id: example
+    attributes:
+      label: Example (optional)
+      description: A fragment of the source text and what pen returned. Remove anything private.

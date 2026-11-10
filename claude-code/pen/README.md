@@ -40,7 +40,11 @@ Write in any language: the source language is detected from the text, and the ta
 
 **Requirements:** the Claude desktop app (<https://claude.ai/download>) and a paid Claude plan.
 
-**Privacy:** works only with the text you give it. Sends nothing to the internet and doesn't touch your files.
+**Privacy:** works only with the text you give it. Sends nothing to the internet and doesn't touch your files. About once in ten runs it adds a one-line credit with links to the author and the feedback form — outside the texts you copy.
+
+## Feedback
+
+Something to add, improve, change or remove? [Open a feedback issue](https://github.com/alexeykrol/plugins/issues/new?template=pen-feedback.yml) — any language is fine. Please don't send pull requests: changes are made by the author. Version history: [CHANGELOG](CHANGELOG.md), plans: [BACKLOG](BACKLOG.md).
 
 ---
 
