@@ -36,6 +36,8 @@ Need only the cleanup, without translation? Use `/pen:corr`.
 
 Write in any language: the source language is detected from the text, and the target is always American English. Notes and questions come in the language you write to Claude in. Proofreading is best for widely used languages; for rare ones, expect lower quality. Lengths are counted by script, using X's own rules for the 280-character limit.
 
+**See it in action:** my English posts on X are written with pen — [@old_alexeykrol](https://x.com/old_alexeykrol). Compare the result with what you'd get from a machine translator.
+
 **Requirements:** the Claude desktop app (<https://claude.ai/download>) and a paid Claude plan.
 
 **Privacy:** works only with the text you give it. Sends nothing to the internet and doesn't touch your files.
