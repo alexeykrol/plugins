@@ -1,0 +1,19 @@
+[project]
+name = "kb-plugin"
+version = "0.2.0"
+description = "kb: папка документов → база знаний SQLite → MCP для любимого чата (бухгалтерия плагина)"
+requires-python = ">=3.9"  # /usr/bin/python3 на Mac из коробки — 3.9.6
+dependencies = []
+
+[project.optional-dependencies]
+# Единственная внешняя зависимость — опционально, для PDF (SPEC §6, S10).
+# В MVP не устанавливается плагином: используется, если уже есть в окружении (SD .venv: 6.13.2).
+# Пин и /vet-deps — этап Э5.
+pdf = ["pypdf==6.13.2"]
+
+[project.scripts]
+kbtool = "kbtool.cli:main"
+kb-mcp = "kb_mcp.server:main"
+
+[tool.setuptools]
+packages = ["kbtool", "kb_mcp"]

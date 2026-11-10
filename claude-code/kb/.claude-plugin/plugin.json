@@ -1,0 +1,7 @@
+{
+  "name": "kb",
+  "version": "0.2.0",
+  "description": "Папка документов → размеченная база знаний (SQLite: FTS5 + понятия + граф связей + решения пользователя) → чат отвечает с опорой на неё. MVP.",
+  "author": {"name": "Alexey Krol"},
+  "keywords": ["knowledge-base", "sqlite", "mcp", "documents"]
+}

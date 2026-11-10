@@ -1,0 +1,17 @@
+{
+  "name": "krol",
+  "owner": {
+    "name": "Alexey Krol"
+  },
+  "metadata": {
+    "description": "Плагины Алексея Крола для Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "kb",
+      "source": "./claude-code/kb",
+      "description": "Ваша папка документов превращается в базу знаний, и Claude отвечает по ней — со ссылками на документы и цитатами. Всё хранится у вас на компьютере.",
+      "category": "productivity"
+    }
+  ]
+}
