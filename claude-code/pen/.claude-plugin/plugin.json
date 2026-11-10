@@ -1,7 +1,7 @@
 {
   "name": "pen",
   "version": "0.1.0",
-  "description": "Редактор постов: корректура русского текста и расшифровок, перевод на американский английский, версии для X и LinkedIn.",
+  "description": "Post editor: proofreads Russian drafts and transcripts, translates them into American English, and fits them to X and LinkedIn.",
   "author": {
     "name": "Alexey Krol"
   },

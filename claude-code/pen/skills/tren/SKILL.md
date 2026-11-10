@@ -1,46 +1,46 @@
 ---
 name: tren
-description: Turns a Russian post or transcript into three ready-to-paste texts — a proofread Russian version, a full American English translation for X, and a LinkedIn-length English version. Use when the user says "/tren", "переведи на американский", "переведи для LinkedIn", "сделай английскую версию поста", or pastes a Russian post asking for English.
+description: Turns a Russian post or transcript into three ready-to-paste texts — a proofread Russian version, a full American English translation for X, and a LinkedIn-length English version. Use when the user says "/tren", "переведи на американский", "переведи для LinkedIn", "сделай английскую версию поста", "translate this post", or pastes a Russian post asking for English.
 ---
 
-# tren — русский пост → RU, X и LinkedIn
+# tren — Russian post → RU, X and LinkedIn
 
-Вход: русский текст (часто расшифровка), вставленный в сообщение или приложенный файлом.
+Input: Russian text (often a transcript), pasted into the message or attached as a file.
 
-Работать строго по этапам. Промежуточные версии этапов 2–3 не показывать.
+Work strictly stage by stage. Do not show the intermediate results of stages 2–3.
 
-## Этап 1. Корректура (артефакт 1: RU)
-Применить правила скилла corr (`${CLAUDE_PLUGIN_ROOT}/skills/corr/SKILL.md`). Результат — исправленная русская версия, она же основа для перевода.
+## Stage 1. Proofreading (artifact 1: RU)
+Apply the rules of the corr skill (`${CLAUDE_PLUGIN_ROOT}/skills/corr/SKILL.md`). The result is the corrected Russian version and the source for translation.
 
-## Этап 2. Перевод смысла
-- Цель: точная передача смысла, а не стиль. Каждое утверждение, условие, оговорка и число переносятся.
-- Идиомы переводить по значению, не дословно («как Тузик грелку» → «hands down»).
-- Если фраза неоднозначна, выбрать наиболее вероятное толкование и занести его в список решений.
+## Stage 2. Meaning-accurate translation
+- Goal: transfer the meaning exactly, not the style. Every claim, condition, caveat, and number carries over.
+- Translate idioms by meaning, not word for word («как Тузик грелку» → "hands down").
+- If a phrase is ambiguous, pick the most likely reading and record it in the notes.
 
-## Этап 3. Американизация (артефакт 2: X)
-- Короткие предложения, активный залог, прямой разговорный тон, простые слова.
-- Запрещено: добавлять утверждения, смягчать или усиливать тезисы, менять категоричность автора, добавлять корпоративный глянец (leverage, game-changer, unlock), добавлять эмодзи и хэштеги, которых не было.
-- Обязательная проверка: построчно сверить с этапом 2. Каждое утверждение на месте, его сила та же. Потерянное или сдвинутое вернуть.
-- Версия рассчитана на длинный пост в X (Premium). Тред на 280 знаков делать только по запросу.
+## Stage 3. Americanization (artifact 2: X)
+- Short sentences, active voice, direct conversational tone, plain words.
+- Forbidden: adding claims, softening or strengthening theses, changing how categorical the author is, adding corporate gloss (leverage, game-changer, unlock), adding emoji or hashtags that were not in the source.
+- Mandatory check at the end: compare line by line with the stage 2 result. Every claim is present and keeps its strength. Restore anything lost or shifted.
+- This version targets a long post on X (Premium). Build a 280-character thread only on request.
 
-## Этап 4. LinkedIn (артефакт 3)
-- Лимит 3000 знаков с пробелами и переводами строк. Цель не больше 2800, чтобы оставить запас под хэштеги.
-- Если версия X уже влезает, LinkedIn совпадает с ней. Не резать без необходимости.
-- Если не влезает, сокращать по приоритету: (1) связки, повторы, вводные; (2) примеры и иллюстрации; (3) тезисы, только в крайнем случае. Удалённый тезис явно назвать в списке решений.
-- Первые ~200 знаков видны до «see more». Если первая строка слабый крючок, предложить альтернативу в списке решений, текст самовольно не менять.
+## Stage 4. LinkedIn (artifact 3)
+- Limit: 3,000 characters including spaces and line breaks. Target 2,800 or less to leave room for hashtags.
+- If the X version already fits, the LinkedIn version is identical. Do not cut without need.
+- If it does not fit, cut by priority: (1) connectives, repetitions, filler; (2) examples and illustrations; (3) theses, only as a last resort. Name any removed thesis explicitly in the notes.
+- About the first 200 characters show before "see more". If the opening line is a weak hook, suggest an alternative in the notes; do not change the text on your own.
 
-## Подсчёт длины
-Считать скриптом (python len() или wc -m) для всех трёх текстов, не на глаз.
+## Length
+Count all three texts with a script (python `len()` or `wc -m`), never by eye.
 
-## Формат вывода
-Чат превращает строки «1. ...» в HTML-список, и при копировании в соцсети цифры пропадают. Поэтому:
-- Каждый текст выдаётся в отдельном блоке ``` (plain text), копируется кнопкой Copy.
-- Внутри блоков никакого markdown (**, #, -, >). Нумерация пишется текстом «1.», между абзацами и пунктами пустая строка.
+## Output format
+Chat renders lines like "1. ..." as an HTML list, and the numbers are lost when the text is copied into social networks. Therefore:
+- Deliver each text in its own ``` plain-text block, so it is copied with the Copy button.
+- No markdown inside the blocks (**, #, -, >). Write numbering as plain text "1.", with a blank line between paragraphs and between points.
 
-Порядок ответа:
-1. «RU — N знаков», блок с текстом.
-2. «X — N знаков», блок с текстом.
-3. «LinkedIn — N знаков», блок с текстом (или одна строка «совпадает с X», если текст тот же).
-4. 2–6 строк решений: что убрано при корректуре, нетривиальные переводы идиом и неоднозначностей, что сокращено для LinkedIn, альтернативный крючок (если есть).
+Reply in this order:
+1. "RU — N знаков", text block.
+2. "X — N characters", text block.
+3. "LinkedIn — N characters", text block (or one line "same as X" if identical).
+4. 2–6 short lines of notes in the user's language: what was removed in proofreading, non-trivial translations of idioms and ambiguities, what was cut for LinkedIn, an alternative hook (if any).
 
-Без вступлений и пересказа этапов.
+No preamble and no recap of the stages.

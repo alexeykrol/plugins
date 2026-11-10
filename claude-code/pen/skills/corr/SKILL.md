@@ -1,35 +1,35 @@
 ---
 name: corr
-description: Proofreads a Russian draft or speech transcript into a clean written post without changing its meaning. Use when the user says "/corr", "откорректируй", "вычитай", "поправь расшифровку", "сделай из расшифровки текст", or pastes dictated/transcribed Russian text for cleanup. Also used as stage 1 of /tren.
+description: Proofreads a Russian draft or speech transcript into a clean written post without changing its meaning. Use when the user says "/corr", "откорректируй", "вычитай", "поправь расшифровку", "сделай из расшифровки текст", "proofread this", or pastes dictated/transcribed Russian text for cleanup. Also serves as stage 1 of /tren.
 ---
 
-# corr — корректура русского текста или расшифровки
+# corr — proofread a Russian draft or transcript
 
-Вход: русский текст, часто расшифровка устной речи, вставленный в сообщение или приложенный файлом.
+Input: Russian text, often a transcript of speech, pasted into the message or attached as a file.
 
-## Очистка
-- Отбросить мусор копипаста: Facebook, Shared post, No comments, Be the first to comment, кнопки, счётчики, подписи соцсетей.
+## Clean the input
+Drop copy-paste debris: "Facebook", "Shared post", "No comments", "Be the first to comment", buttons, counters, social-network captions.
 
-## Правила корректуры
-- Превратить устную речь в письменную: убрать слова-паразиты и разговорный сор («то есть», «да?», «вот», «как бы», «вот эта всякая фигня»), повторы, оборванные и перезапущенные фразы.
-- Исправить орфографию, пунктуацию, согласование, ошибки распознавания речи.
-- Не менять: смысл, тезисы, порядок аргументов, числа, авторскую структуру (нумерацию пунктов), авторские акценты (КАПС, эмодзи), категоричность утверждений.
-- Сохранять авторский голос. Грубоватые или образные обороты («как Тузик грелку») оставлять, если они несут интонацию. Убирать только то, что ничего не добавляет.
-- Не добавлять собственных мыслей, примеров, выводов, заголовков, хэштегов.
-- Если фраза в расшифровке неоднозначна, выбрать наиболее вероятное толкование и отметить его в списке правок.
+## Proofreading rules
+- Turn speech into written text: remove filler and verbal clutter («то есть», «да?», «вот», «как бы», «вот эта всякая фигня»), repetitions, broken and restarted sentences.
+- Fix spelling, punctuation, agreement, and speech-recognition errors.
+- Never change: meaning, theses, order of arguments, numbers, the author's structure (numbered points), the author's emphasis (CAPS, emoji), or how strongly a claim is made.
+- Preserve the author's voice. Keep colloquial or figurative phrases («как Тузик грелку») when they carry tone. Remove only what adds nothing.
+- Add nothing of your own: no thoughts, examples, conclusions, headings, or hashtags.
+- If a phrase in the transcript is ambiguous, pick the most likely reading and note it in the edit list.
 
-## Подсчёт длины
-Считать скриптом (python len() или wc -m), не на глаз.
+## Length
+Count characters with a script (python `len()` or `wc -m`), never by eye.
 
-## Формат вывода
-Чат превращает строки «1. ...» в HTML-список, и при копировании в соцсети цифры пропадают. Поэтому:
-- Текст выдаётся в блоке ``` (plain text), копируется кнопкой Copy.
-- Внутри блока никакого markdown (**, #, -, >). Нумерация пишется текстом «1.», между абзацами и пунктами пустая строка.
+## Output format
+Chat renders lines like "1. ..." as an HTML list, and the numbers are lost when the text is copied into social networks. Therefore:
+- Deliver the text inside a ``` plain-text block, so it is copied with the Copy button.
+- No markdown inside the block (**, #, -, >). Write numbering as plain text "1.", with a blank line between paragraphs and between points.
 
-Порядок ответа:
-1. «RU — N знаков», затем блок с текстом.
-2. 2–5 строк: что убрано, какие неоднозначности как истолкованы.
+Reply in this order:
+1. "RU — N знаков", then the text block.
+2. 2–5 short lines in the user's language: what was removed, how ambiguities were resolved.
 
-Без вступлений.
+No preamble.
 
-При вызове из /tren этот вывод становится первым артефактом, отдельный список правок не нужен: правки входят в общий список решений /tren.
+When run as stage 1 of /tren, this output becomes the first artifact; its edit notes go into /tren's combined notes instead of a separate list.
