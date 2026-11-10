@@ -4,13 +4,15 @@
 
 A Claude plugin that gets posts ready for publishing. It currently does two things:
 
-- **`/pen:corr`** — proofreads a Russian draft or a voice-note transcript. Removes filler words, repetitions and speech-recognition errors and turns speech into written text. Meaning, structure, numbering and the author's voice stay intact.
+- **`/pen:corr`** — proofreads a draft or a voice-note transcript in any language, keeping it in that language. Removes filler words, repetitions and speech-recognition errors and turns speech into written text. Meaning, structure, numbering and the author's voice stay intact.
 - **`/pen:tren`** — the full pipeline. Returns three ready-to-paste texts:
-  1. **RU** — the proofread Russian version;
+  1. **Source** — the proofread version in the original language;
   2. **X** — a full American English translation (long post, X Premium);
   3. **LinkedIn** — the English version fitted to the 3,000-character limit.
 
 Translation runs in stages: first an exact transfer of meaning, then American style with a line-by-line check that no claim was lost or weakened, then the LinkedIn cut — connectives and repetitions first, theses last.
+
+Write in any language: the source language is detected from the text, and the target is always American English. Proofreading is best for widely used languages; for rare ones, expect lower quality.
 
 Every text comes as a plain-text block with a **Copy** button, so numbering and line breaks survive pasting into LinkedIn and X. Lengths are counted by script, not estimated. Notes and questions come in the language you write in.
 

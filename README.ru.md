@@ -8,7 +8,7 @@
 | Плагин | Для чего | Где работает | Инструкция |
 |---|---|---|---|
 | **kb** — книга «Теория каст и ролей» как база знаний | Claude отвечает по книге: глава, цитата, «в книге этого нет» | Chat, Cowork и Code приложения Claude, терминал, VS Code | [claude-code/kb](claude-code/kb/README.md) |
-| **pen** — редактор постов | Корректура русского текста и расшифровок, перевод на американский английский, версии для X и LinkedIn | Chat, Cowork и Code приложения Claude, терминал, VS Code | [claude-code/pen](claude-code/pen/README.ru.md) |
+| **pen** — редактор постов | Корректура текста и расшифровок на любом языке, перевод на американский английский, версии для X и LinkedIn | Chat, Cowork и Code приложения Claude, терминал, VS Code | [claude-code/pen](claude-code/pen/README.ru.md) |
 
 ## Разделы
 

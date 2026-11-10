@@ -7,7 +7,7 @@ Plugins for AI assistants. Each plugin lives in its own folder with its own inst
 | Plugin | What it does | Where it works | Guide |
 |---|---|---|---|
 | **kb** — the book "Theory of Castes and Roles" as a knowledge base | Claude answers from the book: chapter, quote, or "the book doesn't cover this" | Chat, Cowork and Code in the Claude app, terminal, VS Code | [claude-code/kb](claude-code/kb/README.md) |
-| **pen** — post editor | Proofreads Russian drafts and transcripts, translates them into American English, fits them to X and LinkedIn | Chat, Cowork and Code in the Claude app, terminal, VS Code | [claude-code/pen](claude-code/pen/README.md) |
+| **pen** — post editor | Proofreads drafts and transcripts in any language, translates them into American English, fits them to X and LinkedIn | Chat, Cowork and Code in the Claude app, terminal, VS Code | [claude-code/pen](claude-code/pen/README.md) |
 
 ## Sections
 

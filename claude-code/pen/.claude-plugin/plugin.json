@@ -1,7 +1,7 @@
 {
   "name": "pen",
-  "version": "0.1.0",
-  "description": "Post editor: proofreads Russian drafts and transcripts, translates them into American English, and fits them to X and LinkedIn.",
+  "version": "0.2.0",
+  "description": "Post editor: proofreads drafts and transcripts in any language, translates them into American English, and fits them to X and LinkedIn.",
   "author": {
     "name": "Alexey Krol"
   },
@@ -12,7 +12,7 @@
     "translation",
     "linkedin",
     "x",
-    "russian",
+    "multilingual",
     "english"
   ],
   "repository": "https://github.com/alexeykrol/plugins"
