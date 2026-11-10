@@ -9,13 +9,15 @@
 
 ## Разделы
 
-- [`claude-code/`](claude-code/) — плагины для Claude Code и вкладки Code в приложении Claude.
+- [`claude-code/`](claude-code/) — плагины для приложения Claude (Chat, Cowork, Code), терминала и VS Code.
 - [`codex/`](codex/) — плагины для Codex (пока пусто).
 - [`bots/`](bots/) — боты (пока пусто).
 
 ## Для того, кто ведёт этот репозиторий
 
-- Каталог магазина для Claude — `.claude-plugin/marketplace.json`, имя магазина `krol`.
+- Папка `.claude-plugin/` в корне — **не плагин, а каталог магазина** (список плагинов со
+  ссылками на их папки в `claude-code/`). Claude ищет каталог только в корне репозитория,
+  поэтому перенести его в `claude-code/` нельзя. Файл — `.claude-plugin/marketplace.json`, имя магазина `krol`.
   Пользователь подключает его так: `claude plugin marketplace add alexeykrol/plugins`, а
   ставит плагин так: `claude plugin install kb@krol`.
 - Плагины разрабатываются в своих рабочих репозиториях; сюда выкладываются только проверенные
