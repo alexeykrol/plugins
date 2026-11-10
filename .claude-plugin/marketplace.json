@@ -16,7 +16,7 @@
     {
       "name": "pen",
       "source": "./claude-code/pen",
-      "description": "Post editor: proofreads drafts and transcripts in any language, translates them into American English, and fits them to X and LinkedIn.",
+      "description": "Post editor for non-native English speakers: proofreads drafts and transcripts in any language, translates the meaning into American English, and delivers a thread-ready X version and a LinkedIn version within 3,000 characters.",
       "category": "productivity"
     }
   ]

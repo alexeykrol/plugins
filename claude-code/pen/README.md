@@ -2,31 +2,47 @@
 
 # pen — post editor
 
-A Claude plugin that gets posts ready for publishing. It currently does two things:
+**For people who think and write in their own language but need to be heard in English** — on X, LinkedIn and other social networks.
 
-- **`/pen:corr`** — proofreads a draft or a voice-note transcript in any language, keeping it in that language. Removes filler words, repetitions and speech-recognition errors and turns speech into written text. Meaning, structure, numbering and the author's voice stay intact.
-- **`/pen:tren`** — the full pipeline. Returns three ready-to-paste texts:
-  1. **Source** — the proofread version in the original language;
-  2. **X** — a full American English translation (long post, X Premium);
-  3. **LinkedIn** — the English version fitted to the 3,000-character limit.
+## Who it's for
 
-Translation runs in stages: first an exact transfer of meaning, then American style with a line-by-line check that no claim was lost or weakened, then the LinkedIn cut — connectives and repetitions first, theses last.
+Experts, founders, creators and professionals whose native language isn't English. You write best in your own language: that's where your ideas are sharp. But your audience, clients and opportunities are on English-speaking X and LinkedIn.
 
-Write in any language: the source language is detected from the text, and the target is always American English. Proofreading is best for widely used languages; for rare ones, expect lower quality.
+## The problems it solves
 
-Every text comes as a plain-text block with a **Copy** button, so numbering and line breaks survive pasting into LinkedIn and X. Lengths are counted by script, not estimated. Notes and questions come in the language you write in.
+**1. Translation that keeps the meaning.** Machine translation produces English that is technically correct and still says something else: claims get softened, idioms turn into nonsense, your voice disappears. pen translates the meaning first, then rewrites it in natural American English, then checks line by line that no claim was lost or weakened.
 
-**How to use:** type `/pen:tren` (or `/pen:corr`) and paste the text, or attach a file. Plain words work too: "translate this post into American English for LinkedIn".
+**2. Raw drafts and voice notes.** Many people dictate their thoughts. A transcript is full of filler, repetitions and recognition errors. pen first turns it into a clean written post in your own language, which you can publish as is.
+
+**3. LinkedIn's 3,000-character limit.** pen fits the text into the limit by cutting filler and repetitions first and your ideas last. If the text can't fit without losing an idea, it splits it into Part 1/2, Part 2/2 instead of throwing content away. You also get the full text, so you can publish it as a LinkedIn article instead.
+
+**4. X without Premium.** A free X account limits a post to 280 characters. pen gives you one English text already divided into numbered blocks of up to 280 characters: with Premium, paste it whole; without it, post it block by block as a thread. Blocks follow your own numbered points, so the thread reads as a logical sequence.
+
+**5. Pasting without broken formatting.** Text copied from a chat often loses its numbering. pen delivers every text as a plain-text block with a **Copy** button: numbering and line breaks survive pasting into LinkedIn and X.
+
+## What you get
+
+Write `/pen:tren` and paste your post (or attach a file). You get three texts:
+
+1. **Your language** — the proofread original, ready to publish for your native audience.
+2. **X** — the full American English version, split into thread blocks of up to 280 characters.
+3. **LinkedIn** — the English version within 3,000 characters (or in parts, if it can't fit without losing an idea).
+
+Plus a few notes: what was cleaned up, how tricky idioms were translated, what was shortened, and a stronger opening line if yours is weak.
+
+Need only the cleanup, without translation? Use `/pen:corr`.
+
+Write in any language: the source language is detected from the text, and the target is always American English. Notes and questions come in the language you write to Claude in. Proofreading is best for widely used languages; for rare ones, expect lower quality. Lengths are counted by script, using X's own rules for the 280-character limit.
 
 **Requirements:** the Claude desktop app (<https://claude.ai/download>) and a paid Claude plan.
 
-**What it does and doesn't do:** works only with the text you give it. Sends nothing to the internet and doesn't touch your files.
+**Privacy:** works only with the text you give it. Sends nothing to the internet and doesn't touch your files.
 
 ---
 
 ## Installation
 
-Marketplace: `alexeykrol/plugins` (same as the other plugins).
+Marketplace: `alexeykrol/plugins`.
 
 > **Don't ask Claude in chat to "run the install commands".** In chat Claude has its own temporary cloud computer: the plugin would be installed there and disappear after the conversation.
 
