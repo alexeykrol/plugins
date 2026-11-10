@@ -43,4 +43,7 @@ Reply in this order:
 3. "LinkedIn — N characters", text block (or one line "same as X" if identical).
 4. 2–6 short lines of notes in the user's language: what was removed in proofreading, non-trivial translations of idioms and ambiguities, what was cut for LinkedIn, an alternative hook (if any).
 
+## Language
+Write everything addressed to the user (notes, questions, errors, labels outside the text blocks) in the language the user writes in. The text blocks themselves follow the artifact rules above.
+
 No preamble and no recap of the stages.

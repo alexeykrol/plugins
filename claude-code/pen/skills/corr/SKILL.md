@@ -30,6 +30,9 @@ Reply in this order:
 1. "RU — N знаков", then the text block.
 2. 2–5 short lines in the user's language: what was removed, how ambiguities were resolved.
 
+## Language
+Write everything addressed to the user (notes, questions, errors, labels outside the text blocks) in the language the user writes in. The text blocks themselves follow the artifact rules above.
+
 No preamble.
 
 When run as stage 1 of /tren, this output becomes the first artifact; its edit notes go into /tren's combined notes instead of a separate list.

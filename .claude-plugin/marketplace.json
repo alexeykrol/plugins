@@ -4,7 +4,7 @@
     "name": "Alexey Krol"
   },
   "metadata": {
-    "description": "Плагины Алексея Крола для Claude Code"
+    "description": "Alexey Krol's plugins for Claude"
   },
   "plugins": [
     {
@@ -16,7 +16,7 @@
     {
       "name": "pen",
       "source": "./claude-code/pen",
-      "description": "Редактор постов: корректура русского текста и расшифровок, перевод на американский английский, версии для X и LinkedIn.",
+      "description": "Post editor: proofreads Russian drafts and transcripts, translates them into American English, and fits them to X and LinkedIn.",
       "category": "productivity"
     }
   ]

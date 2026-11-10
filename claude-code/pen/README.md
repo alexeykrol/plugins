@@ -1,64 +1,55 @@
-# pen — редактор постов
+[![English](https://img.shields.io/badge/lang-English-blue?style=for-the-badge)](README.md) [![Русский](https://img.shields.io/badge/lang-%D0%A0%D1%83%D1%81%D1%81%D0%BA%D0%B8%D0%B9-red?style=for-the-badge)](README.ru.md)
 
-Плагин для Claude, который готовит посты к публикации. Сейчас умеет две вещи:
+# pen — post editor
 
-- **`/pen:corr`** — корректура русского текста или расшифровки голосовой записи. Убирает
-  слова-паразиты, повторы, ошибки распознавания и превращает устную речь в письменный текст.
-  Смысл, структура, нумерация и авторский голос остаются как были.
-- **`/pen:tren`** — полный конвейер. Даёт три готовых текста:
-  1. **RU** — исправленная русская версия;
-  2. **X** — полный перевод на американский английский (длинный пост, X Premium);
-  3. **LinkedIn** — английская версия, вписанная в лимит 3000 знаков.
+A Claude plugin that gets posts ready for publishing. It currently does two things:
 
-Перевод идёт по этапам: сначала точная передача смысла, потом американский стиль со сверкой,
-что ни один тезис не потерялся и не ослаб, потом сокращение для LinkedIn — сначала связки и
-повторы, тезисы в последнюю очередь.
+- **`/pen:corr`** — proofreads a Russian draft or a voice-note transcript. Removes filler words, repetitions and speech-recognition errors and turns speech into written text. Meaning, structure, numbering and the author's voice stay intact.
+- **`/pen:tren`** — the full pipeline. Returns three ready-to-paste texts:
+  1. **RU** — the proofread Russian version;
+  2. **X** — a full American English translation (long post, X Premium);
+  3. **LinkedIn** — the English version fitted to the 3,000-character limit.
 
-Все тексты выдаются блоками простого текста с кнопкой **Copy**: нумерация и переносы строк
-сохраняются при вставке в LinkedIn и X. Длина считается скриптом, а не на глаз.
+Translation runs in stages: first an exact transfer of meaning, then American style with a line-by-line check that no claim was lost or weakened, then the LinkedIn cut — connectives and repetitions first, theses last.
 
-**Как пользоваться:** напишите `/pen:tren` (или `/pen:corr`) и вставьте текст — или приложите
-файл. Можно и словами: «переведи этот пост на американский для LinkedIn».
+Every text comes as a plain-text block with a **Copy** button, so numbering and line breaks survive pasting into LinkedIn and X. Lengths are counted by script, not estimated. Notes and questions come in the language you write in.
 
-**Что нужно:** приложение Claude для компьютера (<https://claude.ai/download>) и платная
-подписка Claude.
+**How to use:** type `/pen:tren` (or `/pen:corr`) and paste the text, or attach a file. Plain words work too: "translate this post into American English for LinkedIn".
 
-**Что плагин делает и чего не делает:** работает только с текстом, который вы ему дали. В
-интернет ничего не отправляет, ваших файлов не трогает.
+**Requirements:** the Claude desktop app (<https://claude.ai/download>) and a paid Claude plan.
+
+**What it does and doesn't do:** works only with the text you give it. Sends nothing to the internet and doesn't touch your files.
 
 ---
 
-## Установка
+## Installation
 
-Магазин тот же, что у других плагинов: `alexeykrol/plugins`.
+Marketplace: `alexeykrol/plugins` (same as the other plugins).
 
-> **Не просите Claude в чате «выполнить команды установки».** В чате у Claude свой временный
-> облачный компьютер: плагин встанет туда и пропадёт после разговора.
+> **Don't ask Claude in chat to "run the install commands".** In chat Claude has its own temporary cloud computer: the plugin would be installed there and disappear after the conversation.
 
-### Путь 1. Chat и Cowork
+### Option 1. Chat and Cowork
 
-1. В приложении Claude откройте меню слева → **Customize** (Настроить) → **Plugins** (Плагины).
-2. **Add** → **Add marketplace** (Добавить магазин), введите `alexeykrol/plugins`. Если магазин
-   уже добавлен — пропустите этот шаг.
-3. **Пока магазин закрытый:** приложение попросит подключить GitHub — согласитесь и дайте доступ
-   к репозиторию `alexeykrol/plugins`.
-4. В списке плагинов найдите **pen** и нажмите **Install** (Установить).
-5. Начните **новый разговор** и напишите `/pen:tren`, затем вставьте текст поста.
+1. In the Claude app, open the left menu → **Customize** → **Plugins**.
+2. **Add** → **Add marketplace**, enter `alexeykrol/plugins`. Skip this if the marketplace is already added.
+3. **While the marketplace is private:** the app will ask you to connect GitHub — agree and grant access to the `alexeykrol/plugins` repository.
+4. Find **pen** in the plugin list and click **Install**.
+5. Start a **new conversation**, type `/pen:tren`, and paste your post.
 
-### Путь 2. Code (вкладка Code в приложении, терминал, VS Code)
+### Option 2. Code (Code tab in the app, terminal, VS Code)
 
-Создавая сессию во вкладке Code, выберите запуск **на этом компьютере (Local)**, а не в облаке.
+When creating a session in the Code tab, choose to run **on this computer (Local)**, not in the cloud.
 
 ```
 /plugin marketplace add alexeykrol/plugins
 /plugin install pen@krol
 ```
 
-Или из терминала:
+Or from the terminal:
 
 ```
 claude plugin marketplace add alexeykrol/plugins
 claude plugin install pen@krol
 ```
 
-После установки перезапустите сессию.
+Restart the session after installing.
