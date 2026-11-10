@@ -4,17 +4,25 @@
   init ПАПКА → scan → extract → [titles → config-set categories] → batch-plan →
   batch-prompt bNN → (субагент) → markup-import bNN → vocab-candidates → markup-import (vocab-map) →
   edge-plan → edge-prompt eNN → (субагент) → markup-import eNN → build
-Запрос (скилл /kb-ask, MCP): ask · unit · concept · concepts · contradictions · verdict · miss · conflict
+Запрос (скилл /kb-ask, MCP): ask · unit · concept · concepts · contradictions · verdict · miss · conflict · info
+
+В упакованной «базе в коробке» модулей сборки нет — команды сборки тогда не показываются.
 """
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import sys
 from pathlib import Path
 
-from . import __version__, ingest, markup, query, store
-from .config import KbError, init_base, list_bases, load_yaml, resolve_base, write_private
+from . import __version__, query
+from .config import KbError, boxed_base, init_base, list_bases, load_yaml, resolve_base, write_private
+
+# Модули сборки есть в исходнике плагина и отсутствуют в упакованной «базе в коробке».
+HAS_BUILD = importlib.util.find_spec("kbtool.ingest") is not None
+BUILD_CMDS = {"init", "scan", "extract", "titles", "summary", "config-set", "batch-plan", "batch-prompt",
+              "markup-import", "vocab-candidates", "vocab-import", "edge-plan", "edge-prompt", "pending", "build"}
 
 SETTABLE = {"categories", "exclude", "include_forced", "notice_shown", "genres", "vocab_corridor"}
 
@@ -27,6 +35,7 @@ def _out(obj, as_json: bool, human=None) -> None:
 
 
 def _print_scan(r):
+    from . import ingest
     print(f"Корпус: {r['corpus']}")
     print(f"{'формат':10} {'файлов':>7} {'принято':>8} {'байт':>12}")
     for fmt, f in sorted(r["by_format"].items(), key=lambda x: -x[1]["files"]):
@@ -121,13 +130,23 @@ def _print_unit(d):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="kbtool", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    desc = __doc__ if HAS_BUILD else ("kbtool — поиск по готовой базе знаний плагина kb (только чтение базы; "
+                                      "решения пользователя — в $KB_HOME/<имя>/user). В сеть не ходит.")
+    p = argparse.ArgumentParser(prog="kbtool", description=desc, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--version", action="version", version=f"kbtool {__version__}")
     p.add_argument("--kb", help="slug базы (если баз несколько)")
     p.add_argument("--corpus", help="путь корпуса вместо slug")
     p.add_argument("--json", action="store_true", help="вывод JSON")
     sub = p.add_subparsers(dest="cmd")
-    sub.add_parser("list", help="базы в $KB_HOME")
+    sub.add_parser("list", help="базы: готовая база плагина и базы в $KB_HOME")
+    sub.add_parser("info", help="что за база, сколько записей, цела ли (для /kb-start)")
+    if HAS_BUILD:
+        _build_parsers(sub)
+    _query_parsers(sub)
+    return p
+
+
+def _build_parsers(sub) -> None:
     s = sub.add_parser("init", help="создать базу для папки документов")
     s.add_argument("path")
     s.add_argument("--slug", help="явное имя базы (демо: kb-demo); по умолчанию — из имени папки")
@@ -155,6 +174,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--save", action="store_true", help="записать в batches/<name>.prompt.md (0600) и напечатать путь")
     sub.add_parser("pending", help="единицы без разметки")
     sub.add_parser("build", help="собрать kb.sqlite (атомарно)")
+
+
+def _query_parsers(sub) -> None:
     sub.add_parser("status", help="статус прогонов (без текста документов)")
     s = sub.add_parser("ask", help="поиск по базе")
     s.add_argument("question")
@@ -178,7 +200,6 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--claim-kb", default="")
     s.add_argument("--claim-model", default="")
     s.add_argument("--resolution", default="", help="kb | model | both | pending")
-    return p
 
 
 def main(argv=None) -> int:
@@ -200,14 +221,47 @@ def _read_input(path: str) -> str:
 
 def _run(a) -> int:
     if a.cmd == "list":
-        _out([dict(slug=b.slug, corpus=b.config().get("corpus_path"), built=b.db.exists()) for b in list_bases()], True)
+        box = boxed_base()
+        rows = [dict(slug=box.slug, corpus=None, built=True, boxed=True, title=box.meta.get("title"))] if box else []
+        rows += [dict(slug=b.slug, corpus=b.config().get("corpus_path"), built=b.db.exists()) for b in list_bases()]
+        _out(rows, True)
         return 0
+    if a.cmd in BUILD_CMDS:
+        from . import ingest, markup, store  # noqa: F401 — только в исходнике плагина
+        return _run_build(a, ingest, markup, store)
+    base = resolve_base(a.kb, a.corpus)
+    j = a.json
+    if a.cmd == "info":
+        _out(query.info(base), True)
+    elif a.cmd == "status":
+        print(base.status.read_text(encoding="utf-8") if base.status.exists() else "{}")
+    elif a.cmd == "ask":
+        _out(query.search(base, a.question, a.n), j, _print_ask)
+    elif a.cmd == "unit":
+        _out(query.unit(base, a.id, a.full), j, _print_unit)
+    elif a.cmd == "concept":
+        _out(query.concept(base, a.name), True)
+    elif a.cmd == "concepts":
+        for c in query.concepts_all(base):
+            print(f"{c['concept']}: {c['units']} ед., {c['first']} → {c['last']} ({c['categories']})")
+    elif a.cmd == "contradictions":
+        _out(query.contradictions(base), True)
+    elif a.cmd == "verdict":
+        _out(query.set_verdict(base, a.id, a.verdict, a.note), True)
+    elif a.cmd == "miss":
+        _out(query.add_miss(base, a.question, a.found_id), True)
+    elif a.cmd == "conflict":
+        _out(query.conflict(base, a.unit_id, a.claim_kb, a.claim_model, a.resolution), True)
+    return 0
+
+
+def _run_build(a, ingest, markup, store) -> int:
     if a.cmd == "init":
         b = init_base(a.path, a.slug)
         _out(dict(slug=b.slug, root=str(b.root), corpus=b.config()["corpus_path"],
                   notice_shown=b.config().get("notice_shown")), True)
         return 0
-    base = resolve_base(a.kb, a.corpus)
+    base = resolve_base(a.kb, a.corpus, boxed=False)    # сборка — только для своих баз в $KB_HOME
     j = a.json
     if a.cmd == "scan":
         r = ingest.scan(base)
@@ -254,25 +308,6 @@ def _run(a) -> int:
             print(f"{u['id']}\t{u['chars']}\t{u['path']}")
     elif a.cmd == "build":
         _out(store.build(base), True)
-    elif a.cmd == "status":
-        print(base.status.read_text(encoding="utf-8") if base.status.exists() else "{}")
-    elif a.cmd == "ask":
-        _out(query.search(base, a.question, a.n), j, _print_ask)
-    elif a.cmd == "unit":
-        _out(query.unit(base, a.id, a.full), j, _print_unit)
-    elif a.cmd == "concept":
-        _out(query.concept(base, a.name), True)
-    elif a.cmd == "concepts":
-        for c in query.concepts_all(base):
-            print(f"{c['concept']}: {c['units']} ед., {c['first']} → {c['last']} ({c['categories']})")
-    elif a.cmd == "contradictions":
-        _out(query.contradictions(base), True)
-    elif a.cmd == "verdict":
-        _out(query.set_verdict(base, a.id, a.verdict, a.note), True)
-    elif a.cmd == "miss":
-        _out(query.add_miss(base, a.question, a.found_id), True)
-    elif a.cmd == "conflict":
-        _out(query.conflict(base, a.unit_id, a.claim_kb, a.claim_model, a.resolution), True)
     return 0
 
 

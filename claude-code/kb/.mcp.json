@@ -2,7 +2,9 @@
   "mcpServers": {
     "kb": {
       "command": "python3",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/kb-mcp"]
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/server/kb-mcp"
+      ]
     }
   }
 }

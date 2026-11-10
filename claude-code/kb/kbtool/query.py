@@ -2,6 +2,11 @@
 
 Функции возвращают dict — их печатает CLI и отдаёт MCP. Пишут только в verdicts / misses /
 conflicts: строка в ``markup/*.tsv`` (переживает пересборку) и сразу в ``kb.sqlite``.
+
+Готовая база плагина (``base.boxed``) только читается: решения пользователя пишутся лишь в TSV
+его папки (``$KB_HOME/<имя>/user/``) и при чтении накладываются поверх базы — последняя запись
+по единице побеждает, как при сборке. Тот же поиск без пакета kbtool — ``skills/kb-ask/scripts/search.py``
+упакованной копии (паритет закреплён тестом).
 """
 from __future__ import annotations
 
@@ -10,8 +15,8 @@ import re
 from datetime import date
 
 from .config import RESOLUTIONS, VERDICTS, Base, KbError
-from .markup import append_tsv, fold, read_tsv, write_tsv
-from .store import connect
+from .db import connect
+from .tsvio import append_tsv, fold, read_tsv, write_tsv
 
 # стоп-слова: ru — из processed-db/ask.py (06.11.2026) + общие; en — общие служебные
 STOP = set("""что как это для про или мне нас есть было был если чем где когда почему какие какой какая
@@ -43,9 +48,36 @@ def checkable(text: str) -> bool:
     return bool(_FACT.search(text))
 
 
-def _verdict(con, uid):
+def _user(base: Base):
+    """Решения пользователя поверх готовой базы (только для base.boxed; иначе они уже в kb.sqlite)."""
+    if not base.boxed:
+        return None
+    verdicts = {}
+    for r in read_tsv(base.markup / "verdicts.tsv"):
+        if r.get("id") and r.get("verdict") in VERDICTS:
+            verdicts[r["id"]] = dict(verdict=r["verdict"], date=r.get("date") or "", note=r.get("note") or "")
+    conflicts = {}
+    for r in read_tsv(base.markup / "conflicts.tsv"):
+        if r.get("id") and r.get("resolution") in RESOLUTIONS:
+            conflicts[r["id"]] = {k: r.get(k) for k in ("id", "unit_id", "claim_kb", "claim_model", "resolution", "date")}
+    return dict(verdicts=verdicts, conflicts=conflicts)
+
+
+def _verdict(con, uid, user=None):
+    if user and uid in user["verdicts"]:
+        return dict(user["verdicts"][uid])
     r = con.execute("SELECT verdict, date, note FROM verdicts WHERE unit_id=?", (uid,)).fetchone()
     return dict(r) if r else None
+
+
+def _decisions(con, ids, user=None) -> list[dict]:
+    if not ids:
+        return []
+    q = ",".join("?" * len(ids))
+    out = {r["id"]: dict(r) for r in con.execute(f"SELECT * FROM conflicts WHERE unit_id IN ({q})", list(ids))}
+    if user:
+        out.update({k: dict(v) for k, v in user["conflicts"].items() if v.get("unit_id") in ids})
+    return list(out.values())
 
 
 def _edges_among(con, ids):
@@ -61,6 +93,7 @@ def search(base: Base, question: str, limit: int = 8) -> dict:
     if not terms:
         return dict(question=question, terms=[], results=[], suppressed=[], concepts=[], edges=[],
                     contradictions=[], conflict_decisions=[], note="в вопросе нет значимых слов (≥4 букв)")
+    user = _user(base)
     con = connect(base)
     try:
         fts = " OR ".join(f'"{_stem(w)}"*' for w in terms)
@@ -70,7 +103,7 @@ def search(base: Base, question: str, limit: int = 8) -> dict:
             "WHERE units_fts MATCH ? ORDER BY rank LIMIT ?", (fts, limit * 3)).fetchall()
         results, suppressed = [], []
         for r in rows:
-            v = _verdict(con, r["id"])
+            v = _verdict(con, r["id"], user)
             if v and v["verdict"] in HIDDEN:
                 suppressed.append(dict(id=r["id"], title=r["title"], date=r["date"], verdict=v["verdict"],
                                        verdict_date=v["date"]))
@@ -96,10 +129,7 @@ def search(base: Base, question: str, limit: int = 8) -> dict:
                                  f"JOIN units a ON a.id=e.src JOIN units b ON b.id=e.dst "
                                  f"WHERE e.type='contradicts' AND (e.src IN ({q}) OR e.dst IN ({q}))", ids * 2):
                 contra.append(dict(e))
-        decisions = []
-        if ids:
-            q = ",".join("?" * len(ids))
-            decisions = [dict(r) for r in con.execute(f"SELECT * FROM conflicts WHERE unit_id IN ({q})", ids)]
+        decisions = _decisions(con, ids, user)
         return dict(question=question, terms=terms, results=results, suppressed=suppressed, concepts=concepts,
                     edges=_edges_among(con, ids), contradictions=contra, conflict_decisions=decisions)
     finally:
@@ -107,6 +137,7 @@ def search(base: Base, question: str, limit: int = 8) -> dict:
 
 
 def unit(base: Base, uid: str, full: bool = False, max_chars: int = 1500) -> dict:
+    user = _user(base)
     con = connect(base)
     try:
         u = con.execute("SELECT u.*, m.category, m.subtopic, m.genre, m.practical, m.summary FROM units u "
@@ -118,7 +149,7 @@ def unit(base: Base, uid: str, full: bool = False, max_chars: int = 1500) -> dic
         d["text"] = text if full else text[:max_chars]
         d["truncated"] = not full and len(text) > max_chars
         d["checkable"] = checkable(text)
-        d["verdict"] = _verdict(con, uid)
+        d["verdict"] = _verdict(con, uid, user)
         d["concepts"] = [dict(r) for r in con.execute(
             "SELECT concept, weight FROM unit_concepts WHERE unit_id=? ORDER BY weight DESC, concept", (uid,))]
         d["edges_out"] = [dict(r) for r in con.execute(
@@ -131,7 +162,7 @@ def unit(base: Base, uid: str, full: bool = False, max_chars: int = 1500) -> dic
             "SELECT CASE WHEN src=? THEN dst ELSE src END AS id, GROUP_CONCAT(concept, ', ') AS via, "
             "SUM(strength) AS strength FROM concept_links WHERE src=? OR dst=? GROUP BY 1 "
             "ORDER BY strength DESC LIMIT 8", (uid, uid, uid))]
-        d["conflict_decisions"] = [dict(r) for r in con.execute("SELECT * FROM conflicts WHERE unit_id=?", (uid,))]
+        d["conflict_decisions"] = _decisions(con, [uid], user)
         return d
     finally:
         con.close()
@@ -189,7 +220,10 @@ def set_verdict(base: Base, uid: str, verdict: str, note: str = "") -> dict:
         raise KbError(f"вердикт должен быть одним из: {', '.join(VERDICTS)}")
     _require_unit(base, uid)
     row = dict(id=uid, verdict=verdict, date=date.today().isoformat(), note=_clean(note, 300))
+    base.prepare_writes()
     append_tsv(base.markup / "verdicts.tsv", ["id", "verdict", "date", "note"], row)
+    if base.boxed:                                   # готовая база не пишется; решение — в папке пользователя
+        return row
     con = connect(base, write=True)
     try:
         con.execute("INSERT OR REPLACE INTO verdicts VALUES (?,?,?,?)", (uid, verdict, row["date"], row["note"]))
@@ -203,7 +237,15 @@ def add_miss(base: Base, question: str, found_id: str = "") -> dict:
     row = dict(date=date.today().isoformat(), question=_clean(question, 500), found_id=_clean(found_id, 40))
     if not row["question"]:
         raise KbError("пустой вопрос")
+    base.prepare_writes()
     append_tsv(base.markup / "misses.tsv", ["date", "question", "found_id"], row)
+    if base.boxed:
+        con = connect(base)
+        try:
+            shipped = con.execute("SELECT COUNT(*) FROM misses").fetchone()[0]
+        finally:
+            con.close()
+        return dict(row, total=shipped + len(read_tsv(base.markup / "misses.tsv")))
     con = connect(base, write=True)
     try:
         con.execute("INSERT INTO misses VALUES (?,?,?)", (row["date"], row["question"], row["found_id"]))
@@ -222,9 +264,10 @@ def conflict(base: Base, unit_id: str, claim_kb: str = "", claim_model: str = ""
     """Без resolution — прочитать прежние решения (по единице или по утверждению).
     С resolution — записать/обновить решение (kb | model | both | pending)."""
     _require_unit(base, unit_id)
+    user = _user(base)
     con = connect(base)
     try:
-        prior = [dict(r) for r in con.execute("SELECT * FROM conflicts WHERE unit_id=?", (unit_id,))]
+        prior = _decisions(con, [unit_id], user)
     finally:
         con.close()
     if not resolution:
@@ -240,8 +283,11 @@ def conflict(base: Base, unit_id: str, claim_kb: str = "", claim_model: str = ""
     row = dict(id=conflict_id(unit_id, claim_kb), unit_id=unit_id, claim_kb=_clean(claim_kb, 400),
                claim_model=_clean(claim_model, 400), resolution=resolution, date=date.today().isoformat())
     cols = ["id", "unit_id", "claim_kb", "claim_model", "resolution", "date"]
+    base.prepare_writes()
     rows = [r for r in read_tsv(base.markup / "conflicts.tsv") if r.get("id") != row["id"]] + [row]
     write_tsv(base.markup / "conflicts.tsv", cols, rows)
+    if base.boxed:
+        return dict(recorded=row)
     con = connect(base, write=True)
     try:
         con.execute("INSERT OR REPLACE INTO conflicts VALUES (?,?,?,?,?,?)", tuple(row[c] for c in cols))
@@ -249,3 +295,26 @@ def conflict(base: Base, unit_id: str, claim_kb: str = "", claim_model: str = ""
     finally:
         con.close()
     return dict(recorded=row)
+
+
+def info(base: Base) -> dict:
+    """Что за база и в порядке ли она: имя, тема, число единиц, целостность (для /kb-start)."""
+    con = connect(base)
+    try:
+        n = lambda sql: con.execute(sql).fetchone()[0]  # noqa: E731
+        meta = {r["key"]: r["value"] for r in con.execute("SELECT key, value FROM meta")}
+        top = [r["concept"] for r in con.execute("SELECT concept FROM concept_timeline ORDER BY units DESC, concept LIMIT 10")]
+        d = dict(name=base.slug, boxed=base.boxed, units=n("SELECT COUNT(*) FROM units"),
+                 marked=n("SELECT COUNT(*) FROM markup"), concepts=n("SELECT COUNT(*) FROM concepts"),
+                 edges=n("SELECT COUNT(*) FROM edges"), built=meta.get("built"), lang=meta.get("lang"),
+                 top_concepts=top, db=str(base.db))
+    finally:
+        con.close()
+    if base.boxed:
+        m = base.meta
+        digest = hashlib.sha256(base.db.read_bytes()).hexdigest()
+        user = _user(base)
+        d.update(title=m.get("title"), topic=m.get("topic"), example_question=m.get("example_question"),
+                 packed=m.get("packed"), intact=(digest == m.get("sha256")), user_dir=str(base.markup),
+                 user_verdicts=len(user["verdicts"]), user_conflicts=len(user["conflicts"]))
+    return d

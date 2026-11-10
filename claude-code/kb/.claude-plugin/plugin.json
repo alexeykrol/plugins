@@ -1,7 +1,14 @@
 {
   "name": "kb",
-  "version": "0.2.0",
-  "description": "Папка документов → размеченная база знаний (SQLite: FTS5 + понятия + граф связей + решения пользователя) → чат отвечает с опорой на неё. MVP.",
-  "author": {"name": "Alexey Krol"},
-  "keywords": ["knowledge-base", "sqlite", "mcp", "documents"]
+  "version": "0.3.0",
+  "description": "Чат отвечает по готовой базе знаний, которая поставляется вместе с плагином",
+  "author": {
+    "name": "Alexey Krol"
+  },
+  "keywords": [
+    "knowledge-base",
+    "sqlite",
+    "skills",
+    "mcp"
+  ]
 }

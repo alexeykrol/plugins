@@ -5,3 +5,5 @@ __pycache__/
 .env.*
 *.sqlite
 *.db
+# базы, которые едут внутри плагинов, — часть продукта
+!claude-code/*/skills/*/data/*.sqlite

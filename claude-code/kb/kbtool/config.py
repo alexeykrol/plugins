@@ -1,6 +1,12 @@
 """Где лежит производная базы и что в её конфиге (SPEC §3, §8 S1/S6/S7).
 
 Производная живёт в ``$KB_HOME/<slug>/`` (по умолчанию ``~/.kb``), вне папки документов.
+
+«База в коробке» (0.3.0): если в плагине лежит готовая база ``skills/kb-ask/data/``
+(``kb.sqlite`` + ``box.json``), она — база по умолчанию. Папка плагина при обновлении
+заменяется целиком и может быть недоступна для записи, поэтому база открывается только на
+чтение, а решения пользователя (вердикты, промахи, конфликты) пишутся в
+``$KB_HOME/<имя базы>/user/`` — они переживают обновление плагина.
 ``kb.yaml`` пишется как подмножество YAML: одна строка ``ключ: <JSON>`` — читается и этим
 кодом, и любым YAML-парсером.
 """
@@ -35,6 +41,10 @@ SYSTEM_ROOTS = ("/", "/System", "/Library", "/usr", "/bin", "/sbin", "/etc", "/v
                 "/Applications", "/opt", "/dev", "/Volumes", "/cores", "/tmp", "/proc", "/sys", "/boot",
                 "/root", "/home", "/Users")
 
+
+PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+BOX_DATA = ("skills", "kb-ask", "data")        # готовая база внутри навыка kb-ask (работает и без MCP)
+BOX_META = "box.json"
 
 DEMO_SLUG = "kb-demo"                         # демо-база скилла /kb-start (образцы samples/)
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
@@ -101,6 +111,8 @@ def load_yaml(text: str) -> dict:
 class Base:
     """Одна база: ``$KB_HOME/<slug>/`` со всеми производными файлами."""
 
+    boxed = False
+
     def __init__(self, root: Path):
         self.root = root
         self.yaml = root / "kb.yaml"
@@ -134,6 +146,63 @@ class Base:
         for d in (self.root, self.markup, self.units_dir, self.batches, self.runs):
             d.mkdir(parents=True, exist_ok=True)
             os.chmod(d, 0o700)
+
+    def prepare_writes(self) -> None:
+        """Перед записью решения пользователя: папка для TSV существует."""
+        self.markup.mkdir(parents=True, exist_ok=True)
+
+
+class BoxedBase(Base):
+    """Готовая база, которая едет внутри плагина. Только чтение; записи пользователя — отдельно.
+
+    ``root`` — ``<плагин>/skills/kb-ask/data`` (``kb.sqlite``, ``box.json``);
+    ``markup`` (куда пишутся verdicts/misses/conflicts) — ``$KB_HOME/<имя>/user``.
+    """
+
+    boxed = True
+
+    def __init__(self, data_dir: Path, meta: dict):
+        super().__init__(data_dir)
+        self.meta = meta
+        self.name = meta["name"]
+        self.user_dir = kb_home() / self.name / "user"
+        self.markup = self.user_dir
+
+    @property
+    def slug(self) -> str:
+        return self.name
+
+    def config(self) -> dict:
+        return {"corpus_path": None, "boxed": True, "title": self.meta.get("title"),
+                "topic": self.meta.get("topic")}
+
+    def prepare_writes(self) -> None:
+        real = Path(os.path.realpath(self.user_dir))
+        plugin = Path(os.path.realpath(PLUGIN_ROOT))
+        if real == plugin or str(real).startswith(str(plugin) + os.sep):
+            raise KbError(f"папка решений {real} внутри плагина — она пропадёт при обновлении; задайте KB_HOME вне плагина")
+        for d in (kb_home(), self.user_dir.parent, self.user_dir):
+            d.mkdir(parents=True, exist_ok=True)
+            os.chmod(d, 0o700)
+
+
+def box_dir(plugin_root: Path | None = None) -> Path:
+    return (plugin_root or PLUGIN_ROOT).joinpath(*BOX_DATA)
+
+
+def boxed_base(plugin_root: Path | None = None) -> BoxedBase | None:
+    """Готовая база плагина или None, если её нет (исходник плагина, режим своей сборки)."""
+    d = box_dir(plugin_root)
+    meta_path, db = d / BOX_META, d / "kb.sqlite"
+    if not (meta_path.is_file() and db.is_file()):
+        return None
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise KbError(f"{meta_path}: метаданные базы не читаются ({exc})") from None
+    if not isinstance(meta, dict) or not SLUG_RE.match(str(meta.get("name") or "")):
+        raise KbError(f"{meta_path}: нет корректного имени базы (name)")
+    return BoxedBase(d, meta)
 
 
 def write_private(path: Path, text: str) -> None:
@@ -183,8 +252,11 @@ def list_bases() -> list[Base]:
     return [Base(p) for p in sorted(home.iterdir()) if (p / "kb.yaml").is_file()]
 
 
-def resolve_base(kb: str | None = None, corpus: str | None = None) -> Base:
-    """База по slug, по пути корпуса или единственная существующая."""
+def resolve_base(kb: str | None = None, corpus: str | None = None, boxed: bool = True) -> Base:
+    """Готовая база плагина (если есть), база по slug, по пути корпуса или единственная существующая."""
+    box = boxed_base() if boxed else None
+    if box is not None and not corpus and (not kb or kb == box.slug):
+        return box
     if corpus:
         real = Path(os.path.realpath(Path(corpus).expanduser()))
         base = Base(kb_home() / slug_for(real))
@@ -199,7 +271,8 @@ def resolve_base(kb: str | None = None, corpus: str | None = None) -> Base:
         for b in bases:
             if b.slug == kb:
                 return b
-        raise KbError(f"базы «{kb}» нет; есть: {', '.join(b.slug for b in bases) or '—'}")
+        names = ([box.slug] if box is not None else []) + [b.slug for b in bases]
+        raise KbError(f"базы «{kb}» нет; есть: {', '.join(names) or '—'}")
     # Демо-база из /kb-start не мешает выбору по умолчанию, если есть свои базы.
     bases = [b for b in bases if b.slug != DEMO_SLUG] or bases
     if len(bases) == 1:
