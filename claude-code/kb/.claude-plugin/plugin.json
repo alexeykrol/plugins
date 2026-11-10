@@ -1,14 +1,13 @@
 {
   "name": "kb",
-  "version": "0.3.0",
-  "description": "Чат отвечает по готовой базе знаний, которая поставляется вместе с плагином",
+  "version": "0.3.1",
+  "description": "Готовая база знаний по книге «Теория каст и ролей»: Claude отвечает по книге — со ссылками на главы и цитатами.",
   "author": {
     "name": "Alexey Krol"
   },
   "keywords": [
     "knowledge-base",
     "sqlite",
-    "skills",
-    "mcp"
+    "skills"
   ]
 }

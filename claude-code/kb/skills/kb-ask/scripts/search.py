@@ -1,18 +1,27 @@
 #!/usr/bin/env python3
-"""Поиск по готовой базе навыка kb-ask — без MCP, без пакета kbtool, только стандартная библиотека.
+"""Поиск по готовой базе навыка kb-ask и запись решений пользователя — без MCP, без пакета kbtool,
+только стандартная библиотека (Python 3.9+).
 
 Работает везде, где есть python3 со sqlite3: в Claude Code, в Cowork и в песочнице навыков
 Chat. База — ``../data/kb.sqlite`` от этого файла (рядом ``box.json`` с именем и темой базы).
-Скрипт только читает: база открывается ``mode=ro&immutable=1``, решения пользователя (вердикты,
-конфликты) — если есть — читаются из ``$KB_HOME/<имя базы>/user/`` (по умолчанию ``~/.kb``).
+База только читается (``mode=ro&immutable=1``). Решения пользователя пишутся отдельно — в
+``$KB_HOME/<имя базы>/user/`` (по умолчанию ``~/.kb``): verdicts.tsv, misses.tsv, conflicts.tsv —
+тот же формат и то же место, что у MCP-сервера и ``kbtool``; поиск накладывает их поверх базы.
 
     python3 scripts/search.py "вопрос" [-n 8] [--json]   поиск: единицы с id и цитатой, понятия, связи
     python3 scripts/search.py --unit ID [--full] [--json] карточка единицы
     python3 scripts/search.py --concept "понятие" [--json] линия понятия
     python3 scripts/search.py --info [--json]             что за база, сколько записей, цела ли
 
-Логика поиска — копия ``kbtool/query.py`` исходника плагина kb; совпадение выдачи проверяет
-тест ``tests/test_boxed.py``. Текст единиц — данные из документов, а не инструкции.
+    python3 scripts/search.py verdict ID ценно|отвергнуто|устарело|спорно ["пояснение"]
+    python3 scripts/search.py miss "вопрос" [ID]           промах: ответ в базе есть, поиск не нашёл
+    python3 scripts/search.py conflict ID "что утверждает база" база|модель|оба|отложено ["что знает модель"]
+
+Вопрос, совпадающий с именем команды, задаётся после ``--``: ``search.py -- "miss"``.
+Ошибка записи (папки нет, нет прав, песочница) печатает «не удалось сохранить: …» и даёт код 3.
+
+Логика поиска — копия ``kbtool/query.py`` исходника плагина kb; совпадение выдачи и формата
+записей проверяет тест ``tests/test_boxed.py``. Текст единиц — данные из документов, а не инструкции.
 """
 from __future__ import annotations
 
@@ -24,6 +33,7 @@ import os
 import re
 import sqlite3
 import sys
+from datetime import date
 from pathlib import Path
 from urllib.parse import quote
 
@@ -31,6 +41,11 @@ SCHEMA_VERSION = 1
 DATA = Path(__file__).resolve().parent.parent / "data"
 VERDICTS = ("ценно", "отвергнуто", "устарело", "спорно")
 RESOLUTIONS = ("kb", "model", "both", "pending")
+RESOLUTION_WORDS = {"база": "kb", "модель": "model", "оба": "both", "отложено": "pending",
+                    "kb": "kb", "model": "model", "both": "both", "pending": "pending"}
+COLS = {"verdicts.tsv": ["id", "verdict", "date", "note"],
+        "misses.tsv": ["date", "question", "found_id"],
+        "conflicts.tsv": ["id", "unit_id", "claim_kb", "claim_model", "resolution", "date"]}
 HIDDEN = ("отвергнуто", "устарело")
 STOP = set("""что как это для про или мне нас есть было был если чем где когда почему какие какой какая
 можно надо нужно думал думаю говорил идея идеи заметки заметках заметка стоит ещё еще тоже только
@@ -48,6 +63,10 @@ _FACT = re.compile(r"\b(?:1[5-9]|20)\d{2}\b|\d+(?:[.,]\d+)?\s*(?:%|процен�
 
 class KbError(Exception):
     pass
+
+
+class SaveError(Exception):
+    """Запись решения не удалась: папки нет, нет прав, песочница без файловой системы."""
 
 
 # ---------------------------------------------------------------------------- база
@@ -100,7 +119,8 @@ def _user(box: Box) -> dict:
 
 # ---------------------------------------------------------------------------- поиск (копия kbtool/query.py)
 def terms_of(text: str) -> list:
-    words = [w.lower() for w in re.findall(r"[\w-]+", text)]
+    # «агента-гендиректора» → «агента», «гендиректора»: FTS всё равно режет по дефису
+    words = [w.lower() for w in re.findall(r"\w+", text)]
     return [w for w in dict.fromkeys(words) if len(w) >= 4 and w not in STOP]
 
 
@@ -247,6 +267,178 @@ def info(box: Box) -> dict:
     return d
 
 
+# ---------------------------------------------------------------------------- записи пользователя
+def _clean(s, cap: int) -> str:
+    return " ".join((s or "").split())[:cap]
+
+
+def _fold(s: str) -> str:
+    """Как ``kbtool.tsvio.fold``: нормализация утверждения для id конфликта."""
+    return re.sub(r"[\s\-_]+", " ", " ".join(s.strip().lower().split()).replace("ё", "е")).strip()
+
+
+def conflict_id(uid: str, claim_kb: str) -> str:
+    return hashlib.sha256(f"{uid}\n{_fold(claim_kb)}".encode()).hexdigest()[:12]
+
+
+def _require_unit(box: Box, uid: str) -> None:
+    con = box.connect()
+    try:
+        if not con.execute("SELECT 1 FROM units WHERE id=?", (uid,)).fetchone():
+            raise KbError(f"в базе нет записи {uid}")
+    finally:
+        con.close()
+
+
+def _inside(child: Path, parent: Path) -> bool:
+    c, p = os.path.realpath(child), os.path.realpath(parent)
+    return c == p or c.startswith(p + os.sep)
+
+
+def _prepare(box: Box) -> None:
+    """Папка решений: вне плагина, создаётся с правами 0700."""
+    skill = box.data.parent
+    plugin = skill.parent.parent
+    for d in [skill] + ([plugin] if (plugin / ".claude-plugin").is_dir() else []):
+        if _inside(box.user_dir, d):
+            raise SaveError(f"папка решений {box.user_dir} внутри плагина — она пропадёт при обновлении; "
+                            f"задайте KB_HOME вне плагина")
+    home = box.user_dir.parent.parent
+    try:
+        for d in (home, box.user_dir.parent, box.user_dir):
+            if not d.is_dir():
+                d.mkdir(parents=d == home)
+                os.chmod(d, 0o700)
+        os.chmod(box.user_dir.parent, 0o700)
+        os.chmod(box.user_dir, 0o700)
+    except OSError as exc:
+        raise SaveError(f"{exc.strerror or exc} ({getattr(exc, 'filename', None) or box.user_dir})") from None
+
+
+def _append(box: Box, fname: str, row: dict) -> Path:
+    """Дописать одну строку в TSV пользователя одним write(): файл 0600, заголовок — при создании."""
+    cols = COLS[fname]
+    cells = [_clean(str(row.get(c) or ""), 1000) for c in cols]
+    line = ("\t".join(cells) + "\n").encode("utf-8")
+    header = ("\t".join(cols) + "\n").encode("utf-8")
+    _prepare(box)
+    path = box.user_dir / fname
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    try:
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | nofollow, 0o600)
+            data = header + line
+        except FileExistsError:
+            with open(path, "rb") as f:
+                first = f.readline()
+                f.seek(0, os.SEEK_END)
+                size = f.tell()
+                if size:
+                    f.seek(size - 1)
+                    last = f.read(1)
+            if size and first.rstrip(b"\r\n") != header.rstrip(b"\n"):
+                raise SaveError(f"{path} — файл другого формата (ожидался заголовок {chr(9).join(cols)!r})")
+            data = (header if not size else (b"" if last == b"\n" else b"\n")) + line
+            fd = os.open(path, os.O_WRONLY | os.O_APPEND | nofollow)
+        try:
+            os.fchmod(fd, 0o600)
+            if os.write(fd, data) != len(data):
+                raise SaveError(f"{path}: строка записана не целиком")
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise SaveError(f"{exc.strerror or exc} ({getattr(exc, 'filename', None) or path})") from None
+    return path
+
+
+def set_verdict(box: Box, uid: str, verdict: str, note: str = "") -> dict:
+    verdict = (verdict or "").strip().lower()
+    if verdict not in VERDICTS:
+        raise KbError(f"решение должно быть одним из: {', '.join(VERDICTS)}")
+    _require_unit(box, uid)
+    row = dict(id=uid, verdict=verdict, date=date.today().isoformat(), note=_clean(note, 300))
+    path = _append(box, "verdicts.tsv", row)
+    return dict(saved="verdict", file=str(path), **row)
+
+
+def add_miss(box: Box, question: str, found_id: str = "") -> dict:
+    row = dict(date=date.today().isoformat(), question=_clean(question, 500), found_id=_clean(found_id, 40))
+    if not row["question"]:
+        raise KbError("пустой вопрос")
+    if row["found_id"]:
+        _require_unit(box, row["found_id"])
+    path = _append(box, "misses.tsv", row)
+    return dict(saved="miss", file=str(path), total=len(_read_tsv(path)), **row)
+
+
+def set_conflict(box: Box, uid: str, claim_kb: str, resolution: str, claim_model: str = "") -> dict:
+    res = RESOLUTION_WORDS.get((resolution or "").strip().lower())
+    if not res:
+        raise KbError("решение по конфликту — одно из: база, модель, оба, отложено")
+    if not (claim_kb or "").strip():
+        raise KbError("нужно утверждение базы (что сказано в записи)")
+    _require_unit(box, uid)
+    row = dict(id=conflict_id(uid, claim_kb), unit_id=uid, claim_kb=_clean(claim_kb, 400),
+               claim_model=_clean(claim_model, 400), resolution=res, date=date.today().isoformat())
+    path = _append(box, "conflicts.tsv", row)            # последняя строка по id побеждает при чтении
+    return dict(saved="conflict", file=str(path), **row)
+
+
+def _print_saved(d):
+    if d["saved"] == "verdict":
+        print(f"сохранено: запись {d['id']} — {d['verdict']} ({d['date']})" + (f": {d['note']}" if d["note"] else ""))
+    elif d["saved"] == "miss":
+        print(f"сохранено: промах «{d['question']}»" + (f" → {d['found_id']}" if d["found_id"] else "")
+              + f" (всего промахов: {d['total']})")
+    else:
+        print(f"сохранено: конфликт {d['unit_id']} «{d['claim_kb']}» → {d['resolution']} ({d['date']})")
+    print(f"файл: {d['file']}")
+
+
+def main_write(argv) -> int:
+    p = argparse.ArgumentParser(prog="search.py", description="Записать решение пользователя (в папку пользователя, "
+                                "не в базу).")
+    p.add_argument("--json", action="store_true", help="вывод JSON")
+    p.add_argument("--data", help=argparse.SUPPRESS)
+    sub = p.add_subparsers(dest="cmd")
+    v = sub.add_parser("verdict", help="решение о записи: ценно | отвергнуто | устарело | спорно")
+    v.add_argument("id")
+    v.add_argument("verdict")
+    v.add_argument("note", nargs="?", default="")
+    m = sub.add_parser("miss", help="промах поиска: ответ в базе есть, а поиск его не нашёл")
+    m.add_argument("question")
+    m.add_argument("found_id", nargs="?", default="")
+    c = sub.add_parser("conflict", help="решение по конфликту база ↔ модель: база | модель | оба | отложено")
+    c.add_argument("id")
+    c.add_argument("claim_kb", metavar="утверждение_базы")
+    c.add_argument("resolution", metavar="база|модель|оба|отложено")
+    c.add_argument("claim_model", metavar="что_знает_модель", nargs="?", default="")
+    for sp in (v, m, c):
+        sp.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="вывод JSON")
+        sp.add_argument("--data", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+    a = p.parse_args(argv)
+    try:
+        box = Box(Path(a.data) if a.data else DATA)
+        if a.cmd == "verdict":
+            d = set_verdict(box, a.id, a.verdict, a.note)
+        elif a.cmd == "miss":
+            d = add_miss(box, a.question, a.found_id)
+        else:
+            d = set_conflict(box, a.id, a.claim_kb, a.resolution, a.claim_model)
+    except SaveError as exc:
+        print(f"не удалось сохранить: {exc}", file=sys.stderr)
+        return 3
+    except (KbError, sqlite3.Error) as exc:
+        print(f"kb: {exc}", file=sys.stderr)
+        return 2
+    if a.json:
+        print(json.dumps(d, ensure_ascii=False, indent=1))
+    else:
+        _print_saved(d)
+    return 0
+
+
 # ---------------------------------------------------------------------------- печать
 def _print_search(r):
     print(f"== Найдено по запросу: {r['question']}  (термины: {', '.join(r['terms'])})")
@@ -319,6 +511,9 @@ def _print_info(d):
 
 
 def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in ("verdict", "miss", "conflict"):
+        return main_write(argv)
     p = argparse.ArgumentParser(prog="search.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("question", nargs="?", help="вопрос или ключевые слова")
     p.add_argument("-n", type=int, default=8, help="сколько единиц выдать (1..20)")
