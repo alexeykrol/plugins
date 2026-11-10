@@ -1,0 +1,19 @@
+{
+  "name": "pen",
+  "version": "0.1.0",
+  "description": "Редактор постов: корректура русского текста и расшифровок, перевод на американский английский, версии для X и LinkedIn.",
+  "author": {
+    "name": "Alexey Krol"
+  },
+  "homepage": "https://alexeykrol.com",
+  "keywords": [
+    "editing",
+    "proofreading",
+    "translation",
+    "linkedin",
+    "x",
+    "russian",
+    "english"
+  ],
+  "repository": "https://github.com/alexeykrol/plugins"
+}

@@ -12,6 +12,12 @@
       "source": "./claude-code/kb",
       "description": "Готовая база знаний по книге «Теория каст и ролей»: Claude отвечает по книге — со ссылками на главы и цитатами. Работает в чате, Cowork и Code приложения Claude.",
       "category": "productivity"
+    },
+    {
+      "name": "pen",
+      "source": "./claude-code/pen",
+      "description": "Редактор постов: корректура русского текста и расшифровок, перевод на американский английский, версии для X и LinkedIn.",
+      "category": "productivity"
     }
   ]
 }
