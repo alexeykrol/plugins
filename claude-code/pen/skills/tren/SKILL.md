@@ -11,6 +11,9 @@ If the source is already English, skip stage 2: proofread (stage 1), then Americ
 
 Work strictly stage by stage. Do not show the intermediate results of stages 2–3.
 
+## The author's voice
+The voice rules of the corr skill apply to every stage, not only to proofreading. In translation and Americanization, carry the register over at equal strength: profanity becomes equally strong American profanity, sarcasm stays sarcastic, a provocative line stays provocative. "Plain words" means plain, not polite. A version that reads safer or blander than the source is a defect: fix it.
+
 ## Stage 1. Proofreading (artifact 1: source language)
 Apply the rules of the corr skill (`${CLAUDE_PLUGIN_ROOT}/skills/corr/SKILL.md`), including source-language detection. The result is the corrected source-language version and the input for translation.
 
@@ -22,7 +25,7 @@ Apply the rules of the corr skill (`${CLAUDE_PLUGIN_ROOT}/skills/corr/SKILL.md`)
 ## Stage 3. Americanization
 - Short sentences, active voice, direct conversational tone, plain words.
 - Forbidden: adding claims, softening or strengthening theses, changing how categorical the author is, adding corporate gloss (leverage, game-changer, unlock), adding emoji or hashtags that were not in the source.
-- Mandatory check at the end: compare line by line with the stage 2 result. Every claim is present and keeps its strength. Restore anything lost or shifted.
+- Mandatory check at the end: compare line by line with the stage 2 result. Every claim is present and keeps its strength, and the tone is as sharp as the source. Restore anything lost, shifted or softened.
 
 ## Stage 4. Thread-ready X version (artifact 2)
 One text that works both ways: pasted whole as a long post (X Premium), or posted block by block as a thread (free account, 280-character limit).

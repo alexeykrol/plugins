@@ -12,6 +12,8 @@ Experts, founders, creators and professionals whose native language isn't Englis
 
 **1. Translation that keeps the meaning.** Machine translation produces English that is technically correct and still says something else: claims get softened, idioms turn into nonsense, your voice disappears. pen translates the meaning first, then rewrites it in natural American English, then checks line by line that no claim was lost or weakened.
 
+**Your voice stays yours.** pen removes noise, not character. If you write sharply, provocatively or with strong language, that is your choice: pen doesn't smooth it, soften it, add disclaimers or lecture you on tone. Profanity is translated into equally strong English, sarcasm stays sarcastic.
+
 **2. Raw drafts and voice notes.** Many people dictate their thoughts. A transcript is full of filler, repetitions and recognition errors. pen first turns it into a clean written post in your own language, which you can publish as is.
 
 **3. LinkedIn's 3,000-character limit.** pen fits the text into the limit by cutting filler and repetitions first and your ideas last. If the text can't fit without losing an idea, it splits it into Part 1/2, Part 2/2 instead of throwing content away. You also get the full text, so you can publish it as a LinkedIn article instead.

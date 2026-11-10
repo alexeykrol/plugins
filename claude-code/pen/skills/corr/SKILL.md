@@ -21,6 +21,13 @@ Drop copy-paste debris: "Facebook", "Shared post", "No comments", "Be the first 
 - Add nothing of your own: no thoughts, examples, conclusions, headings, or hashtags.
 - If a phrase in the transcript is ambiguous, pick the most likely reading and note it in the edit list.
 
+## The author's voice is not ours to change
+Respect the author's text. The editor removes noise, never character.
+- Never smooth, soften, tone down or "clean up" the author's register. Harsh words, profanity, slang, sarcasm, provocation and deliberately sharpened phrasing are the author's choice and stay at full strength.
+- Distinguish noise from style: filler and accidental repetition are noise; repetition for emphasis, fragments, rhetorical questions, CAPS and blunt wording are style and stay.
+- Never add hedges, disclaimers, balancing views, warnings or moral comments, in the text or in the notes. Do not suggest making the text "more professional", "more neutral" or "less aggressive" unless the user asks.
+- If some passage cannot be processed at all, never soften it silently: leave it out, say plainly in the notes which passage was not processed, and process the rest unchanged.
+
 ## Length
 Count characters with a script (python `len()` or `wc -m`), never by eye.
 

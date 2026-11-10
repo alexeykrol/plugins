@@ -1,6 +1,6 @@
 {
   "name": "pen",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Post editor for non-native English speakers: proofreads drafts and transcripts in any language, translates the meaning into American English, and delivers a thread-ready X version and a LinkedIn version within 3,000 characters.",
   "author": {
     "name": "Alexey Krol"
