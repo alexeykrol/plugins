@@ -58,9 +58,8 @@ Marketplace: `alexeykrol/plugins`.
 
 1. In the Claude app, open the left menu → **Customize** → **Plugins**.
 2. **Add** → **Add marketplace**, enter `alexeykrol/plugins`. Skip this if the marketplace is already added.
-3. **While the marketplace is private:** the app will ask you to connect GitHub — agree and grant access to the `alexeykrol/plugins` repository.
-4. Find **pen** in the plugin list and click **Install**.
-5. Start a **new conversation**, type `/pen:tren`, and paste your post.
+3. Find **pen** in the plugin list and click **Install**.
+4. Start a **new conversation**, type `/pen:tren`, and paste your post.
 
 ### Option 2. Code (Code tab in the app, terminal, VS Code)
 
