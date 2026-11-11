@@ -1,17 +1,17 @@
 #!/bin/bash
 # Выкладывает плагин kb «база в коробке» в магазин.
-# 1) упаковщик проекта kb (~/Code/kb/scripts/pack-boxed.py; другой путь — KB_SRC) собирает копию
+# 1) упаковщик проекта kb (~/Code/Kb_Plugin/scripts/pack-boxed.py; другой путь — KB_SRC) собирает копию
 #    из готовой базы во временную папку;
 # 2) копия переносится в claude-code/kb; README.md магазина (инструкция для пользователя)
 #    не затирается.
 #
 #   scripts/sync-kb.sh <папка собранной базы> [аргументы упаковщика: --title … --topic … --example …]
-#   пример: scripts/sync-kb.sh ~/Code/kb/assets/tcr --title "Теория каст и ролей" --example "Как перейти из одной касты в другую?"
+#   пример: scripts/sync-kb.sh ~/Code/Kb_Plugin/assets/tcr --title "Теория каст и ролей" --example "Как перейти из одной касты в другую?"
 set -euo pipefail
 
-SRC="${KB_SRC:-$HOME/Code/kb}"
+SRC="${KB_SRC:-$HOME/Code/Kb_Plugin}"
 DST="$(cd "$(dirname "$0")/.." && pwd)/claude-code/kb"
-BASE="${1:?нужна папка собранной базы, например ~/Code/kb/assets/tcr}"; shift
+BASE="${1:?нужна папка собранной базы, например ~/Code/Kb_Plugin/assets/tcr}"; shift
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
