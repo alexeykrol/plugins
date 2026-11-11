@@ -121,3 +121,7 @@ through the book, so allow it.
 - Chat and Cowork: **Customize → Plugins** → kb → **Uninstall**.
 - Code: type to Claude `выполни claude plugin uninstall kb@krol` (this means "run claude plugin
   uninstall kb@krol").
+
+## Support
+
+Questions and problems: support@alexeykrol.com (any language).

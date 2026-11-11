@@ -110,3 +110,7 @@ claude plugin install kb@krol
 
 - Chat и Cowork: **Customize → Plugins** → kb → **Uninstall**.
 - Code: напишите Claude `выполни claude plugin uninstall kb@krol`.
+
+## Поддержка
+
+Вопросы и проблемы: support@alexeykrol.com (на любом языке).
