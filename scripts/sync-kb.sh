@@ -1,17 +1,17 @@
 #!/bin/bash
-# Выкладывает плагин kb «база в коробке» в магазин.
-# 1) упаковщик проекта kb (~/Code/Kb_Plugin/scripts/pack-boxed.py; другой путь — KB_SRC) собирает копию
-#    из готовой базы во временную папку;
-# 2) копия переносится в claude-code/kb; README.md магазина (инструкция для пользователя)
-#    не затирается.
+# Publishes the kb "base in a box" plugin to the store.
+# 1) the kb project's packer (~/Code/Kb_Plugin/scripts/pack-boxed.py; override with KB_SRC) builds a copy
+#    from a finished base into a temporary folder;
+# 2) the copy is moved into claude-code/kb; the store's README.md (user instructions)
+#    is not overwritten.
 #
-#   scripts/sync-kb.sh <папка собранной базы> [аргументы упаковщика: --title … --topic … --example …]
-#   пример: scripts/sync-kb.sh ~/Code/Kb_Plugin/assets/tcr --title "Теория каст и ролей" --example "Как перейти из одной касты в другую?"
+#   scripts/sync-kb.sh <built base folder> [packer arguments: --title … --topic … --example …]
+#   example: scripts/sync-kb.sh ~/Code/Kb_Plugin/assets/tcr --title "Теория каст и ролей" --example "Как перейти из одной касты в другую?"
 set -euo pipefail
 
 SRC="${KB_SRC:-$HOME/Code/Kb_Plugin}"
 DST="$(cd "$(dirname "$0")/.." && pwd)/claude-code/kb"
-BASE="${1:?нужна папка собранной базы, например ~/Code/Kb_Plugin/assets/tcr}"; shift
+BASE="${1:?need a built base folder, e.g. ~/Code/Kb_Plugin/assets/tcr}"; shift
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -20,5 +20,5 @@ trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$DST"
 rsync -a --delete --exclude 'README.md' --exclude '.DS_Store' --exclude '__pycache__/' "$TMP/kb/" "$DST/"
 
-echo "kb $(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" "$DST/.claude-plugin/plugin.json") (база: $BASE) → $DST"
-echo "источник кода: $(git -C "$SRC" rev-parse --short HEAD) ($(git -C "$SRC" rev-parse --abbrev-ref HEAD))"
+echo "kb $(python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['version'])" "$DST/.claude-plugin/plugin.json") (base: $BASE) → $DST"
+echo "code source: $(git -C "$SRC" rev-parse --short HEAD) ($(git -C "$SRC" rev-parse --abbrev-ref HEAD))"
