@@ -1,6 +1,6 @@
 [![English](https://img.shields.io/badge/lang-English-lightgrey)](README.md) [![Русский](https://img.shields.io/badge/lang-Русский-blue)](README.ru.md)
 
-# kb — книга «Теория каст и ролей» как база знаний для Claude
+# BestMentor — книга «Теория каст и ролей» как база знаний для Claude
 
 Плагин добавляет в Claude готовую базу знаний по книге Алексея Крола «Теория каст и ролей»
 (12 глав). После установки Claude отвечает на вопросы **по книге**: называет главу, приводит
@@ -38,11 +38,11 @@ Cowork ставится одним способом, в Code — другим. �
 5. Магазин открытый, поэтому обычно этот шаг не нужен. **Если приложение всё же попросит**
    подключить GitHub (**Connect GitHub**) или установить **Claude GitHub App** — согласитесь и
    дайте доступ к репозиторию `alexeykrol/plugins`.
-6. В списке плагинов магазина найдите **kb** и нажмите **Install** (Установить).
+6. В списке плагинов магазина найдите **bestmentor** (BestMentor) и нажмите **Install** (Установить).
 7. Начните **новый разговор** и напишите:
 
    ```
-   проверь плагин kb
+   проверь плагин bestmentor
    ```
 
    Claude проверит, что база на месте, и покажет пример вопроса и ответа. Дальше просто
@@ -51,7 +51,7 @@ Cowork ставится одним способом, в Code — другим. �
 **Если магазин не добавляется** — запасной путь: скачайте
 файл навыка [`dist/kb-ask.zip`](dist/kb-ask.zip) (на странице файла — кнопка «Download raw
 file»), затем в приложении **Customize → Skills → Upload** (Загрузить навык) и выберите этот
-файл. Работать будет так же, только без проверки `проверь плагин kb`: сразу задавайте вопросы.
+файл. Работать будет так же, только без проверки `проверь плагин bestmentor`: сразу задавайте вопросы.
 
 ### Путь 2. Code (вкладка Code в приложении, терминал, VS Code)
 
@@ -63,20 +63,20 @@ file»), затем в приложении **Customize → Skills → Upload** 
 2. Отправьте Claude этот текст:
 
    ```
-   Установи плагин kb из магазина alexeykrol/plugins. Для этого выполни в терминале две команды:
+   Установи плагин bestmentor из магазина alexeykrol/plugins. Для этого выполни в терминале две команды:
    claude plugin marketplace add alexeykrol/plugins
-   claude plugin install kb@krol
+   claude plugin install bestmentor@krol
    Когда закончишь, скажи мне одной фразой, получилось ли, и что делать дальше.
    ```
 
    Claude попросит разрешение выполнить команды — нажмите **«Разрешить»**.
-3. Начните **новую сессию** и напишите `проверь плагин kb`.
+3. Начните **новую сессию** и напишите `проверь плагин bestmentor`.
 
 В терминале то же самое можно ввести самому:
 
 ```bash
 claude plugin marketplace add alexeykrol/plugins
-claude plugin install kb@krol
+claude plugin install bestmentor@krol
 ```
 
 ---
@@ -108,8 +108,8 @@ claude plugin install kb@krol
 
 ## Удалить
 
-- Chat и Cowork: **Customize → Plugins** → kb → **Uninstall**.
-- Code: напишите Claude `выполни claude plugin uninstall kb@krol`.
+- Chat и Cowork: **Customize → Plugins** → bestmentor → **Uninstall**.
+- Code: напишите Claude `выполни claude plugin uninstall bestmentor@krol`.
 
 ## Поддержка
 

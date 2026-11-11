@@ -7,5 +7,5 @@ Each plugin lives in its own folder with its own guide.
 
 | Plugin | What it does | Guide |
 |---|---|---|
-| **kb** — the book "Theory of Castes and Roles" | Claude answers from the book: chapter, quote, or "the book doesn't cover this" | [kb](kb/README.md) |
+| **BestMentor** (`bestmentor`) — the book "Theory of Castes and Roles" | Claude answers from the book: chapter, quote, or "the book doesn't cover this" | [bestmentor](bestmentor/README.md) |
 | **pen** — post editor | Proofreads drafts and transcripts in any language, translates them into American English, fits them to X and LinkedIn | [pen](pen/README.md) |

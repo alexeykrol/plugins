@@ -1,6 +1,6 @@
 [![English](https://img.shields.io/badge/lang-English-blue)](README.md) [![Русский](https://img.shields.io/badge/lang-Русский-lightgrey)](README.ru.md)
 
-# kb — the book «Теория каст и ролей» (Theory of Castes and Roles) as a knowledge base for Claude
+# BestMentor — the book «Теория каст и ролей» (Theory of Castes and Roles) as a knowledge base for Claude
 
 This plugin gives Claude a ready-made knowledge base built from Alexey Krol's book «Теория каст и
 ролей» (Theory of Castes and Roles, 12 chapters). Once it's installed, Claude answers questions
@@ -40,20 +40,20 @@ both ways.
 5. The marketplace is public, so usually there is nothing to do here. **If the app does ask** you
    to connect GitHub (**Connect GitHub**) or install the **Claude GitHub App**, agree and give
    access to the `alexeykrol/plugins` repository.
-6. Find **kb** in the marketplace's plugin list and click **Install**.
+6. Find **bestmentor** (BestMentor) in the marketplace's plugin list and click **Install**.
 7. Start a **new conversation** and type:
 
    ```
-   проверь плагин kb
+   проверь плагин bestmentor
    ```
 
-   (This means "check the kb plugin".) Claude will check that the knowledge base is in place and
+   (This means "check the bestmentor plugin".) Claude will check that the knowledge base is in place and
    show you an example question and answer. After that, just ask questions about the book.
 
 **If the marketplace won't add**, there is a backup
 option: download the skill file [`dist/kb-ask.zip`](dist/kb-ask.zip) (on the file's page, use the
 "Download raw file" button), then in the app go to **Customize → Skills → Upload** and choose that
-file. It works the same way, just without the `проверь плагин kb` check: start asking questions
+file. It works the same way, just without the `проверь плагин bestmentor` check: start asking questions
 right away.
 
 ### Option 2. Code (the Code tab in the app, the terminal, VS Code)
@@ -67,24 +67,24 @@ One installation works in all three places at once.
 2. Send Claude this text:
 
    ```
-   Установи плагин kb из магазина alexeykrol/plugins. Для этого выполни в терминале две команды:
+   Установи плагин bestmentor из магазина alexeykrol/plugins. Для этого выполни в терминале две команды:
    claude plugin marketplace add alexeykrol/plugins
-   claude plugin install kb@krol
+   claude plugin install bestmentor@krol
    Когда закончишь, скажи мне одной фразой, получилось ли, и что делать дальше.
    ```
 
-   (In English: "Install the kb plugin from the alexeykrol/plugins marketplace. To do this, run
+   (In English: "Install the bestmentor plugin from the alexeykrol/plugins marketplace. To do this, run
    these two commands in the terminal: … When you're done, tell me in one sentence whether it
    worked and what to do next.")
 
    Claude will ask for permission to run the commands — click **Allow**.
-3. Start a **new session** and type `проверь плагин kb`.
+3. Start a **new session** and type `проверь плагин bestmentor`.
 
 You can also type the same thing into the terminal yourself:
 
 ```bash
 claude plugin marketplace add alexeykrol/plugins
-claude plugin install kb@krol
+claude plugin install bestmentor@krol
 ```
 
 ---
@@ -118,9 +118,9 @@ through the book, so allow it.
 
 ## Uninstall
 
-- Chat and Cowork: **Customize → Plugins** → kb → **Uninstall**.
-- Code: type to Claude `выполни claude plugin uninstall kb@krol` (this means "run claude plugin
-  uninstall kb@krol").
+- Chat and Cowork: **Customize → Plugins** → bestmentor → **Uninstall**.
+- Code: type to Claude `выполни claude plugin uninstall bestmentor@krol` (this means "run claude plugin
+  uninstall bestmentor@krol").
 
 ## Support
 

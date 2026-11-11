@@ -26,8 +26,8 @@
  },
  "excluded_categories": [],
  "built": "2026-11-09T18:25:06",
- "packed": "2026-11-09",
+ "packed": "2026-11-10",
  "schema_version": 1,
- "plugin_version": "0.3.1",
- "sha256": "51d5318bbdb1513e5c89ac4562c613dc5fba0f1914a65c038d308e67ade5fdd4"
+ "plugin_version": "0.4.0",
+ "sha256": "05cfbd2aebec44002606af31b109190f8488c7cf0840f8d370abfa70f0985f8a"
 }

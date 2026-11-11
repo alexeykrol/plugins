@@ -18,7 +18,7 @@ Owner's decisions and ideas of 09.11.2026. Order of work: first a novice goes th
 
 ## Plugins
 
-Each plugin's own tasks live in its project: kb — `~/Code/Kb_Plugin/BACKLOG.md`, pen — `~/Code/Pen_Plugin/BACKLOG.md`. Here — only what is shared by the marketplace.
+Each plugin's own tasks live in its project: kb — `~/Code/BestMentor_Plugin/BACKLOG.md`, pen — `~/Code/Pen_Plugin/BACKLOG.md`. Here — only what is shared by the marketplace.
 
 ## Claude app bugs (shared by all plugins)
 
@@ -87,7 +87,7 @@ Sources: [Claude Code Desktop](https://code.claude.com/docs/en/desktop.md),
   history** (a new repository or history cleanup). Since 09.11 the test `kb` is a "base in a box" on 47
   of the owner's voice notes (owner's word 09.11: «давай её использовать… какая разница, на
   чём проверять»); acceptable only while the repository is private.
-- [x] The repository was opened 10.11 (pen plugin session). Consequence: the full text of the TCR book in `claude-code/kb` is visible to everyone — the owner decides whether to keep it.
+- [x] The repository was opened 10.11 (pen plugin session). Consequence: the full text of the TCR book in `claude-code/bestmentor (formerly claude-code/kb)` is visible to everyone — the owner decides whether to keep it.
 - [ ] License of the marketplace and kb — owner's decision (pen has MIT since 10.11).
 - [ ] Application to the official Anthropic marketplace: `claude plugin validate`, the form in the
   claude.ai settings. On the owner's "yes".

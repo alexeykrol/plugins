@@ -7,7 +7,7 @@
 
 | Плагин | Для чего | Где работает | Инструкция |
 |---|---|---|---|
-| **kb** — книга «Теория каст и ролей» как база знаний | Claude отвечает по книге: глава, цитата, «в книге этого нет» | Chat, Cowork и Code приложения Claude, терминал, VS Code | [claude-code/kb](claude-code/kb/README.md) |
+| **BestMentor** (`bestmentor`) — книга «Теория каст и ролей» как база знаний | Claude отвечает по книге: глава, цитата, «в книге этого нет» | Chat, Cowork и Code приложения Claude, терминал, VS Code | [claude-code/bestmentor](claude-code/bestmentor/README.md) |
 | **pen** — редактор постов | Корректура текста и расшифровок на любом языке, перевод на американский английский, версии для X и LinkedIn | Chat, Cowork и Code приложения Claude, терминал, VS Code | [claude-code/pen](claude-code/pen/README.ru.md) |
 
 ## Разделы
@@ -24,7 +24,7 @@
   Пользователь подключает его так: `claude plugin marketplace add alexeykrol/plugins`, а
   ставит плагин так: `claude plugin install <плагин>@krol`.
 - Плагины разрабатываются в своих рабочих репозиториях; сюда выкладываются только проверенные
-  версии (например, скрипт `scripts/sync-kb.sh`).
+  версии (например, скрипт `scripts/sync-bestmentor.sh`).
 - Всё системное — скиллы, манифесты, каталог, имена файлов — на английском. README — на
   английском, русская версия рядом (`README.ru.md`).
 - Планы по витрине и страницам плагинов — [BACKLOG.md](BACKLOG.md).
