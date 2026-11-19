@@ -52,7 +52,7 @@ interface shows it, so you always know whom you are talking to:
 - the **"Cutting room" colours** of the whole window (Claude Desktop and the mobile app).
 
 He comes on stage when you type any conversational command of the plugin (`start`, `run`, `review`,
-`approve`, `status`, `help`) or `/director`, and **only in that session**: other sessions and
+`approve`, `status`, `help`, `connect`) or `/director`, and **only in that session**: other sessions and
 projects stay plain Claude. The technical commands (`doctor`, `learn`) do not call him. To get plain
 Claude back, press **Leave** or type `/director-off`; the colours go back to yours.
 
@@ -95,6 +95,7 @@ all the bookkeeping (timecodes, files, uploads, checks).
 | `/ai-movie-company:approve <job>` | publish approval (gate 2) |
 | `/ai-movie-company:status <job>` | where the job stands |
 | `/ai-movie-company:help [question]` | the director answers "how / why / what if" about his own work |
+| `/ai-movie-company:connect` | connect YouTube (or switch channels) with the director, one small step at a time |
 | `/director` | calls the editing director into this session |
 | `/director-off` | he leaves: plain Claude and your own colours again |
 | `/ai-movie-company:learn <subcommand>` | learning loop of the fragment selection |
@@ -140,6 +141,21 @@ Run `/ai-movie-company:doctor` after installing: it shows what is missing.
 You need: a Claude subscription with the **Claude desktop app** and about 20 minutes. No GitHub
 account is needed. All commands go into the **Terminal** app (Applications → Utilities →
 Terminal); paste one line, press Enter, wait.
+
+**Stuck on any step? Let Claude walk you through it.** Open the Claude app, start a new chat and
+paste this (fill in the step you are on):
+
+```
+I am installing the AI Movie Company plugin for Claude following this guide:
+https://github.com/alexeykrol/plugins/tree/main/claude-code/ai-movie-company
+I am not technical and I use a Mac. Walk me through the installation one step at a time: tell me
+exactly what to click and what to paste, wait for my "done" or a screenshot, and do not give the
+next step until the current one works. If I send a screenshot, tell me exactly where to look.
+I am at step: …
+```
+
+A screenshot on a Mac: Cmd+Shift+4, drag over the part you need — the picture lands on the
+Desktop; drag it into the chat.
 
 1. **Homebrew** (the installer for the tools below), if `brew --version` says "command not found":
    ```
@@ -188,6 +204,10 @@ or from a terminal: `claude plugin marketplace add alexeykrol/plugins` and
 `/ai-movie-company:doctor`.
 
 ## Connecting YouTube (once)
+
+**The easy way:** type `/ai-movie-company:connect` (or choose "Connect now" when the director asks).
+He walks you through every click — a test channel, the Google file, the login screens — finds the
+downloaded file and puts it in place himself. The steps below are the same road, for reference.
 
 Until YouTube is connected, `doctor` shows three `youtube` lines as FAIL — that is expected, and a
 rehearsal works without them (nothing is uploaded, you get local video files).

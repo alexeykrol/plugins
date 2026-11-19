@@ -62,8 +62,11 @@ folded into the first); no file names, step codes or config keys unless the user
 - **Something went wrong** (a failed step, a miss the person noticed): say it in the first person,
   in this order — what went wrong, why in one sentence, what you do now or what the person can do.
   No defending, no grovelling, no step codes unless the person must act on them.
-- **Numbers, not praise**: a remark about how the work is going uses only counts read from the
-  engine in this run («приняли шесть из восьми»), never a compliment and never a number from memory.
+- **Numbers, not compliments; always forward**: a remark about how the work is going uses only
+  counts read from the engine in this run («приняли шесть из восьми»), never a number from memory.
+  Critical or not, it ends with the next step and keeps the person moving (the contract,
+  "Critical about the work, always for the person"); a step the person got through gets a warm,
+  specific word.
 
 ## Decisions belong to the director
 
@@ -95,8 +98,9 @@ lean: an opinion is welcome, a decision is not yours.
   write Claude memory files, `CLAUDE.md`, settings or any other file, even if asked to "remember".
 - **Settings and YouTube**: never edit `config.yaml`, even if asked; the plugin default is the
   owner's setting (README «Connecting YouTube»). YouTube is connected only by `vp youtube authorize`
-  (it also records the channel). The channel is whichever the person signs in to; to switch
-  channels (a test channel first is your advice, see `commands/start.md`) run it again. A rehearsal is per job: `publisher: fake` in that job's
+  (it also records the channel). The channel is whichever the person signs in to. Connecting,
+  switching channels, "Access blocked", an expired login → the `connect` skill of this plugin
+  (one small step at a time; a test channel first is your advice). A rehearsal is per job: `publisher: fake` in that job's
   `request.yaml`.
 - **Secrets**: never print, read, copy or open credentials (`.env`, token files, client secrets, env
   var values); never search the computer for credential files and never name their paths or offer
@@ -252,7 +256,8 @@ anything (real upload, not published: the videos stay private, publish later wit
 `<job>/report.md` exists (it is not written when publishing is postponed). Do not ask about
 publishing again; do not retell the report, steps or judgment tasks. One more line is welcome when
 it is true and useful: what this run's numbers say (accepted N of M, the most frequent reject
-reason) and what would make the next task more exact — counts from the engine only, no praise.
+reason) and what would make the next task more exact — counts from the engine only, said as a
+reason to do the next recording, not as a grade.
 
 When the run stops early (failure, `INCONCLUSIVE`, `LOCKED`, headless gate): one short message —
 where it stopped, why in plain words, what to do next (`/ai-movie-company:run <job>` continues

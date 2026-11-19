@@ -706,6 +706,81 @@ def fill_channel_handle(cfg: dict[str, Any], handle: Any, *,
         out(f"config: brand.channel_plate set to {h} in {path}")
 
 
+# ---- the Google client file, for people who never edited a settings file -----------------------
+# Code does the bookkeeping (find, check, copy, permissions); the model only talks to the person.
+# The file's secret is never printed: only its kind and the (public) project id are read.
+
+CLIENT_SEARCH_DIRS = ("Downloads", "Desktop", "Documents")
+CLIENT_MAX_BYTES = 64 * 1024
+
+
+def client_kind(path: Any) -> str | None:
+    """'installed' (Desktop app — the right one), 'web' (wrong type), or None (not a client file)."""
+    try:
+        p = Path(str(path)).expanduser()
+        if not p.is_file() or p.stat().st_size > CLIENT_MAX_BYTES:
+            return None
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    for kind in ("installed", "web"):
+        block = data.get(kind)
+        if isinstance(block, dict) and block.get("client_id") and block.get("client_secret"):
+            return kind
+    return None
+
+
+def find_clients(home: Path | None = None) -> list[dict[str, Any]]:
+    """Google client files in ~/Downloads, ~/Desktop, ~/Documents (top level only), newest first."""
+    base = home or Path.home()
+    found: list[dict[str, Any]] = []
+    for d in CLIENT_SEARCH_DIRS:
+        folder = base / d
+        try:
+            entries = list(folder.iterdir())
+        except OSError:
+            continue
+        for f in entries:
+            if f.suffix.lower() != ".json" or "client" not in f.name.lower():
+                continue
+            kind = client_kind(f)
+            if kind:
+                found.append({"path": str(f), "kind": kind, "mtime": f.stat().st_mtime})
+    return sorted(found, key=lambda x: -x["mtime"])
+
+
+def install_client(cfg: dict[str, Any], src: Any, out: Callable[[str], None] = print) -> int:
+    """Copy a Desktop-app client file to youtube.client_secrets_path (owner-only permissions)."""
+    yt = cfg.get("youtube") or {}
+    dst_s = yt.get("client_secrets_path")
+    if not dst_s:
+        out("youtube.client_secrets_path is not set")
+        return 2
+    kind = client_kind(src)
+    if kind is None:
+        out("not a Google OAuth client file (expected the JSON downloaded from Google Cloud: "
+            "Clients -> your client -> Download JSON)")
+        return 2
+    if kind == "web":
+        out("wrong client type: this is a 'Web application' client; YouTube login here needs a "
+            "'Desktop app' client (Google Cloud -> Google Auth Platform -> Clients -> Create client "
+            "-> Desktop app)")
+        return 2
+    srcp, dst = Path(str(src)).expanduser(), Path(str(dst_s)).expanduser()
+    data = srcp.read_bytes()
+    if dst.is_file() and dst.read_bytes() == data:
+        out("the client file is already in place")
+        return 0
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write(dst, data)
+    os.chmod(dst, stat.S_IRUSR | stat.S_IWUSR)
+    pid = client_project_id(dst)
+    out("client file installed (contents not shown)" + (f"; Google Cloud project {pid}" if pid else ""))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     import argparse
     from ..core.config import load_config
@@ -715,8 +790,23 @@ def main(argv: list[str] | None = None) -> int:
     cv = sub.add_parser("convert-token", help="Legacy pickle token -> JSON at youtube.token_path")
     cv.add_argument("pickle_path")
     sub.add_parser("status", help="is the channel connected? (1 quota unit)")
+    sub.add_parser("client-find", help="list Google client files in Downloads/Desktop/Documents")
+    ci = sub.add_parser("client-install", help="copy a Desktop-app client file into place")
+    ci.add_argument("path")
     args = ap.parse_args(argv)
     cfg = load_config()
+    if args.cmd == "client-find":
+        here = (cfg.get("youtube") or {}).get("client_secrets_path")
+        if here and client_kind(here) == "installed":
+            print(f"in place: {here}")
+        found = find_clients()
+        for f in found:
+            print(f"{f['kind']}\t{f['path']}")
+        if not found and not (here and client_kind(here) == "installed"):
+            print("none")
+        return 0
+    if args.cmd == "client-install":
+        return install_client(cfg, args.path)
     if args.cmd == "status":
         d = status_detail(cfg)
         print(d["message"])
@@ -750,6 +840,10 @@ def authorize(cfg: dict[str, Any], login: Callable[[str], Any] | None = None,
     if not secrets:
         out("set youtube.client_secrets_path in <vp_home>/config.yaml first (the Google "
             "OAuth client file)")
+        return 2
+    if client_kind(secrets) != "installed":
+        out("no Google client file in place yet: run `vp youtube client-find`, then "
+            "`vp youtube client-install <path>`")
         return 2
     out("A browser window opens: log in with the Google account that owns the YouTube channel and "
         "allow access. If Google shows \"Access blocked ... Error 403: access_denied\", close it: "

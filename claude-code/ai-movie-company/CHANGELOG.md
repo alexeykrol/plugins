@@ -2,6 +2,23 @@
 
 All notable changes to ai-movie-company. Versions follow [semver](https://semver.org/).
 
+## 0.6.3 — 2026-11-19
+- **The director walks newcomers through every click.** New `/ai-movie-company:connect` (and the
+  "Connect now" choice in the guided start): a test channel first (how to create one), the Google
+  client file, the three Google login screens ("Google hasn't verified this app" → Advanced → Go
+  to…), access_denied, switching channels, the weekly re-login — one small step per message,
+  button words as on screen, a screenshot whenever the person hesitates.
+- `vp youtube client-find` / `client-install <path>`: the plugin finds the downloaded Google client
+  file in Downloads / Desktop / Documents and puts it in place itself (owner-only permissions, its
+  secret never printed); a "Web application" client is refused in plain words. The login says what
+  to do when the file is missing instead of failing.
+- Contract: **critical about the work, always for the person** — exact, even severe remarks about
+  fragments and tasks always come with the next step; never a verdict on the person. A step the
+  person got through gets a warm, specific word. New section "When the person does something by
+  hand".
+- README: a ready prompt to paste into Claude when stuck on any installation step; the director's
+  help page on connecting YouTube rewritten.
+
 ## 0.6.2 — 2026-11-19
 - **Any channel, a test channel first.** The channel is whichever the person signs in to; the
   director advises starting on a separate test channel without a real audience and switching when

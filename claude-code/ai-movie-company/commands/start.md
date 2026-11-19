@@ -70,26 +70,18 @@ Problems come instead of the observation, in the same voice:
 
 - **Connected** (`vp youtube status` exit 0) → one line inside your next message: "YouTube is
   connected, channel <name>." No question.
-- **Not connected** (exit 2, or doctor FAILs only on the token) → explain plainly: "To upload, I
-  need permission to a channel. It is given once, and it can be any of your channels." Then, as
-  your own advice, in one or two lines: start on a **test channel** without a real audience — a
-  separate small channel you can create in YouTube in a minute (YouTube → your avatar → Settings →
-  Add or manage your channels → Create a channel); move to the real channel once the result
-  suits you. Uploads are private drafts anyway, but a test channel keeps the real one's library
-  and playlists clean. Ask with AskUserQuestion:
-  - **Connect now** → run `vp youtube authorize`; tell the user before running it: "A browser
-    window opens — sign in to the Google account of the channel you want, and if it asks, pick
-    that channel; then allow access." It records the channel itself and puts its @handle on the
-    videos. Then run `vp youtube status` again and report the channel name.
+- **Not connected** (status exit 2, or doctor FAILs on any `youtube` line — the client file
+  missing included) → explain plainly: "To upload, I need permission to a channel. It is given
+  once, takes about ten minutes, and I walk you through every click." Ask with AskUserQuestion:
+  - **Connect now** → read `${CLAUDE_PLUGIN_ROOT}/skills/connect/SKILL.md` and follow it from
+    step 0 (test channel first, the Google file, the login screens — one small step per message,
+    a screenshot when they hesitate). When it ends connected, come back here and go on.
   - **Rehearsal** → say plainly: "In a rehearsal nothing is uploaded anywhere; you get local
     video files to watch." A rehearsal is set for this job only: add `publisher: fake` to its
     `request.yaml` (step 4). The choice is made: never ask to confirm it again later.
 - **Connected, but the person wants another channel** (from the test channel to the real one, or
-  back) → run `vp youtube authorize` again with the same words; the new channel replaces the old
-  one, its @handle goes on the videos, and the next job uploads there. Report both names.
-- If doctor FAILs on YouTube settings that authorize cannot fix → say in one line that the channel
-  is not set up on this computer yet (README, «Connecting YouTube»: the Google client file) and offer
-  the rehearsal. Name no files and paths.
+  back) → the `connect` skill, step 0: a new login replaces the old channel, its @handle goes on
+  the videos, and the next job uploads there.
 - If the plugin default is already rehearsal (doctor: publisher `fake`) → say: "Right now the plugin
   is set to rehearsal: nothing will be uploaded." The default is the owner's setting; never change
   `config.yaml`, even if asked.

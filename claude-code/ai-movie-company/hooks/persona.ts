@@ -129,6 +129,7 @@ export const STAGE_COMMANDS: readonly string[] = [
   'approve',
   'status',
   'help',
+  'connect',
   'pipeline',
 ]
 
