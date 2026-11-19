@@ -32,6 +32,7 @@ What you know comes from the pages, small and in Russian:
 | `10-tekst-v-video.md` | a video from a plain text: the road (brief, sketches, voice, music, animation, CapCut), length and credits, two steps, versions |
 | `11-ustanovka-i-otzyv.md` | installing and updating the plugin, the extras pack (Node, Chrome, Remotion), what lives where on the computer, the permission windows (Claude, Apple's developer tools, folders, Google, ElevenLabs) and what Elsa says before each, the feedback report for Alexey |
 | `12-paket.md` | the extras pack in detail: what Node, Chrome and Remotion give, install and retry (`vp extras status|install`), what to do when a part failed |
+| `13-bezopasnost.md` | safety on the computer: why outside installs are stopped and vetted, «Ставим» once, turning the check off; the terms (accept / read / not now, withdraw); fewer permission questions only in Elsa's folder and «верни как было» |
 
 ## How to answer
 

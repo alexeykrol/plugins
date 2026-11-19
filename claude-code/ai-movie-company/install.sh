@@ -40,9 +40,9 @@ say()  { echo "$*"; }
 step() { echo "[$1/$STEPS] $2"; }
 fail() { echo "✗ $2"; echo "STATUS: FAILED $1"; exit 1; }
 
-# fetch URL SHA256 DEST
+# fetch URL SHA256 DEST — https only, redirects included; the sha256 decides, not the server
 fetch() {
-  curl -fsSL --retry 3 -m 600 -o "$3" "$1" || fail download "could not download $1 — the internet connection dropped? Run the installer again; finished steps are kept."
+  curl -fsSL --proto '=https' --proto-redir '=https' --retry 3 -m 600 -o "$3" "$1" || fail download "could not download $1 — the internet connection dropped? Run the installer again; finished steps are kept."
   local got; got="$(shasum -a 256 "$3" | awk '{print $1}')"
   [ "$got" = "$2" ] || fail checksum "the downloaded file $1 is not the expected one (checksum) — nothing installed from it; try again later"
 }
@@ -145,11 +145,25 @@ fi
 rm -f "$DEVTOOLS_MARK"
 step 1 "Apple developer tools: ready"
 
-# 2. Claude command line (the official installer, into ~/.local/bin)
+# 2. Claude command line (the official installer, into ~/.local/bin). Its version is not pinned
+#    (Claude updates itself); the installer checks the binary against Anthropic's manifest, and we
+#    check that what landed is signed by Anthropic's Apple Developer ID (Team ID measured on
+#    claude 2.1.326, 2026-11-19: "Developer ID Application: Anthropic PBC (Q6L2SF6YDW)").
+CLAUDE_TEAM_ID=Q6L2SF6YDW
+claude_signed() {
+  local exe; exe="$(command -v claude)" || return 1
+  /usr/bin/codesign --verify --strict "$exe" >/dev/null 2>&1 || return 1
+  /usr/bin/codesign -dv "$exe" 2>&1 | grep -qx "TeamIdentifier=$CLAUDE_TEAM_ID"
+}
 if ! command -v claude >/dev/null 2>&1; then
   say "      installing the Claude command line…"
-  curl -fsSL https://claude.ai/install.sh | bash >/dev/null 2>&1 || fail claude "could not install the Claude command line (internet?)"
+  curl -fsSL --proto '=https' --proto-redir '=https' https://claude.ai/install.sh | bash >/dev/null 2>&1 \
+    || fail claude "could not install the Claude command line (internet?)"
   command -v claude >/dev/null 2>&1 || fail claude "Claude command line did not appear in $BIN"
+  if ! claude_signed; then
+    rm -f "$BIN/claude"
+    fail claude "the downloaded Claude command line is not signed by Anthropic — it was removed and not used; try again later"
+  fi
 fi
 step 2 "Claude command line: ready"
 
@@ -173,6 +187,8 @@ if ! find_python; then
     install -m 755 "$TMP/$UV_PKG/uv" "$BIN/uv"
   fi
   say "      installing Python 3.13…"
+  # uv 0.13.6 (pinned above) resolves 3.13 to 3.13.18 (python-build-standalone 20261026) and checks
+  # it against the sha256 built into uv itself (docs/supply-chain-audit-2026-11-19.md)
   uv python install 3.13 >/dev/null 2>&1 || fail python "could not install Python 3.13 (internet?)"
   find_python || fail python "Python 3.13 did not appear in $BIN"
 fi

@@ -223,6 +223,13 @@ lean: an opinion is welcome, a decision is not yours.
   .fcpxml), then File → Import → Subtitle… (the .srt) and drag it onto the timeline at 00:00;
   Final Cut Pro — File → Import → XML… (untested: say so). `--baked-cards` = cards exactly as
   published (text baked in) instead of editable titles. Never run Resolve scripting.
+- **Outside code, the terms, the permission mode** (the contract, "Safety on the person's
+  computer"): any command that would install outside code is stopped by the plugin's guard
+  ("install guard: STOPPED (id …)") → the `vet` skill of this plugin, never a workaround. Installs
+  (`vp extras install`, the installer), uploads and publishing wait for the accepted terms ("not
+  accepted the plugin's terms" → `vp consent show` and the three buttons). The only settings file
+  the plugin ever writes is Elsa's own workspace settings through `vp mode enable`, after the
+  person's yes; never the global `~/.claude/settings.json`, never the session's mode selector.
 - **Other folders**: work only on the job folder the user named; never read, offer or run on other
   runs' job folders (not even to estimate time — use the recording length), never on system folders.
 

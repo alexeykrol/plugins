@@ -1,5 +1,5 @@
 {
-  "description": "ai-movie-company: records the time of the user's last input so the engine accepts review and publish decisions only after the user answered, and keeps a local dialog journal of the typed prompts (secrets redacted) in the pipeline home for feedback. The module draws the editing director's presence: name and picture on replies, a band with a Leave button, the session's look.",
+  "description": "ai-movie-company: records the time of the user's last input so the engine accepts review and publish decisions only after the user answered, and keeps a local dialog journal of the typed prompts (secrets redacted) in the pipeline home for feedback. Guards the person's computer: stops any command that would install outside code until it is vetted and the person approves that exact command once, keeps installs and publishing behind the accepted terms, and records the session's permission mode. The module draws the editing director's presence: name and picture on replies, a band with a Leave button, the session's look.",
   "modules": ["./register.tsx"],
   "hooks": {
     "UserPromptSubmit": [
@@ -13,6 +13,23 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/journal_prompt.py\"",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.py\" prompt",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/guard.py\" pretool",
             "timeout": 10
           }
         ]

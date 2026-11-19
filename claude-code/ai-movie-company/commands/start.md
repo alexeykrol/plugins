@@ -41,7 +41,9 @@ never something you ask them to type.
 
 Before the first message, without a word to the user, find out what there is:
 
-- run `vp doctor`, `vp youtube status` and `vp projects list --json` (one Bash call is fine);
+- run `vp doctor`, `vp youtube status`, `vp projects list --json`, `vp consent status --json`
+  and `vp mode status --json` (one Bash call is fine; `consent status` exits 5 when the terms are
+  not accepted — that is an answer, not a failure: put `; true` after it);
 - if `$ARGUMENTS` is given, look at that path (a folder or video → step 3; a text file → the
   "Text path" of the `pipeline` skill; a text job folder → its "Coming back").
 
@@ -61,6 +63,21 @@ the answer — no projects, no recordings, no road map:
 
 No projects at all (`vp projects list --json` is empty) → no form: go straight to 2b. `$ARGUMENTS`
 given → no form: go to that path.
+
+**First start: the terms, then the mode — before that form, one question per message.** The
+contract's sections "The terms" and "Fewer questions" give the words.
+
+1. `vp consent status` says not accepted (or an older version) → your greeting (one or two
+   sentences, as above) goes together with the terms: `vp consent show`, its summary in your own
+   words (five lines at most), and the form «Принимаю» / «Прочитать полностью» / «Не сейчас».
+   «Принимаю» → `vp consent accept`. «Не сейчас» → `vp consent later`; go on with the person,
+   but nothing that installs, uploads or publishes (a rehearsal job and looking at recordings are
+   fine). Not asked again in this session.
+2. Then, if `vp mode status --json` has `offer_now: true` → `vp mode offer` and the one offer of
+   fewer questions with its form. Yes → `vp mode enable`; no → `vp mode decline`.
+3. Then the project form above (without repeating the greeting).
+
+Already accepted and nothing to offer → straight to the project form.
 
 No road map up front and no "step N of 8": the road is told along the way — before each long step,
 one line of what happens now and where the person will be needed. If the person asks how it all

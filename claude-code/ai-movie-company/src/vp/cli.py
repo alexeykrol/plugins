@@ -27,6 +27,11 @@
   resolve export <job> [item ...]            FCPXML rough cut + .srt (DaVinci Resolve, Final Cut Pro):
                                              vp.adapters.fcpxml:main (alias: fcpxml)
   asks add|set|list <job|-> ...              ledger of the person's requests: vp.asks:main
+  consent status|show|accept|later|withdraw  the plugin's terms: vp.safety:consent_main
+  guard status|approve|off|on                the install guard's stops and one-time approvals:
+                                             vp.safety:guard_main (enforced by hooks/guard.py)
+  mode status|offer|enable|decline|undo      "fewer questions" in Elsa's workspace only:
+                                             vp.safety:mode_main
 
 Global option: --home <dir> (anywhere on the line, also after `learn` / `knowledge`) sets VP_HOME
 for the command — the pipeline home with config.yaml, knowledge store, journals.
@@ -70,6 +75,9 @@ SUBCOMMAND_MAINS = {
     "check": "vp.check:main",
     "journal": "vp.journal:main",
     "feedback": "vp.journal:feedback_main",
+    "consent": "vp.safety:consent_main",
+    "guard": "vp.safety:guard_main",
+    "mode": "vp.safety:mode_main",
 }
 
 
@@ -145,7 +153,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("item")
     for name in ("learn", "knowledge", "review", "approve", "doctor", "youtube", "results",
                  "progress", "capcut", "resolve", "fcpxml", "asks", "design", "projects", "text",
-                 "check", "journal", "feedback"):
+                 "check", "journal", "feedback", "consent", "guard", "mode"):
         s = sub.add_parser(name, add_help=False)
         s.add_argument("rest", nargs=argparse.REMAINDER)
     return p

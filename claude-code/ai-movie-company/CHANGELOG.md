@@ -2,6 +2,29 @@
 
 All notable changes to ai-movie-company. Versions follow [semver](https://semver.org/).
 
+## 0.8.2 — 2026-11-19
+
+Safety on the person's computer.
+
+- **Audited install path.** Everything the install brings onto the Mac (328 items: programs,
+  Python and npm packages, the Remotion plugin, the store) was checked on 2026-11-19; nothing is
+  rejected. A release is refused when the audit is older than 14 days or misses a pinned item.
+  Downloads are https-only; a freshly installed `claude` must carry Anthropic's code signature.
+
+- **Outside installs are stopped and vetted.** A hook stops any command that would bring
+  outside code (npm/npx/pnpm/yarn/bun, pip/uv, brew, cargo, gem, go install, `claude plugin
+  install`, `marketplace add`, `mcp add`, a download run by a shell). Elsa vets it with the new
+  `/ai-movie-company:vet` skill and asks «Ставим» / «Не ставим»; a yes lets through exactly that
+  command once, within 30 minutes. The plugin's own pinned installs pass. Off only by the
+  person's explicit choice (`vp guard off`) or `AIMC_GUARD=off`.
+- **Terms of use (draft).** `TERMS.md` / `TERMS.ru.md`; on first start Elsa shows a summary with
+  «Принимаю» / «Прочитать полностью» / «Не сейчас». Until accepted, nothing is installed or
+  published from the dialog (a rehearsal works).
+- **Fewer permission questions, only in Elsa's folder.** If the session asks before every
+  command, Elsa offers once to write `~/Movies/AI Movie Company/.claude/settings.json`
+  (acceptEdits plus allow rules for her own engine); «верни как было» restores it byte for byte.
+  The global settings and the mode switch are never touched.
+
 ## 0.8.1 — 2026-11-19
 
 The install a newcomer barely sees (inventory: `docs/permissions-0.8.1.md`).

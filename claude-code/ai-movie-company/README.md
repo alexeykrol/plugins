@@ -114,6 +114,7 @@ in the source repository). Remotion has its own license: free for individuals, c
 | `/director-off` | she leaves: plain Claude and your own colours again |
 | `/ai-movie-company:learn <subcommand>` | learning loop of the fragment selection |
 | `/ai-movie-company:doctor` | checks Python, ffmpeg and settings |
+| `/ai-movie-company:vet` | checks outside code (a package, a plugin, a script) before it is installed — the guard calls it by itself |
 
 A **job** is a folder with `request.yaml` and the sources: `_cut.mp4` (video), `_cut.srt`
 (subtitles) and optionally `_cut.json` (word timings). Example `request.yaml`:
@@ -201,6 +202,43 @@ Python 3.12+ and ffmpeg with libass that you already have are left alone.
 If you live in a terminal: `claude plugin marketplace add alexeykrol/plugins`,
 `claude plugin install ai-movie-company@krol`, then `/ai-movie-company:doctor`.
 
+## Safety, terms and permission questions
+
+**The install guard (on by default).** Wherever the plugin is enabled, a hook stops every command
+that would bring outside code onto your computer — `npm`/`npx`/`pnpm`/`yarn`/`bun` installs,
+`pip`/`pipx`/`uv`/`uvx`, `brew`, `cargo`, `gem`, `go install`, `claude plugin install`,
+`claude plugin marketplace add`, `claude mcp add`, a script downloaded and piped into a shell or
+run right after downloading, a macOS `installer -pkg` — whoever suggested it. Elsa says what it
+was, vets it (exact name and version, a release at least 14 days old, fresh incident reports,
+install scripts, look-alike names), tells you her verdict and asks **«Ставим» / «Не ставим»**.
+Only after your own «Ставим» does that exact command run, once, within 30 minutes; any other
+command is a new check. The plugin's own pinned installs pass without a stop: the installer from
+this store, `vp extras install` and `npm ci --ignore-scripts` of its own lockfile.
+
+The guard also keeps its own records (your acceptance of the terms, approvals, its settings, the
+record of your answers) out of reach of Claude's file tools. **To turn the guard off** — an
+explicit choice only: tell Elsa "turn off the install check"; she asks with buttons and turns it
+off only on your «Отключить проверку» (`vp guard off --request`, then `--confirm`); "turn the
+check back on" → `vp guard on`. For developers: the environment variable `AIMC_GUARD=off` for the
+process that runs Claude. What it does not catch: code you install outside Claude, a repository
+cloned and built by hand, a program that downloads more code by itself after it was approved.
+
+**The terms.** On the first start Elsa shows a short summary of [TERMS.md](TERMS.md) (Russian:
+[TERMS.ru.md](TERMS.ru.md)) with three buttons: «Принимаю» / «Прочитать полностью» / «Не сейчас».
+The version and date of your acceptance are stored only on your computer
+(`~/.ai_video_pipeline/consent.json`). Until you accept, the plugin installs nothing and uploads
+or publishes nothing (a rehearsal works). The terms are a **draft** until a lawyer has read them.
+
+**Fewer permission questions — only in Elsa's folder.** If your session asks before every command
+(the Manual mode), Elsa offers once to stop asking for her own commands in her folder
+`~/Movies/AI Movie Company`. On your yes she writes `~/Movies/AI Movie Company/.claude/settings.json`
+(`defaultMode: acceptEdits` and allow rules for the plugin's engine), and the guard hook lets a
+plain call of the plugin's engine through there without Claude's card. Your global
+`~/.claude/settings.json` and your mode selector are never touched. "Put it back" (`vp mode undo`)
+restores that file byte for byte, or removes it if it was not there. Why not Auto: Claude Code
+does not accept `defaultMode: auto` from a folder's settings, only from your own user settings or
+the selector — which stay your choice.
+
 ## Connecting YouTube (once)
 
 Type `/ai-movie-company:connect` (or choose "Connect now" when the director asks). Two steps: pick
@@ -248,6 +286,12 @@ them. Advanced: your own Google client and other settings live in `~/.ai_video_p
   `~/Movies/AI Movie Company/Feedback/` (not the Desktop: macOS asks permission for the Desktop);
   a Finder window opens with the file selected. While the installer waits for Apple's developer
   tools it keeps one small marker file in `~/.ai_video_pipeline/install/` and removes it after.
+- **Safety records** in `~/.ai_video_pipeline/`: `consent.json` (the version and date of the
+  accepted terms), `guard/` (the install guard's stops, one-time approvals, vet reports, its
+  on/off setting, a log), `mode.json` (whether "fewer questions" is on, and a byte copy of the
+  settings file it replaced); with "fewer questions" on — `~/Movies/AI Movie Company/.claude/settings.json`.
+  The guard hook also notes this session's permission mode (`session_modes.json` in the plugin
+  data folder).
 - **The plugin data folder** (`${CLAUDE_PLUGIN_DATA}`, else `~/.ai_video_pipeline/runtime`): a
   Python virtual environment with the pinned packages. Deleted when you uninstall the plugin.
 - **The plugin's own store** (a JSON file under your Claude Code configuration folder), written by
