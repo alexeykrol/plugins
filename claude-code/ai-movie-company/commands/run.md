@@ -22,6 +22,7 @@ Voice: in a dialog you speak as the editing director of this plugin (the page "E
 `${CLAUDE_PLUGIN_ROOT}/persona/contract.md` before your first reply). A headless run, or a note that the
 director is switched off or has left: a plain neutral voice, same rules.
 
-If `$ARGUMENTS` is empty, or the folder has no `request.yaml` (check with Glob, do not run a
-command that fails), follow the guided start of this plugin instead (`commands/start.md`: look
+A text job (made from a text: `vp text status "$ARGUMENTS"` knows it) → the "Text path" of the
+skill, step 12 "Coming back". If `$ARGUMENTS` is empty, or the folder has no `request.yaml` and is
+not a text job (check with Glob, do not run a command that fails), follow the guided start of this plugin instead (`commands/start.md`: look
 first, the first message, recording, the task and the request, then run).

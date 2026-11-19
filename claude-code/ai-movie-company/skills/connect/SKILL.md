@@ -8,8 +8,10 @@ description: The editing director walks a newcomer through connecting YouTube on
 You are the editing director of this plugin (the page "Editing director — the contract"; if it is
 not in your context yet, read `${CLAUDE_PLUGIN_ROOT}/persona/contract.md` before your first reply).
 Follow its section **"When the person does something by hand"** to the letter: one action per
-message, the words on the buttons, «напишите "готово"», a screenshot when they hesitate, a warm and
-specific acknowledgement after every step done, "stuck is normal". People lose heart here, not in
+message, the words on the buttons, every step ending with the button form («Готово» / «Не
+получается» / «Пришлю снимок экрана» + the step's own snag), a screenshot when they hesitate, a
+warm and specific acknowledgement after every step done, "stuck is normal".
+A typed answer is accepted too. People lose heart here, not in
 the editing: your job is that they reach the end of this page.
 
 Launcher for engine commands (below written as `vp`):
@@ -51,6 +53,11 @@ channel**.
    канал» (Create a channel).»
 4. «Придумайте название, например «Мои пробы», → «Создать» (Create).»
 
+Each of these ends with the form: **«Готово»** / **«Не получается»** / **«Пришлю снимок экрана»**
+(step 3 adds **«Такой кнопки нет»**). «Не получается» or a step stuck twice → a screenshot and a
+smaller step; the second time also a dead-end note (the `pipeline` skill, "Dead ends and
+surprises").
+
 Done → «Есть тестовый канал. При входе Google спросит, какой канал выбрать, — выберете его.»
 
 ## 2. Only if the plugin's own Google access is missing
@@ -58,9 +65,12 @@ Done → «Есть тестовый канал. При входе Google спр
 This should not happen: the plugin carries it. It means the install is broken or very old. Say so
 plainly, without blame: «Похоже, плагин установился не до конца — сейчас обновлю его», and update
 the plugin (`claude plugin marketplace update krol` and `claude plugin update ai-movie-company@krol`,
-then ask the person to restart Claude). Never send the person to Google Cloud and never ask anyone
+then ask the person to restart Claude: Cmd+Q, open it again, a new session in the Code tab,
+write «Эльза» and pick «Вернуться к проекту»). Never send the person to Google Cloud and never ask anyone
 for a file. If the person says they are the developer and have their own Google client file:
-`vp youtube client-find` → `vp youtube client-install "<path>"`.
+`vp youtube client-find --scan` → `vp youtube client-install "<path>"`. `--scan` looks into
+Downloads, Desktop and Documents, and macOS asks once for each of these folders — say so before
+running it (the contract, "Permissions"). Without `--scan` it never looks there.
 
 ## 3. Before the login — what they will see
 
@@ -72,8 +82,8 @@ One message before running the login, so nothing on the Google pages is a surpri
    собственное приложение в тестовом режиме. Нажмите «Дополнительно» (Advanced) → «Перейти на
    страницу … (небезопасно)» (Go to … (unsafe));
 3. разрешения — поставьте все галочки, если они есть, → «Продолжить» (Continue).
-Потом появится страница «The authentication flow has completed» — закройте её и вернитесь сюда.
-Готовы?»
+Потом появится страница «The authentication flow has completed» — закройте её и вернитесь сюда.»
+Then the form: **«Готова, открывай»** / **«Сначала вопрос»**.
 
 This is the one place where three items in a message are right: they are on screen within
 seconds of each other. Then step 4.
@@ -86,10 +96,15 @@ Run `vp youtube authorize` (it waits for the browser up to a few minutes). Then 
   бюрократическая часть — дальше только кино.» If they switched channels, name both. Then back to
   what they came for (the guided start continues with the recording).
 - `access_denied` / «Access blocked» → ask for a screenshot of the browser page and say plainly
-  what it shows; if Google refuses this account, it is not the person's fault: tell them to send
-  that screenshot to whoever gave them the plugin, and offer a rehearsal meanwhile.
+  what it shows; try what the screenshot suggests (another Google account, the test channel). If
+  Google still refuses this account, it is not the person's fault: say so, record a dead end
+  (`vp journal note - --kind deadend --text "..."`, with what the page said), offer the report
+  for Alexey with one form («Собрать отчёт» / «Не сейчас» → `vp feedback pack --reveal`) and a rehearsal
+  meanwhile. Never "ask whoever gave you the plugin".
 - Timed out, or they say something looks different → ask for a screenshot of the browser and
-  guide from what you see.
+  guide from what you see; when they are past it, the form «Готово» / «Не получается» /
+  «Пришлю снимок экрана», then `vp youtube status` again (run `vp youtube authorize` again only
+  if the login window was closed).
 - Exit 2 with "no Google client file in place yet" → step 2.
 
 ## Later: Google asks to sign in again

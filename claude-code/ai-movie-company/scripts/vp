@@ -30,7 +30,13 @@ if [ -n "${VP_PYTHON:-}" ]; then
 fi
 
 PY=""
+# macOS: /usr/bin/python3 is a stub until Apple's command line tools are installed; calling it then
+# pops Apple's "install developer tools" window. While the tools are missing, the unversioned
+# `python3` is not tried at all (every real Python 3.12+ also has its versioned name).
+NO_STUBS=""
+if [ "$(uname -s)" = "Darwin" ] && ! xcode-select -p >/dev/null 2>&1; then NO_STUBS=1; fi
 for cand in python3.14 python3.13 python3.12 python3; do
+  if [ -n "$NO_STUBS" ] && [ "$cand" = python3 ]; then continue; fi
   if command -v "$cand" >/dev/null 2>&1 \
      && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null; then
     PY="$(command -v "$cand")"

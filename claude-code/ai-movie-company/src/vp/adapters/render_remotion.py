@@ -203,11 +203,16 @@ def _node_major(node: str) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def find_node(configured: str | None = None) -> str | None:
-    """Node binary: the configured one, then PATH, then the newest nvm install, then Homebrew."""
+def find_node(configured: str | None = None, home: str | os.PathLike | None = None) -> str | None:
+    """Node binary: the configured one, the extra pack's (`vp extras`), then PATH, the newest nvm
+    install, Homebrew."""
+    from ..extras import node_path
     cands: list[str] = []
     if configured:
         cands.append(str(Path(configured).expanduser()))
+    pack = node_path(home)
+    if pack:
+        cands.append(str(pack))
     w = shutil.which("node")
     if w:
         cands.append(w)
@@ -232,21 +237,25 @@ BROWSER_CANDIDATES = (
 )
 
 
-def find_browser(configured: str | None = None) -> str | None:
-    """A local Chrome for rendering: the configured one, else the first installed candidate."""
-    for c in ([configured] if configured else []) + list(BROWSER_CANDIDATES):
+def find_browser(configured: str | None = None, home: str | os.PathLike | None = None) -> str | None:
+    """A local Chrome for rendering: the configured one, the extra pack's Chrome Headless Shell,
+    else the first installed Google Chrome / Chromium."""
+    from ..extras import browser_path
+    pack = browser_path(home)
+    for c in ([configured] if configured else []) + ([str(pack)] if pack else []) + list(BROWSER_CANDIDATES):
         if c and Path(c).expanduser().is_file():
             return str(Path(c).expanduser())
     return None
 
 
 @functools.lru_cache(maxsize=8)
-def _missing_tools(node_bin: str | None, browser: str | None, allow_download: bool) -> tuple[str, ...]:
+def _missing_tools(node_bin: str | None, browser: str | None, allow_download: bool,
+                   home: str | None = None) -> tuple[str, ...]:
     miss = []
-    if not find_node(node_bin):
-        miss.append(f"Node.js {NODE_MIN_MAJOR}+ (nodejs.org)")
-    if not find_browser(browser) and not allow_download:
-        miss.append("Google Chrome (google.com/chrome)")
+    if not find_node(node_bin, home):
+        miss.append(f"Node.js {NODE_MIN_MAJOR}+")
+    if not find_browser(browser, home) and not allow_download:
+        miss.append("a Chrome to draw in")
     return tuple(miss)
 
 
@@ -254,8 +263,9 @@ def missing_tools(config: dict[str, Any] | None) -> list[str]:
     """What this machine lacks for the design look, in plain words; [] when it is ready.
     Never raises; cached per process (one `node --version` per run, not per item)."""
     rs = remotion_settings(config)
+    home = (config or {}).get("vp_home")
     return list(_missing_tools(rs.get("node_bin"), rs.get("browser_executable"),
-                               bool(rs.get("allow_browser_download"))))
+                               bool(rs.get("allow_browser_download")), str(home) if home else None))
 
 
 def effective_renderer(config: dict[str, Any] | None) -> tuple[str, str | None]:
@@ -268,8 +278,8 @@ def effective_renderer(config: dict[str, Any] | None) -> tuple[str, str | None]:
     miss = missing_tools(config)
     if not miss:
         return "remotion", None
-    return "ffmpeg", ("the design look needs " + " and ".join(miss)
-                      + " on this computer; the video was made in the plain look for now")
+    return "ffmpeg", ("the design look needs the extra pack (missing here: " + ", ".join(miss)
+                      + "); the video was made in the plain look for now — `vp extras install`")
 
 
 def _hash(source: Path, files: Iterable[str], dirs: Iterable[str] = ()) -> str:
@@ -305,15 +315,16 @@ class RemotionWorkspace:
         self.base = Path(base).expanduser()
         self.source = REMOTION_SOURCE
         self.dir = self.base / source_hash(self.source)
+        self.home = home or (config or {}).get("vp_home")
         self._node: str | None = None
 
     @property
     def node(self) -> str:
         if self._node is None:
-            n = find_node(self.settings.get("node_bin"))
+            n = find_node(self.settings.get("node_bin"), self.home)
             if not n:
-                raise VPError("internal", f"Node.js {NODE_MIN_MAJOR}+ not found (needed for the Remotion "
-                                          f"design path); install Node or set config remotion.node_bin")
+                raise VPError("internal", f"Node.js {NODE_MIN_MAJOR}+ not found (needed for the design "
+                                          f"look): install the extra pack — `vp extras install`")
             self._node = n
         return self._node
 
@@ -416,13 +427,14 @@ class RemotionWorkspace:
     _FRAMES_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
 
     def browser_args(self) -> list[str]:
-        b = find_browser(self.settings.get("browser_executable"))
+        b = find_browser(self.settings.get("browser_executable"), self.home)
         if b:
-            return [f"--browser-executable={b}", "--chrome-mode=chrome-for-testing"]
+            mode = "headless-shell" if Path(b).name == "chrome-headless-shell" else "chrome-for-testing"
+            return [f"--browser-executable={b}", f"--chrome-mode={mode}"]
         if self.settings.get("allow_browser_download"):
             return []
-        raise VPError("internal", "Google Chrome is not installed: the design tools draw the video in "
-                                  "Chrome. Install Google Chrome (google.com/chrome) and try again.")
+        raise VPError("internal", "no Chrome to draw the video in: install the extra pack "
+                                  "(`vp extras install`) or Google Chrome, then try again.")
 
     def run(self, args: list[str], *, timeout_s: float | None = None, frames: int | None = None) -> str:
         """Run the Remotion CLI in the workspace; reports frame progress when a tracker is active."""

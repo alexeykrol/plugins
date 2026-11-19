@@ -1,5 +1,5 @@
 {
-  "description": "ai-movie-company: records the time (never the text) of the user's last input so the engine accepts review and publish decisions only after the user answered. The module draws the editing director's presence: name and picture on replies, a band with a Leave button, the session's look.",
+  "description": "ai-movie-company: records the time of the user's last input so the engine accepts review and publish decisions only after the user answered, and keeps a local dialog journal of the typed prompts (secrets redacted) in the pipeline home for feedback. The module draws the editing director's presence: name and picture on replies, a band with a Leave button, the session's look.",
   "modules": ["./register.tsx"],
   "hooks": {
     "UserPromptSubmit": [
@@ -8,6 +8,11 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/record_user_input.py\" prompt",
+            "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/journal_prompt.py\"",
             "timeout": 10
           }
         ]

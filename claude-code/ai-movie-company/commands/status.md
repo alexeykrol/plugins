@@ -22,7 +22,12 @@ the work (only what these commands show — never from memory), then a short tab
   the error line, not the whole file);
 - whether the job is locked (another run is working on it).
 
+A text job (made from a text, no `request.yaml`): `... text status "$ARGUMENTS"` instead — where
+it is (sketches, voice, versions in CapCut) and the next step.
+
 If videos are already uploaded or rendered, also run `... results "$ARGUMENTS" --json` and list
 them: title, link (rehearsal: the local file — never a `fake://` link), state.
 
-Read-only: do not run the pipeline and do not change any file.
+Say what comes next as something you offer to do yourself («Продолжим просмотр фрагментов?»),
+not as a command for the person to type; the command names above are for you. Read-only: do not
+run the pipeline and do not change any file.

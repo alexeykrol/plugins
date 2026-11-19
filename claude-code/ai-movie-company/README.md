@@ -145,8 +145,10 @@ selection of fragments; changing it re-runs the selection only.
 - **Python 3.12 or newer** and **ffmpeg with libass and freetype** — the installer sets them up
   (see below). Intel Macs are not supported yet (no build of the pinned `cryptography`).
 - A YouTube channel. Without connecting it, a job can run as a rehearsal (nothing is uploaded).
-- Only for the optional design look: **Google Chrome** and **Node.js 18+**
-  (nodejs.org); `/ai-movie-company:doctor` says if either is missing.
+- For the design look (animated captions, drawn cards, video from text) — the animation add-ons:
+  Node.js, a Chrome to draw in, Remotion. The same installer sets them up; if something did not
+  download, `/ai-movie-company:doctor` says what is missing and Elsa adds it when you say "install
+  the add-ons".
 
 Run `/ai-movie-company:doctor` after installing: it shows what is missing.
 
@@ -156,35 +158,45 @@ You need: a Mac with an Apple processor (M1 or newer) and a Claude subscription 
 desktop app**. No Terminal, no passwords, no GitHub or Google Cloud accounts.
 
 1. Open the **Claude** app, the **Code** tab, and start a new session in any folder (for example,
-   Documents).
+   Movies — the Mac does not ask permission for that folder). If the Mac offers to install
+   Apple's "developer tools" right away, press "Install": that is expected (see step 3).
 2. Paste this text and send it:
 
 ```
 Install the AI Movie Company plugin for me. I am not a technical person; I have a Mac.
-Run this command in the terminal:
+First warn me in one sentence: Claude will ask permission to run a command — name the button that
+allows it for good (then reruns do not ask); and the Mac may offer Apple's free "developer tools" —
+press "Install", it is safe and normal, and you carry on by yourself.
+Then run (allow up to 10 minutes; running it again is safe, finished steps are kept):
 curl -fsSL https://raw.githubusercontent.com/alexeykrol/plugins/main/claude-code/ai-movie-company/install.sh | bash
-The last line of its output says what comes next:
+The last line says what comes next:
 - STATUS: OK — tell me to quit Claude completely (Cmd+Q), open it again, start a new session in
-  the Code tab and type /ai-movie-company:start;
-- STATUS: NEED_DEVTOOLS — an Apple window will appear: tell me to press "Install", wait for my
-  "done" and run the command again;
-- STATUS: FAILED — explain in plain words what happened and what I should do.
-When you ask permission to run a command, tell me which button to press.
-If something on the screen is unclear, I will send a screenshot — explain from it.
+  the Code tab and write "Elsa". A line ADDONS: PARTIAL is not an error.
+- STATUS: NEED_DEVTOOLS — Apple is still installing: tell me all is well and run the same command
+  again yourself at once, without asking me; up to 5 times (about half an hour).
+- STATUS: FAILED — explain in plain words and ask me with buttons; if it was the internet or a
+  closed Apple window, run the command again. Never ask me to type or run anything.
 ```
 
-3. From here Claude does everything and tells you where to click. Five to ten minutes; if the Mac
-   asks to install Apple's "developer tools", about ten more.
+3. From here Claude does everything and tells you where to click. About five minutes; if the Mac
+   asks to install Apple's "developer tools", press "Install" and just wait: Claude waits for it
+   by itself (usually 5–15 minutes, up to half an hour on a slow connection) and carries on.
+4. After the restart write **"Elsa"** — from then on ask her, and tell her when something does
+   not work. **Whatever did not work, Elsa writes down; at the end she puts together a report for
+   Alexey** — one file you simply forward to him.
 
 Screenshot on a Mac: Cmd+Shift+4, drag over the part you need — the picture lands on the desktop;
 drag it into the chat.
 
-**Update** — the same text again: the installer skips what is done and updates the plugin.
+**Update** — the same text again (or tell Elsa "update the plugin"): the installer skips what is
+done and updates the plugin.
 
-What gets installed (all into your own `~/.local/bin`, no password, every file checked against a
-checksum): the Claude command line, Python 3.13 (via uv), ffmpeg 9.0.2 and the plugin itself from
-the `alexeykrol/plugins` store. If you already have Python 3.12+ and ffmpeg with libass, the
-installer leaves them alone.
+What gets installed (no password, every download checked against a checksum): into `~/.local/bin` —
+the Claude command line, Python 3.13 (via uv), ffmpeg 9.0.2; the plugin itself from the
+`alexeykrol/plugins` store and its engine; the animation add-ons into `~/.ai_video_pipeline` —
+Node.js 24, Chrome Headless Shell (a Chrome without windows, for drawing video), the Remotion project
+from a pinned list of versions — and the Remotion plugin for Claude from the Anthropic Directory.
+Python 3.12+ and ffmpeg with libass that you already have are left alone.
 
 If you live in a terminal: `claude plugin marketplace add alexeykrol/plugins`,
 `claude plugin install ai-movie-company@krol`, then `/ai-movie-company:doctor`.
@@ -229,9 +241,13 @@ them. Advanced: your own Google client and other settings live in `~/.ai_video_p
   the card backgrounds. It refers to the cut in the job folder; nothing is copied elsewhere. Import
   in Resolve: File → Import → Timeline…, then File → Import → Subtitle…. Final Cut Pro is untested.
 - **`~/.ai_video_pipeline/`** (or `VP_HOME`): `config.yaml`, the selection knowledge (versions,
-  your verdicts), cost and notification journals; with the design look also `remotion/` (the
+  your verdicts), cost and notification journals; the animation add-ons in `extras/` and `remotion/` (the
   design tools, ~500 MB) and, in the job folder, `design.yaml`, `previews/design/` and
   `clips/<id>/layers/`.
+- **The feedback report**, only when you ask for it: one Markdown file in
+  `~/Movies/AI Movie Company/Feedback/` (not the Desktop: macOS asks permission for the Desktop);
+  a Finder window opens with the file selected. While the installer waits for Apple's developer
+  tools it keeps one small marker file in `~/.ai_video_pipeline/install/` and removes it after.
 - **The plugin data folder** (`${CLAUDE_PLUGIN_DATA}`, else `~/.ai_video_pipeline/runtime`): a
   Python virtual environment with the pinned packages. Deleted when you uninstall the plugin.
 - **The plugin's own store** (a JSON file under your Claude Code configuration folder), written by
@@ -252,8 +268,11 @@ hidden note to the conversation saying that she left. Your `brief` is kept in th
   not have yet; every file is checked against a checksum.
 - **PyPI** (pypi.org), on the first run only: downloads the pinned, hash-checked packages listed
   in `requirements.lock`.
-- **npm registry** (registry.npmjs.org), only the first time you ask for the design look: the
-  pinned Remotion packages from `remotion/package-lock.json` (integrity-checked, install scripts
+- **The animation add-ons — once, at install** (or when you say "install the add-ons"):
+  nodejs.org (Node.js 24), storage.googleapis.com (Google's Chrome Headless Shell), the Anthropic
+  plugin directory through the Claude command line (the Remotion plugin for Claude) — every file
+  checksum-checked, into `~/.ai_video_pipeline/extras/`.
+- **npm registry** (registry.npmjs.org), at the same time, once: the pinned Remotion packages from `remotion/package-lock.json` (integrity-checked, install scripts
   off) into `~/.ai_video_pipeline/remotion/`. Remotion's own telemetry is switched off and its
   local servers listen on 127.0.0.1 only.
 - **YouTube Data API** (Google), only with `publisher: youtube`: uploads private videos,

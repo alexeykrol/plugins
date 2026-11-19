@@ -16,6 +16,14 @@
   results <job> [--json]                     what came out (links, files, states): vp.watch:results_main
   progress <job> [--json] [--wait N]         current long step, one line: vp.watch:progress_main
   capcut export <job> [item ...] | check     new CapCut desktop project per clip: vp.adapters.capcut:main
+  capcut <job> [--version vN]                new VERSION as a CapCut project (text job: separate
+                                             voice/music tracks); <job>/capcut/vN, never overwritten
+  projects list|add|scan|forget [--json]     jobs the person worked on: vp.projects:main
+  text new|status|estimate|timeline|approve  text-only jobs: vp.text:main
+  check picture <video> [--json]             black/frozen picture + frame sheet: vp.check:main
+  journal note|show                          dialog journal: vp.journal:main
+  feedback pack [--reveal]                   journal + notes + doctor + versions -> one file in
+                                             ~/Movies/AI Movie Company/Feedback
   resolve export <job> [item ...]            FCPXML rough cut + .srt (DaVinci Resolve, Final Cut Pro):
                                              vp.adapters.fcpxml:main (alias: fcpxml)
   asks add|set|list <job|-> ...              ledger of the person's requests: vp.asks:main
@@ -56,6 +64,12 @@ SUBCOMMAND_MAINS = {
     "fcpxml": "vp.adapters.fcpxml:main",
     "asks": "vp.asks:main",
     "design": "vp.design:main",
+    "extras": "vp.extras:main",
+    "projects": "vp.projects:main",
+    "text": "vp.text:main",
+    "check": "vp.check:main",
+    "journal": "vp.journal:main",
+    "feedback": "vp.journal:feedback_main",
 }
 
 
@@ -130,7 +144,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("job")
     s.add_argument("item")
     for name in ("learn", "knowledge", "review", "approve", "doctor", "youtube", "results",
-                 "progress", "capcut", "resolve", "fcpxml", "asks"):
+                 "progress", "capcut", "resolve", "fcpxml", "asks", "design", "projects", "text",
+                 "check", "journal", "feedback"):
         s = sub.add_parser(name, add_help=False)
         s.add_argument("rest", nargs=argparse.REMAINDER)
     return p
@@ -152,6 +167,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 3 if e.kind == "internal" else 2
     args = build_parser().parse_args(raw)
     cmd = args.command
+    if cmd in ("run", "stage"):
+        from .projects import safe_touch
+        safe_touch(args.job)          # K3: every job worked on is listed by `vp projects list`
     try:
         if cmd == "run":
             return runner.run(Job(args.job))

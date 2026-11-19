@@ -2,6 +2,63 @@
 
 All notable changes to ai-movie-company. Versions follow [semver](https://semver.org/).
 
+## 0.8.1 — 2026-11-19
+
+The install a newcomer barely sees (inventory: `docs/permissions-0.8.1.md`).
+
+- **Apple's developer tools without a rerun.** The installer opens Apple's window once, waits and
+  continues in the same run; if Apple is still installing, Claude reruns it by itself. Buttons
+  appear only if the window was closed without installing. No macOS stub program (`git`,
+  `python3`, …) is called before the tools exist, so the window never pops up by surprise.
+- **Every remaining confirmation is announced first.** A "Permissions" section in the contract:
+  Elsa says what the window is, that it is safe and normal, why it is needed, and that she
+  continues by herself — for Claude's command cards, Apple's tools, folder access, Google sign-in
+  and ElevenLabs.
+- **Fewer folder prompts.** The feedback report goes to `~/Movies/AI Movie Company/Feedback`
+  (not the Desktop) and Finder shows it; the YouTube connect step no longer looks into
+  Downloads/Desktop/Documents; the session is suggested in Movies.
+- **Silent Mac check.** macOS version and free disk are checked at the start against the real
+  minimums of what we install; nothing is printed on a normal Mac.
+
+## 0.8.0 — 2026-11-19
+
+Ready for a newcomer's first run.
+
+- **Short start.** `/elsa`, or a message that is just her name, starts the guided start. The first
+  reply of a session opens with an animated welcome splash.
+- **Projects.** Every job is a project in a registry (`vp projects list`); the start asks «new
+  project or back to one?» with a clickable list.
+- **Text to video.** `vp text new|status|estimate|timeline|approve`: brief → screenplay → storyboard
+  sketches approved in the chat → ElevenLabs voice and music (length and credits estimated first,
+  ≈14.8 characters per second) → Remotion animation → render → CapCut. `vp text status` always
+  names the next step and its exact command.
+- **CapCut versions with separate tracks.** `vp capcut <job> --version vN`: picture, editable
+  subtitles, voice phrase by phrase, music on its own track rising in the voice pauses; every
+  change is a new version next to the earlier ones, hand edits are never overwritten.
+- **Picture check.** `vp check picture` (black or empty stretches, frozen frames, frame sheet)
+  runs after every render before anything is shown.
+- **Elsa's face and look.** Four moods with a moving face, a progress bar for every long turn
+  (from the turn's task list, or a running bar with elapsed time), a warm session look.
+- **Buttons, not «готово».** Every hand step (close CapCut, confirm in Google) is a card with
+  buttons. Voice choice: three different voices plus «Другие варианты».
+- **Everything installs at once.** The install prompt also sets up Node, Chrome for rendering, the
+  Remotion project and the Remotion plugin for Claude; `vp extras status|install`, doctor checks
+  them. Clean install measured: 3 min 6 s; a rerun 4 s. Intel Macs are not supported yet.
+- **Feedback from a newcomer.** Every reply the person types is journaled per project; dead ends
+  and surprises are recorded with context; `vp feedback pack` puts one redacted report on the
+  Desktop to send to the owner. Elsa answers every question about the plugin herself.
+
+## 0.7.1 — 2026-11-19
+
+- **Elsa's band, alive.** The band above the prompt now carries Elsa's face — an animated portrait
+  that blinks and moves a little — her name, role and the release (`v0.7.1 · 19.11.2026`), on a
+  bright pastel that drifts slowly around the colour wheel (a full turn in three minutes, never a
+  jump).
+- **A big progress bar.** While the engine works, the band shows the step in plain words
+  («Собираю ролики»), a bar, the percent and the time left. The engine mirrors the running step to
+  `~/.ai_video_pipeline/progress-live.json`; the band reads it every two seconds and hides it when
+  the run ends or dies.
+
 ## 0.7.0 — 2026-11-19
 
 - **Editor exports** — CapCut project and FCPXML rough cut, see below.

@@ -804,7 +804,11 @@ def main(argv: list[str] | None = None) -> int:
     cv = sub.add_parser("convert-token", help="Legacy pickle token -> JSON at youtube.token_path")
     cv.add_argument("pickle_path")
     sub.add_parser("status", help="is the channel connected? (1 quota unit)")
-    sub.add_parser("client-find", help="list Google client files in Downloads/Desktop/Documents")
+    cf = sub.add_parser("client-find", help="is the Google client file in place? With --scan: list "
+                                            "client files in Downloads/Desktop/Documents")
+    cf.add_argument("--scan", action="store_true",
+                    help="also look in Downloads/Desktop/Documents (macOS asks the person for "
+                         "access to each of these folders; announce it first)")
     ci = sub.add_parser("client-install", help="copy a Desktop-app client file into place")
     ci.add_argument("path")
     args = ap.parse_args(argv)
@@ -813,6 +817,14 @@ def main(argv: list[str] | None = None) -> int:
         here = (cfg.get("youtube") or {}).get("client_secrets_path")
         if here and client_kind(here) == "installed":
             print(f"in place: {here}")
+            if not args.scan:
+                # The plugin ships its client: no need to look into the person's folders. Each of
+                # Downloads/Desktop/Documents is privacy-protected on macOS, and a look there would
+                # pop a "Claude would like to access files in ..." prompt for nothing.
+                return 0
+        if not args.scan:
+            print("none")
+            return 0
         found = find_clients()
         for f in found:
             print(f"{f['kind']}\t{f['path']}")

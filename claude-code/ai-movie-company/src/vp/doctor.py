@@ -5,7 +5,11 @@ filter from libass and `drawtext`), VP_HOME writable, config sanity (publisher, 
 Secret contents are never read or printed: for credential files only "exists / missing" is shown,
 for env vars only "set / not set".
 
-Output: one line per check `OK|WARN|FAIL <name>: <detail>`; exit 0 without FAIL, 2 with a FAIL.
+Also the add-ons for the design look (Node, Chrome Headless Shell, the Remotion project, the
+Remotion plugin for Claude — `vp extras`): a missing one is WARN with the fix in plain words.
+
+Output: one line per check `OK|INFO|WARN|FAIL <name>: <detail>`; exit 0 without FAIL, 2 with a
+FAIL. INFO is a plain fact (e.g. add-ons not made for this computer), never a problem.
 """
 from __future__ import annotations
 
@@ -49,7 +53,7 @@ def _ffmpeg_filters(ffmpeg: str) -> set[str]:
 
 
 def checks(home: Path | None = None) -> list[tuple[str, str, str]]:
-    """[(level, name, detail)], level OK|WARN|FAIL."""
+    """[(level, name, detail)], level OK|INFO|WARN|FAIL."""
     res: list[tuple[str, str, str]] = []
     add = lambda lvl, name, detail: res.append((lvl, name, detail))  # noqa: E731
 
@@ -99,19 +103,38 @@ def checks(home: Path | None = None) -> list[tuple[str, str, str]]:
     return res
 
 
-def _design_checks(cfg: dict[str, Any]) -> list[tuple[str, str, str]]:
-    """The optional Remotion look: Node and Chrome. Missing ones FAIL only when the config
-    renders with remotion; otherwise they are a note (the plain look needs neither)."""
-    from .adapters.render_remotion import NODE_MIN_MAJOR, find_browser, find_node, remotion_settings
+def _design_checks(cfg: dict[str, Any], plugin: dict[str, Any] | None = None) -> list[tuple[str, str, str]]:
+    """The add-ons for the design look (installed by default since 0.8): Node, Chrome, the Remotion
+    project, the Remotion plugin for Claude. A missing one is WARN, never FAIL: without it the videos
+    are made in the plain look. Every WARN carries the fix in plain words (ru + en)."""
+    from . import extras
+    from .adapters.render_remotion import RemotionWorkspace, find_browser, find_node, remotion_settings
     rs = remotion_settings(cfg)
-    on = cfg.get("renderer") == "remotion"
-    miss = "FAIL" if on else "WARN"
-    node, chrome = find_node(rs.get("node_bin")), find_browser(rs.get("browser_executable"))
-    suffix = "" if on else " (only for the optional design look)"
-    return [("OK" if node else miss, "design: node",
-             (node or f"Node.js {NODE_MIN_MAJOR}+ not found — nodejs.org") + suffix),
-            ("OK" if chrome else miss, "design: chrome",
-             (chrome or "Google Chrome not found — google.com/chrome") + suffix)]
+    home = cfg.get("vp_home")
+    node, chrome = find_node(rs.get("node_bin"), home), find_browser(rs.get("browser_executable"), home)
+    try:
+        ws = RemotionWorkspace(cfg).ready()
+    except Exception:  # noqa: BLE001 — doctor reports, never crashes
+        ws = False
+    pl = plugin if plugin is not None else extras.claude_plugin_state()
+    fix = f" — {extras.FIX_RU} / {extras.FIX_EN}"
+    plain = " (until then the videos keep the plain look)"
+    ok, why = extras.platform_ok()
+    if not ok and not (node and chrome):
+        return [("INFO", "add-ons", str(why))]
+    return [
+        ("OK", "add-on node", node) if node else
+        ("WARN", "add-on node", "Node.js not found — needed for animated captions and drawn cards"
+                                + plain + fix),
+        ("OK", "add-on chrome", chrome) if chrome else
+        ("WARN", "add-on chrome", "no Chrome to draw the video in" + plain + fix),
+        ("OK", "add-on remotion project", "installed") if ws else
+        ("WARN", "add-on remotion project", "the drawing tools are not installed yet" + plain + fix),
+        ("OK", "add-on remotion plugin", f"{pl.get('id')} (Remotion skills for Claude)")
+        if pl.get("installed") else
+        ("WARN", "add-on remotion plugin", "the Remotion plugin for Claude is not installed"
+         + (f" (could not check: {pl.get('why')})" if not pl.get("checked", True) else "") + fix),
+    ]
 
 
 def _publisher_checks(cfg: dict[str, Any]) -> list[tuple[str, str, str]]:

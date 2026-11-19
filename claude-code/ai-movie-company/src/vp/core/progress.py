@@ -11,7 +11,9 @@ Writers:
     `-progress pipe:1` (unit "s");
   * the YouTube upload reports bytes sent (unit "bytes").
 A tracker writes at most every MIN_INTERVAL_S (first and forced updates always); the file is
-removed when the instance ends. Finer reporters find the tracker through a context variable, so
+removed when the instance ends. The same record, with the job folder added, is mirrored to
+`<VP_HOME>/progress-live.json` (LIVE_NAME) for the plugin's progress band, which cannot know
+which job folder is running; it is removed with the instance too. Finer reporters find the tracker through a context variable, so
 nothing has to be passed down the call chain; without an active tracker `report()` is a no-op.
 """
 from __future__ import annotations
@@ -25,6 +27,7 @@ from typing import Any, Callable, Iterator
 from .io import now_iso, parse_iso, read_json, write_json
 
 FILE_NAME = "progress.json"
+LIVE_NAME = "progress-live.json"
 MIN_INTERVAL_S = 2.0
 STALE_S = 120.0     # a file not updated for this long while the job is not locked = idle
 
@@ -51,8 +54,9 @@ class Tracker:
 
     def __init__(self, path: Path, step: str, item: str | None, *,
                  clock: Callable[[], float] = time.monotonic,
-                 min_interval_s: float = MIN_INTERVAL_S):
+                 min_interval_s: float = MIN_INTERVAL_S, live: Path | None = None):
         self.path = Path(path)
+        self.live = Path(live) if live is not None else None
         self.step = step
         self.item = item
         self.clock = clock
@@ -79,6 +83,11 @@ class Tracker:
             write_json(self.path, rec)
         except OSError:
             return False   # progress is best effort: never break the step
+        if self.live is not None:
+            try:
+                write_json(self.live, {**rec, "job": str(self.path.parent)})
+            except OSError:
+                pass
         self._last_write = now
         return True
 
@@ -87,6 +96,13 @@ class Tracker:
             self.path.unlink()
         except OSError:
             pass
+        if self.live is not None:
+            held = read_json(self.live, default=None)
+            if isinstance(held, dict) and held.get("job") == str(self.path.parent):
+                try:
+                    self.live.unlink()
+                except OSError:
+                    pass
 
 
 def _num(x: float) -> float | int:
@@ -111,11 +127,18 @@ def clock() -> float:
     return t.clock() if t is not None else time.monotonic()
 
 
+def _live_path() -> Path | None:
+    """The mirror for the plugin's band, only where the pipeline home already exists."""
+    from .paths import vp_home
+    home = vp_home()
+    return home / LIVE_NAME if home.is_dir() else None
+
+
 @contextlib.contextmanager
 def tracking(job_root: Path, step: str, item: str | None, *, done: float = 0, total: float = 1,
              unit: str = "items", clock: Callable[[], float] = time.monotonic) -> Iterator[Tracker]:
     """Open a tracker for one step instance; the file is removed at the end (any outcome)."""
-    t = Tracker(Path(job_root) / FILE_NAME, step, item, clock=clock)
+    t = Tracker(Path(job_root) / FILE_NAME, step, item, clock=clock, live=_live_path())
     t.update(done, total, unit, force=True)
     token = _current.set(t)
     try:
