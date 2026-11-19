@@ -66,7 +66,7 @@ def checks(home: Path | None = None) -> list[tuple[str, str, str]]:
     ffmpeg = os.environ.get("VP_FFMPEG", "ffmpeg")
     ffprobe = os.environ.get("VP_FFPROBE", "ffprobe")
     fpath, ppath = shutil.which(ffmpeg), shutil.which(ffprobe)
-    add("OK" if fpath else "FAIL", "ffmpeg", fpath or "not found (macOS: brew install ffmpeg)")
+    add("OK" if fpath else "FAIL", "ffmpeg", fpath or "not found (macOS: ask Claude to run the plugin installer again)")
     add("OK" if ppath else "FAIL", "ffprobe", ppath or "not found (installed with ffmpeg)")
     if fpath:
         filters = _ffmpeg_filters(fpath)

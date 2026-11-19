@@ -570,6 +570,20 @@ def client_project_id(secrets_path: Any) -> str | None:
 
 def explain_auth_problem(problem: str, yt: dict[str, Any]) -> str:
     """Plain words: what happened and what to do. Never contains secrets."""
+    from ..core.config import BUNDLED_YOUTUBE_CLIENT
+    if str(yt.get("client_secrets_path") or "") == str(BUNDLED_YOUTUBE_CLIENT):
+        # the plugin's own Google client: the person only signs in; no Cloud words for them
+        if problem == "access_denied":
+            return ("Google did not give access (access_denied): the sign-in was cancelled, or "
+                    "\"Allow\" was not pressed, or Google blocked this account. Fix: run "
+                    "`vp youtube authorize` again and on the Google pages press Advanced -> Go to "
+                    "(unsafe), tick the permissions, Continue. If Google shows a block page, ask "
+                    "the person for a screenshot.")
+        if problem == "invalid_grant":
+            return ("The saved YouTube login has expired or was withdrawn (invalid_grant), e.g. "
+                    "after a password change or removing the app's access in the Google account. "
+                    "Fix: run `vp youtube authorize` again (browser login, two clicks).")
+        return f"YouTube login problem: {problem}; " + AUTHORIZE_HINT
     pid = client_project_id(yt.get("client_secrets_path"))
     project = f"Google Cloud project '{pid}'" if pid else \
         "your Google Cloud project (its name is project_id in the client_secret_*.json file)"

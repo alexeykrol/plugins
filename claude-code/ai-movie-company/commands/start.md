@@ -72,9 +72,9 @@ Problems come instead of the observation, in the same voice:
   connected, channel <name>." No question.
 - **Not connected** (status exit 2, or doctor FAILs on any `youtube` line — the client file
   missing included) → explain plainly: "To upload, I need permission to a channel. It is given
-  once, takes about ten minutes, and I walk you through every click." Ask with AskUserQuestion:
+  once, takes a few minutes: you sign in to Google, and I walk you through every click." Ask with AskUserQuestion:
   - **Connect now** → read `${CLAUDE_PLUGIN_ROOT}/skills/connect/SKILL.md` and follow it from
-    step 0 (test channel first, the Google file, the login screens — one small step per message,
+    step 0 (test channel first, then the Google login screens — one small step per message,
     a screenshot when they hesitate). When it ends connected, come back here and go on.
   - **Rehearsal** → say plainly: "In a rehearsal nothing is uploaded anywhere; you get local
     video files to watch." A rehearsal is set for this job only: add `publisher: fake` to its

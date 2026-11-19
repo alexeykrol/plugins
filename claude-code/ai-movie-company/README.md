@@ -14,7 +14,7 @@ proposal is weak. The decisions and the channel stay yours.
 
 ## Quick start (first time)
 
-1. Install the plugin once (see Installation below), then open **Claude Desktop → Code** and start a
+1. Install the plugin once (see Installation — one prompt, below), then open **Claude Desktop → Code** and start a
    local session in any folder. Restart the app if it was open during the install.
 2. Put your recording in a folder together with its subtitles: a video (`.mp4`, `.mov`, `.mkv`) and
    an `.srt` file. The plugin does not transcribe: no `.srt` — no run.
@@ -34,8 +34,8 @@ proposal is weak. The decisions and the channel stay yours.
    them there and answer in the chat: publish all, schedule, go one by one, or "not now" (they
    stay private). Nothing becomes public without your word.
 
-YouTube must be connected once (see **Connecting YouTube**; Claude offers the login at the start). Not connected or just trying? Choose a rehearsal for that job: nothing is
-uploaded, you get local video files. YouTube gives about 10,000 API units a day — roughly one job
+YouTube is connected once: you sign in to your Google account; the director offers it at the start. Not connected or just trying? Choose a rehearsal for that job: nothing is
+uploaded, you get local video files. The plugin's YouTube access gives about 10,000 API units a day, shared by all its users — roughly one job
 with a few videos (a video costs ~2,200 units); the plugin checks this before uploading.
 
 Stopped halfway? Open a new session and type `/ai-movie-company:run <the same folder>`: it continues
@@ -128,121 +128,72 @@ selection of fragments; changing it re-runs the selection only.
   Not for claude.ai Chat or Cowork (the plugin works with local video files and ffmpeg).
   The director's face is a mod — an early-access part of Claude Code, tested on 2.1.325; update
   Claude Code and the desktop app if you do not see it.
-- **Python 3.12 or newer** (`python3.12`/`3.13`/`3.14` on PATH). Supported wheels: macOS arm64,
-  Linux x86_64 and aarch64. Intel Macs are not supported yet (no `cryptography` wheel at the pinned version).
-- **ffmpeg with libass and freetype** (`subtitles` and `drawtext` filters). macOS: `brew install ffmpeg`.
-- A YouTube channel and a Google OAuth client (YouTube Data API v3) — publishing to YouTube is
-  the normal mode. Without them you can still run a rehearsal per job (nothing is uploaded).
+- **Python 3.12 or newer** and **ffmpeg with libass and freetype** — the installer sets them up
+  (see below). Intel Macs are not supported yet (no build of the pinned `cryptography`).
+- A YouTube channel. Without connecting it, a job can run as a rehearsal (nothing is uploaded).
 
 Run `/ai-movie-company:doctor` after installing: it shows what is missing.
 
-## Installation from scratch (Mac with Apple silicon)
+## Installation — one prompt
 
-You need: a Claude subscription with the **Claude desktop app** and about 20 minutes. No GitHub
-account is needed. All commands go into the **Terminal** app (Applications → Utilities →
-Terminal); paste one line, press Enter, wait.
+You need: a Mac with an Apple processor (M1 or newer) and a Claude subscription with the **Claude
+desktop app**. No Terminal, no passwords, no GitHub or Google Cloud accounts.
 
-**Stuck on any step? Let Claude walk you through it.** Open the Claude app, start a new chat and
-paste this (fill in the step you are on):
-
-```
-I am installing the AI Movie Company plugin for Claude following this guide:
-https://github.com/alexeykrol/plugins/tree/main/claude-code/ai-movie-company
-I am not technical and I use a Mac. Walk me through the installation one step at a time: tell me
-exactly what to click and what to paste, wait for my "done" or a screenshot, and do not give the
-next step until the current one works. If I send a screenshot, tell me exactly where to look.
-I am at step: …
-```
-
-A screenshot on a Mac: Cmd+Shift+4, drag over the part you need — the picture lands on the
-Desktop; drag it into the chat.
-
-1. **Homebrew** (the installer for the tools below), if `brew --version` says "command not found":
-   ```
-   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-   ```
-   It asks for your Mac password. At the end it prints two or three lines under "Next steps" —
-   copy and run them, then close and reopen Terminal.
-2. **Tools**: video tools and Python:
-   ```
-   brew install ffmpeg python@3.13
-   ```
-3. **Claude Code command line** (the desktop app has its own; this one installs the plugin):
-   ```
-   curl -fsSL https://claude.ai/install.sh | bash
-   ```
-   Close and reopen Terminal afterwards.
-4. **The plugin**:
-   ```
-   claude plugin marketplace add alexeykrol/plugins
-   claude plugin install ai-movie-company@krol
-   ```
-   Both lines end with "Successfully …".
-5. **Check**: quit the Claude desktop app completely (Cmd+Q) and open it again, go to **Code**,
-   start a local session in any folder and type `/ai-movie-company:doctor`. The first time it takes
-   a minute (it prepares its own Python environment). Everything except the `youtube` lines must be
-   OK; for those see **Connecting YouTube** below.
-
-Then go to **Quick start** above.
-
-**Updating** to a new version (Terminal):
-```
-claude plugin marketplace update krol
-claude plugin update ai-movie-company@krol
-```
-then restart the desktop app.
-
-## Installation (if you already have Python 3.12+ and ffmpeg)
+1. Open the **Claude** app, the **Code** tab, and start a new session in any folder (for example,
+   Documents).
+2. Paste this text and send it:
 
 ```
-/plugin marketplace add alexeykrol/plugins
-/plugin install ai-movie-company@krol
+Install the AI Movie Company plugin for me. I am not a technical person; I have a Mac.
+Run this command in the terminal:
+curl -fsSL https://raw.githubusercontent.com/alexeykrol/plugins/main/claude-code/ai-movie-company/install.sh | bash
+The last line of its output says what comes next:
+- STATUS: OK — tell me to quit Claude completely (Cmd+Q), open it again, start a new session in
+  the Code tab and type /ai-movie-company:start;
+- STATUS: NEED_DEVTOOLS — an Apple window will appear: tell me to press "Install", wait for my
+  "done" and run the command again;
+- STATUS: FAILED — explain in plain words what happened and what I should do.
+When you ask permission to run a command, tell me which button to press.
+If something on the screen is unclear, I will send a screenshot — explain from it.
 ```
 
-or from a terminal: `claude plugin marketplace add alexeykrol/plugins` and
-`claude plugin install ai-movie-company@krol`. Restart the session, then run
-`/ai-movie-company:doctor`.
+3. From here Claude does everything and tells you where to click. Five to ten minutes; if the Mac
+   asks to install Apple's "developer tools", about ten more.
+
+Screenshot on a Mac: Cmd+Shift+4, drag over the part you need — the picture lands on the desktop;
+drag it into the chat.
+
+**Update** — the same text again: the installer skips what is done and updates the plugin.
+
+What gets installed (all into your own `~/.local/bin`, no password, every file checked against a
+checksum): the Claude command line, Python 3.13 (via uv), ffmpeg 9.0.2 and the plugin itself from
+the `alexeykrol/plugins` store. If you already have Python 3.12+ and ffmpeg with libass, the
+installer leaves them alone.
+
+If you live in a terminal: `claude plugin marketplace add alexeykrol/plugins`,
+`claude plugin install ai-movie-company@krol`, then `/ai-movie-company:doctor`.
 
 ## Connecting YouTube (once)
 
-**The easy way:** type `/ai-movie-company:connect` (or choose "Connect now" when the director asks).
-He walks you through every click — a test channel, the Google file, the login screens — finds the
-downloaded file and puts it in place himself. The steps below are the same road, for reference.
+Type `/ai-movie-company:connect` (or choose "Connect now" when the director asks). Two steps: pick
+the channel and sign in to your Google account. Nothing to download or set up: the program's
+access to Google ships inside the plugin.
 
-Until YouTube is connected, `doctor` shows three `youtube` lines as FAIL — that is expected, and a
-rehearsal works without them (nothing is uploaded, you get local video files).
+At sign-in Google shows "Google hasn't verified this app" — normal for a small program Google has
+not reviewed yet: "Advanced" → "Go to … (unsafe)", then tick the permissions and "Continue". The
+director shows these screens in advance and helps from a screenshot.
 
-1. **The Google client file.** Uploading goes through a Google Cloud "OAuth client" of type
-   *Desktop app* — a small `client_secret_….json` file. Get it from whoever set the plugin up for
-   you, or make your own: [Google Cloud Console](https://console.cloud.google.com/) → new project →
-   APIs & Services → enable **YouTube Data API v3** → Google Auth Platform → Clients → Create
-   client → *Desktop app* → Download JSON.
-2. **Put it here** under exactly this name (Finder: Go → Go to Folder…, paste the path; the folder
-   appears after the first `doctor`):
-   ```
-   ~/.ai_video_pipeline/youtube_client_secret.json
-   ```
-3. **Allow your Google account.** While that Google project is in *Testing* mode, only its test users
-   can log in: its owner adds the Google account of your channel under Google Auth Platform →
-   Audience → Test users. Otherwise Google says "Access blocked … 403: access_denied" — the plugin
-   then explains the same.
-4. **Log in**: type `/ai-movie-company:start`; when the director asks about YouTube choose
-   **Connect now**. A browser opens: sign in to the Google account of the channel you want (pick
-   the channel if Google asks) and allow access. The plugin remembers the channel and puts its name
-   (@handle) on your videos.
+**Start on a test channel.** The channel is whichever one you sign in to, any of yours. We advise
+not to start on a channel with a real audience: create a small separate channel (the director shows
+how), do the first jobs there and switch when you like the result. Uploads are private drafts
+anyway. **To switch channels**, ask the director to connect another one: the new login replaces
+the old.
 
-**Start on a test channel.** The channel is whichever you sign in to — any of yours. We recommend
-not starting on the channel with your real audience: create a small separate channel (YouTube →
-your avatar → Settings → Add or manage your channels → Create a channel), run the first jobs there,
-and switch when the result suits you. Uploads are private drafts in any case, but a test channel
-keeps the real one's library and playlists clean. **To switch** — ask the director to connect
-another channel (or `/ai-movie-company:start` → Connect now) and sign in to the other one: its
-@handle replaces the old one on the next videos.
-
-While the Google project is in Testing mode, Google ends the login after about 7 days; the plugin
-then says so and `/ai-movie-company:start` → Connect now logs in again. Secrets stay in your files;
-the plugin never prints them. Advanced: other paths and settings live in
-`~/.ai_video_pipeline/config.yaml` (`youtube:` and `brand:` keys).
+The plugin never sees or stores your password: Google gives it a separate access key to your
+channel, and that key stays only on your computer (`~/.ai_video_pipeline/`). Until YouTube is
+connected, `doctor` shows the `youtube` lines as FAIL — expected, and a rehearsal works without
+them. Advanced: your own Google client and other settings live in `~/.ai_video_pipeline/config.yaml`
+(keys `youtube:` and `brand:`).
 
 ## What it writes to disk
 
@@ -266,6 +217,9 @@ hidden note to the conversation saying that he left. Your `brief` is kept in the
 
 ## What it sends to the network
 
+- **At install**: claude.ai (the Claude command line), github.com (uv and Python 3.13),
+  ffmpeg.martin-riedl.de (ffmpeg) and the `alexeykrol/plugins` store on GitHub — only what you do
+  not have yet; every file is checked against a checksum.
 - **PyPI** (pypi.org), on the first run only: downloads the pinned, hash-checked packages listed
   in `requirements.lock`.
 - **YouTube Data API** (Google), only with `publisher: youtube`: uploads private videos,

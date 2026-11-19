@@ -2,6 +2,21 @@
 
 All notable changes to ai-movie-company. Versions follow [semver](https://semver.org/).
 
+## 0.6.4 — 2026-11-19
+- **Install with one prompt.** A newcomer opens Claude Desktop → Code, pastes one text from the
+  README, and Claude runs `install.sh`: no Terminal, no password, no Homebrew, no GitHub or Google
+  Cloud account. The installer puts the Claude command line, Python 3.13 (uv 0.13.6), ffmpeg 9.0.2
+  (static build with libass/freetype) and the plugin into `~/.local/bin` / the store, every download
+  pinned and checked against a sha256 in the script; reruns skip what is done; the last line tells
+  the assistant what to say next (`STATUS: OK | NEED_DEVTOOLS | FAILED <step>`). Intel Macs stop
+  early with a clear message.
+- **YouTube: sign in, nothing else.** The plugin carries its own Google desktop-app client
+  (`assets/youtube_client.json`; the project is in production), so connecting is "pick a channel,
+  sign in, Allow". A client of your own (in `~/.ai_video_pipeline/` or `config.yaml`) still wins.
+  Login errors for the bundled client are explained without any Google Cloud words.
+- The launcher and `doctor` find tools in `~/.local/bin`; fix hints point to the installer instead
+  of Homebrew. `/ai-movie-company:connect` is two steps now (channel, sign-in).
+
 ## 0.6.3 — 2026-11-19
 - **The director walks newcomers through every click.** New `/ai-movie-company:connect` (and the
   "Connect now" choice in the guided start): a test channel first (how to create one), the Google

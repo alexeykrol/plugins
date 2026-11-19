@@ -22,6 +22,9 @@ export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
 
 say() { echo "ai-movie-company: $*" >&2; }
 
+# install.sh puts Python and ffmpeg into ~/.local/bin; Claude Desktop sessions may not have it on PATH
+export PATH="$HOME/.local/bin:$PATH"
+
 if [ -n "${VP_PYTHON:-}" ]; then
   exec "$VP_PYTHON" -m vp "$@"     # dev: bytecode caches allowed
 fi
@@ -35,7 +38,7 @@ for cand in python3.14 python3.13 python3.12 python3; do
   fi
 done
 if [ -z "$PY" ]; then
-  say "Python 3.12 or newer is required (macOS: brew install python@3.13; Linux: your package manager)."
+  say "Python 3.12 or newer is required (macOS: ask Claude to run the plugin installer again; Linux: your package manager)."
   exit 3
 fi
 

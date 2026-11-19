@@ -129,6 +129,8 @@ DEFAULTS: dict[str, Any] = {
 PUBLISHERS = ("youtube", "fake")
 YOUTUBE_CLIENT_FILE = "youtube_client_secret.json"   # default name in <vp_home>
 YOUTUBE_TOKEN_FILE = "youtube_token.json"
+# <plugin root>/assets/youtube_client.json (this file is <root>/src/vp/core/config.py)
+BUNDLED_YOUTUBE_CLIENT = Path(__file__).resolve().parents[3] / "assets" / "youtube_client.json"
 BRIEF_MAX_CHARS = 2000              # request.yaml `brief`, counted after stripping
 
 
@@ -163,9 +165,16 @@ def load_config(home: str | os.PathLike | None = None) -> dict[str, Any]:
     # A new user only drops the Google client file into <vp_home>: the YouTube paths default
     # there (computed, not written to config.yaml; an explicit path in config.yaml wins).
     yt = cfg["youtube"]
+    own_client = bool(yt.get("client_secrets_path"))
     for key, name in (("client_secrets_path", YOUTUBE_CLIENT_FILE), ("token_path", YOUTUBE_TOKEN_FILE)):
         if not yt.get(key):
             yt[key] = str(h.resolve() / name)
+    # The plugin ships its own Google client (a desktop app's client is not a secret by Google's
+    # design: the user's channel access is the token, which stays on this machine). An explicit
+    # path in config.yaml, or a file the user put into <vp_home>, wins over the bundled one.
+    if (not own_client and not Path(yt["client_secrets_path"]).is_file()
+            and BUNDLED_YOUTUBE_CLIENT.is_file()):
+        yt["client_secrets_path"] = str(BUNDLED_YOUTUBE_CLIENT)
     if os.environ.get("VP_JUDGE"):
         cfg["judge"] = os.environ["VP_JUDGE"]
     return cfg
