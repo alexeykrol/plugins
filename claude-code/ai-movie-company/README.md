@@ -8,8 +8,8 @@ captions, intro and outro cards, thumbnails, titles, descriptions with chapters 
 Everything is uploaded as **private** drafts; nothing is published until you approve each video
 in the chat.
 
-You do not operate a tool: you talk to the **editing director** — a professional with a point of
-view who finds the recording, agrees the task with you, proposes fragments and says where his own
+You do not operate a tool: you talk to **Elsa, the editing director** — a professional with a point of
+view who finds the recording, agrees the task with you, proposes fragments and says where her own
 proposal is weak. The decisions and the channel stay yours.
 
 ## Quick start (first time)
@@ -19,13 +19,13 @@ proposal is weak. The decisions and the channel stay yours.
 2. Put your recording in a folder together with its subtitles: a video (`.mp4`, `.mov`, `.mkv`) and
    an `.srt` file. The plugin does not transcribe: no `.srt` — no run.
 3. Type `/ai-movie-company:start`.
-4. The editing director looks for your recordings himself and asks which one to take. He reads
+4. The editing director looks for your recordings herself and asks which one to take. She reads
    the beginning of the subtitles, proposes a name for the series, and asks **one open question:
    what you want from this recording** — who the videos are for, what to look for, what to avoid.
    Your answer is the task the fragments are picked for; "make something" gives the average.
    Lengths, the number of fragments ("one" is fine for a test) and names to spell right — only if
-   you bring them up. Then he says in two lines what will be made and asks «Запускаем?».
-5. Wait. He proofreads the subtitles and picks fragments; on a long recording this takes a while.
+   you bring them up. Then she says in two lines what will be made and asks «Запускаем?».
+5. Wait. She proofreads the subtitles and picks fragments; on a long recording this takes a while.
 6. **Review the fragments**: for each one you get a card and a preview video to open. Answer
    Accept / Reject / Adjust (say in words where it should start or end).
 7. Claude cuts, renders, makes thumbnails, titles and descriptions.
@@ -43,17 +43,17 @@ where it stopped. `/ai-movie-company:status <folder>` shows where a job is.
 
 ## The editing director
 
-While you work with the plugin, Claude speaks as its editing director («Режиссёр монтажа»), and the
+While you work with the plugin, Claude speaks as its editing director, Elsa («Эльза»), and the
 interface shows it, so you always know whom you are talking to:
 
-- his **name and picture** where each reply opens;
-- a **band above the prompt** with his name and a **Leave** button;
-- his own words in the progress indicator («Думаю над монтажом»);
+- her **name and picture** where each reply opens;
+- a **band above the prompt** with her name and a **Leave** button;
+- her own words in the progress indicator («Думаю над монтажом»);
 - the **"Cutting room" colours** of the whole window (Claude Desktop and the mobile app).
 
-He comes on stage when you type any conversational command of the plugin (`start`, `run`, `review`,
+She comes on stage when you type any conversational command of the plugin (`start`, `run`, `review`,
 `approve`, `status`, `help`, `connect`) or `/director`, and **only in that session**: other sessions and
-projects stay plain Claude. The technical commands (`doctor`, `learn`) do not call him. To get plain
+projects stay plain Claude. The technical commands (`doctor`, `learn`) do not call her. To get plain
 Claude back, press **Leave** or type `/director-off`; the colours go back to yours.
 
 What is drawn where: Claude Desktop — everything; the terminal — the name and the band (no picture,
@@ -61,8 +61,8 @@ no colours); VS Code — the name and picture and a status line (no band, no col
 the interface are Russian or English: your system language the first time, then the language you
 and the director actually talk in.
 
-The voice never outranks the rules: he still publishes only what you watched and never decides for
-you. He says plainly what he has not seen (he works from the transcript, not from the picture) and
+The voice never outranks the rules: she still publishes only what you watched and never decides for
+you. She says plainly what she has not seen (she works from the transcript, not from the picture) and
 does not claim to remember earlier sessions beyond what the job folder shows.
 
 For scripts and clients that call the plugin without a person, set `AI_MOVIE_COMPANY_DIRECTOR=off`:
@@ -77,7 +77,10 @@ no face, a plain neutral voice.
    boundaries*, a low-res preview you can open locally. Your verdicts teach the selection: the
    plugin accumulates criteria, rules and cases (no model fine-tuning).
 4. **Renders** the clips (vertical crop for reels, captions, cards, loudness normalisation),
-   designs thumbnails, writes metadata and chapters.
+   designs thumbnails, writes metadata and chapters. Black bars of the recording are cropped away,
+   and every video is checked twice before upload: by code (bars, size, black or frozen frames,
+   silence, loudness) and on a sheet of frames (face in frame, nothing personal on screen,
+   readable subtitles). A failed check stops the video and is shown to you.
 5. **Uploads private drafts** to YouTube, links the videos of the series to each other.
 6. **You approve in the chat** — per video: *Publish now / Schedule / Reject*. Only approved
    videos are published, and only in the exact version you saw.
@@ -85,19 +88,30 @@ no face, a plain neutral voice.
 Model judgment (proofreading, selection, texts) is done by your Claude session itself; code does
 all the bookkeeping (timecodes, files, uploads, checks).
 
+**Optional design look.** Ask the director in plain words — "beautiful captions", "highlight the
+words", "an intro card" — and he renders a sample of one fragment with
+[Remotion](https://www.remotion.dev), shows it right in the chat and asks before switching: reels
+get animated burned-in captions (the current word lights up) and drawn intro/outro cards; long
+videos get the drawn cards only and keep their subtitles as a YouTube track. Needs Google Chrome;
+a reel takes a minute or two instead of seconds. The cards and an optional transparent captions
+track are also written as separate files for editors (`clips/<id>/layers/`, see `docs/LAYERS.md`
+in the source repository). Remotion has its own license: free for individuals, companies of up to
+3 people and non-profits; larger companies need a Remotion Company License
+(remotion.dev/license). The plain look does not use Remotion at all.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `/ai-movie-company:start [path]` | meet the editing director: he finds the recording, agrees the task with you, writes the request, runs the job |
+| `/ai-movie-company:start [path]` | meet the editing director: she finds the recording, agrees the task with you, writes the request, runs the job |
 | `/ai-movie-company:run <job>` | runs the pipeline to the end or to the next gate; conducts the gates in the dialog |
 | `/ai-movie-company:review <job>` | fragment review (gate 1) |
 | `/ai-movie-company:approve <job>` | publish approval (gate 2) |
 | `/ai-movie-company:status <job>` | where the job stands |
-| `/ai-movie-company:help [question]` | the director answers "how / why / what if" about his own work |
+| `/ai-movie-company:help [question]` | the director answers "how / why / what if" about her own work |
 | `/ai-movie-company:connect` | connect YouTube (or switch channels) with the director, one small step at a time |
 | `/director` | calls the editing director into this session |
-| `/director-off` | he leaves: plain Claude and your own colours again |
+| `/director-off` | she leaves: plain Claude and your own colours again |
 | `/ai-movie-company:learn <subcommand>` | learning loop of the fragment selection |
 | `/ai-movie-company:doctor` | checks Python, ffmpeg and settings |
 
@@ -120,7 +134,7 @@ selection of fragments; changing it re-runs the selection only.
 - `/ai-movie-company:run ~/Videos/2026-11-17-agents` — "make reels from this lecture"
 - "Show me the fragments of yesterday's lecture one by one" → the review in the chat
 - "Which videos of the agents series are waiting for my approval?" → `/ai-movie-company:approve`
-- "Why did you take this fragment and not the one about pricing?" → he answers with his reason
+- "Why did you take this fragment and not the one about pricing?" → she answers with her reason
 
 ## Requirements
 
@@ -131,6 +145,8 @@ selection of fragments; changing it re-runs the selection only.
 - **Python 3.12 or newer** and **ffmpeg with libass and freetype** — the installer sets them up
   (see below). Intel Macs are not supported yet (no build of the pinned `cryptography`).
 - A YouTube channel. Without connecting it, a job can run as a rehearsal (nothing is uploaded).
+- Only for the optional design look: **Google Chrome** and **Node.js 18+**
+  (nodejs.org); `/ai-movie-company:doctor` says if either is missing.
 
 Run `/ai-movie-company:doctor` after installing: it shows what is missing.
 
@@ -200,20 +216,34 @@ them. Advanced: your own Google client and other settings live in `~/.ai_video_p
 - **The job folder** you point it at: proofread subtitles, `script.md`, fragment lists, review and
   approval files, rendered clips, thumbnails, metadata, `report.md`, a status journal. Source files
   are never modified.
+- **CapCut's drafts folder** (`~/Movies/CapCut/User Data/Projects/com.lveditor.draft`), only when
+  you ask for a CapCut project (`vp capcut export <job> [clip ...]`, CapCut closed): a NEW project
+  folder per clip (a copy of the cut — CapCut is sandboxed and cannot read the job folder — on a
+  video track, one editable text segment per subtitle) and a line in
+  CapCut's project list (`root_meta_info.json`, backed up first to
+  `~/.ai_video_pipeline/capcut/backups/`). Existing CapCut projects are never touched. The CapCut
+  draft format is undocumented; the writer follows CapCut 9.8.0 for macOS.
+- **A rough cut for DaVinci Resolve / Final Cut Pro**, only when you ask for one
+  (`vp resolve export <job> [clip ...]`): a NEW folder `<job>/exports/edit/<clip>/` with an FCPXML 1.10
+  timeline (intro card, cut, outro card; card texts as editable titles), the subtitles as `.srt` and
+  the card backgrounds. It refers to the cut in the job folder; nothing is copied elsewhere. Import
+  in Resolve: File → Import → Timeline…, then File → Import → Subtitle…. Final Cut Pro is untested.
 - **`~/.ai_video_pipeline/`** (or `VP_HOME`): `config.yaml`, the selection knowledge (versions,
-  your verdicts), cost and notification journals.
+  your verdicts), cost and notification journals; with the design look also `remotion/` (the
+  design tools, ~500 MB) and, in the job folder, `design.yaml`, `previews/design/` and
+  `clips/<id>/layers/`.
 - **The plugin data folder** (`${CLAUDE_PLUGIN_DATA}`, else `~/.ai_video_pipeline/runtime`): a
   Python virtual environment with the pinned packages. Deleted when you uninstall the plugin.
 - **The plugin's own store** (a JSON file under your Claude Code configuration folder), written by
-  the director's face: the ids of the sessions where he is on stage (at most 50) and the language
+  the director's face: the ids of the sessions where she is on stage (at most 50) and the language
   of the interface words (`ru` / `en`). Nothing about you or your recordings. To pick that
   language the first time, it reads your system language once (on a Mac:
   `defaults read -g AppleLanguages`; elsewhere the `LANG` / `LC_*` variables).
 
 What the director's face changes in a session, and nothing else: it adds the contract page to the
-text of the plugin's own commands and to the system prompt while he is on stage; draws his name,
+text of the plugin's own commands and to the system prompt while she is on stage; draws her name,
 picture, band and progress words; sets the window colours; and, when you press Leave, adds one
-hidden note to the conversation saying that he left. Your `brief` is kept in the job folder.
+hidden note to the conversation saying that she left. Your `brief` is kept in the job folder.
 
 ## What it sends to the network
 
@@ -222,6 +252,10 @@ hidden note to the conversation saying that he left. Your `brief` is kept in the
   not have yet; every file is checked against a checksum.
 - **PyPI** (pypi.org), on the first run only: downloads the pinned, hash-checked packages listed
   in `requirements.lock`.
+- **npm registry** (registry.npmjs.org), only the first time you ask for the design look: the
+  pinned Remotion packages from `remotion/package-lock.json` (integrity-checked, install scripts
+  off) into `~/.ai_video_pipeline/remotion/`. Remotion's own telemetry is switched off and its
+  local servers listen on 127.0.0.1 only.
 - **YouTube Data API** (Google), only with `publisher: youtube`: uploads private videos,
   captions, thumbnails, playlists; publishes what you approved.
 - **Telegram Bot API**, only if you switch `notifier: telegram` on (off by default).

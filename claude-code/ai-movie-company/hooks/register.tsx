@@ -1,9 +1,9 @@
 // The editing director's presence in the interface.
 //
-// While the director is "on stage" in a session, the person can see it: replies open with his
-// name and picture, a band above the prompt says he is here and holds a Leave button, the
-// work indicator speaks his words, and the app takes the "Cutting room" look. The model gets
-// the one-page contract (persona/contract.md) with the first command that calls him, and in
+// While the director is "on stage" in a session, the person can see it: replies open with her
+// name and picture, a band above the prompt says she is here and holds a Leave button, the
+// work indicator speaks her words, and the app takes the "Cutting room" look. The model gets
+// the one-page contract (persona/contract.md) with the first command that calls her, and in
 // the system prompt after a compaction.
 //
 // The words on the interface are Russian or English: the system language the first time the
@@ -37,6 +37,7 @@ import {
   NAME,
   NOT_ON_STAGE_TEXT,
   ON_STAGE,
+  ROLE,
   SPINNER_WORDS,
   STAGE_COMMANDS,
   SWITCHED_OFF_NOTE,
@@ -195,7 +196,7 @@ async function systemLang($: EngineInterface): Promise<DirectorLang | undefined>
   return undefined
 }
 
-/** Puts the director on stage; false when he already was, or the switch holds him off. */
+/** Puts the director on stage; false when she already was, or the switch holds her off. */
 async function enter($: EngineInterface): Promise<boolean> {
   if ((await read($, onStage)) || (await isSwitchedOff($))) {
     return false
@@ -216,7 +217,7 @@ async function enter($: EngineInterface): Promise<boolean> {
   return true
 }
 
-/** Sends the director away, on the person's ask alone; false when he was not on stage. */
+/** Sends the director away, on the person's ask alone; false when she was not on stage. */
 async function leave($: EngineInterface): Promise<boolean> {
   if (!(await read($, onStage))) {
     return false
@@ -260,7 +261,7 @@ async function noteForModel($: EngineInterface, hasEnteredNow: boolean): Promise
 /**
  * The interface words follow the conversation. What the person types moves them to Russian at
  * once and never to English ("ok", "yes", a path say nothing); the director's own answer, which
- * is in the person's language by his contract, settles it either way.
+ * is in the person's language by her contract, settles it either way.
  */
 async function noteLang($: EngineInterface, text: string, isAnswer: boolean): Promise<void> {
   const seen = langOf(text)
@@ -298,7 +299,7 @@ export const register: Register = on => {
   })
 
   // A typed command of the plugin calls the director before the reply starts, so the reply
-  // opens with his face.
+  // opens with her face.
   on('prompt.submit', async ($, e, next) => {
     if (e.isMeta !== true) {
       await noteLang($, e.command === undefined ? e.text : e.command.args, false)
@@ -328,7 +329,7 @@ export const register: Register = on => {
     return note === undefined ? computed : { text: `${computed.text}\n\n---\n\n${note}` }
   })
 
-  // The director answers in the person's language: his answer says which words the band and
+  // The director answers in the person's language: her answer says which words the band and
   // the work indicator use from now on.
   on('turn.complete', async ($, e, next) => {
     if (e.agentId === undefined && e.answer !== '' && (await read($, onStage))) {
@@ -380,7 +381,7 @@ export const register: Register = on => {
   })
 
   // Name and picture where a reply opens. A reply keeps what it was first drawn with: one made
-  // before the director came stays plain, one of his keeps his name after he left.
+  // before the director came stays plain, one of her keeps her name after she left.
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     if (!e.props.isFirstOfReply || e.props.isSummary === true) {
       return next(e)
@@ -428,7 +429,7 @@ export const register: Register = on => {
   })
 
   // The director's own words while a turn runs. A step's description ("Creating notes.md")
-  // says more than any phrase of his, so only the engine's one-word verbs are replaced.
+  // says more than any phrase of her, so only the engine's one-word verbs are replaced.
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
     const word = e.props.word.trim()
 
@@ -455,7 +456,9 @@ export const register: Register = on => {
           <Text bold>
             {AVATAR_TEXT} {NAME[words]}
           </Text>
-          <Text dimColor>{ON_STAGE[words]}</Text>
+          <Text dimColor>
+            {ROLE[words]} {ON_STAGE[words]}
+          </Text>
           <Button key="leave" label={LEAVE[words]} onPress={() => leaveByButton($)} />
         </Box>
       )
@@ -466,7 +469,9 @@ export const register: Register = on => {
       <Box flexDirection="row" gap={1} alignItems="center">
         <Svg source={AVATAR} alt={NAME[words]} width={18} height={18} />
         <Text bold>{NAME[words]}</Text>
-        <Text dimColor>{ON_STAGE[words]}</Text>
+        <Text dimColor>
+          {ROLE[words]} {ON_STAGE[words]}
+        </Text>
         <Button key="leave" label={LEAVE[words]} onPress={() => leaveByButton($)} />
       </Box>
     )

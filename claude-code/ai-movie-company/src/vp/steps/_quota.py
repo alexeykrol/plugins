@@ -64,3 +64,30 @@ def check(new_uploads: int, daily: int, costs: CostJournal,
             f"midnight Pacific time (in ~{hours_to_reset(now):.0f} h): run again after that, or "
             f"raise budget.youtube_quota_per_day if Google granted a bigger quota.")
     return info
+
+
+def per_day(daily: int) -> int:
+    """How many new uploads fit into one whole quota day (at least 1)."""
+    n = 1
+    while estimate_upload_units(n + 1) <= int(daily):
+        n += 1
+    return n
+
+
+def check_one(total_new: int, daily: int, costs: CostJournal,
+              now: datetime | None = None) -> dict[str, int]:
+    """A job too big for one quota day goes over several days: before each new upload, does one
+    more item fit into what is left today? Raise WaitingQuota otherwise (uploads done so far stay)."""
+    need = estimate_upload_units(1)
+    used = used_today(costs, now)
+    available = max(int(daily) - used, 0)
+    info = {"need": need, "available": available, "used": used, "daily": int(daily),
+            "new_uploads": total_new, "split": 1, "per_day": per_day(daily)}
+    if need > available:
+        raise WaitingQuota(
+            f"YouTube quota: this job's {total_new} new uploads need "
+            f"~{estimate_upload_units(total_new)} units, more than one day's {daily}, so they go "
+            f"over several days, about {info['per_day']} a day. Today's quota is used up "
+            f"({available} left); what was uploaded stays. The quota resets at midnight Pacific "
+            f"time (in ~{hours_to_reset(now):.0f} h): run again after that for the next part.")
+    return info

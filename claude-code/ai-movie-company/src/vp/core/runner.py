@@ -42,7 +42,7 @@ def prepare_config(job: Job, config: dict[str, Any] | None) -> dict[str, Any]:
     """Load <vp_home>/config.yaml if `config` is None, then resolve the job profile."""
     cfg = config if config is not None else load_config()
     if "profile" not in cfg:
-        cfg = resolve_job_config(cfg, job.request())
+        cfg = resolve_job_config(cfg, job.request(), job.design())
     return cfg
 
 

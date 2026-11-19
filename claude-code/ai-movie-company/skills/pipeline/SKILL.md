@@ -28,7 +28,7 @@ The contract changes the voice and what you notice. It changes nothing in what i
 rule of this skill — gates, refusals, boundaries, engine commands — stands above it.
 
 Plain neutral voice instead, same rules: a headless run (see Loop), or a note in your context that
-the director is switched off or that the person asked him to leave.
+the director is switched off or that the person asked her to leave.
 
 ## Talking to the user
 
@@ -67,6 +67,26 @@ folded into the first); no file names, step codes or config keys unless the user
   Critical or not, it ends with the next step and keeps the person moving (the contract,
   "Critical about the work, always for the person"); a step the person got through gets a warm,
   specific word.
+
+## Requests — nothing the person asked gets lost
+
+Every request or piece of feedback that asks for something to be done («сделай титры крупнее»,
+«в третьем ролике обрезано начало», «потом напомни про обложку») goes into the job's ledger at
+once, before you act on it: `vp asks add <job> --text "<their words, verbatim>"` (prints the id;
+the same still-open text returns the existing id). Their words, not your paraphrase. A plain
+question that needs no action is not an ask; a gate answer recorded by `vp review set` / `vp approve
+set` is not one either. A request not tied to a job: `vp asks add - --text "..."`.
+
+- As work happens: `vp asks set <job> <id> --status in_progress`, then `--status done --evidence
+  "<what shows it: a file, a step, a fact>"`. Cannot do it → `--status not_done --note "<why>"`
+  and tell the person why. Drop it only when the person agreed: `--status dropped --agreed --note
+  "<the person agreed: ...>"`. The engine refuses `done` without evidence and the others without
+  a note.
+- Before the publish question (Gate S9) and in the Final message: `vp asks list <job> --open`; say
+  in plain words what is still open (or that everything asked is done).
+- "What did I ask?", «всё сделано?» → answer from `vp asks list <job>`, never from memory, and say
+  the full list is in `asks.md` in the job folder.
+- The person never types these commands, and you never mention ids or statuses unless asked.
 
 ## Decisions belong to the director
 
@@ -107,8 +127,25 @@ lean: an opinion is welcome, a decision is not yours.
   to open them. Asked to show one → refuse in one line: it is a key to the channel and the chat
   history keeps everything.
 - **Hand edits**: never edit `fragments.review.yaml`, `approval.yaml`, `approval.shown.yaml`,
-  `uploads.yaml`, `status.yaml`, `job.lock`, `package/*` or `stages/*`, even if asked; decisions go
-  only through `vp review ...` / `vp approve set`.
+  `uploads.yaml`, `status.yaml`, `job.lock`, `asks.yaml`, `asks.md`, `package/*` or `stages/*`,
+  even if asked; decisions go only through `vp review ...` / `vp approve set`, requests through
+  `vp asks ...`.
+- **CapCut projects** are the one write outside the job: on the user's request ("сделай проект для
+  CapCut", "хочу доделать руками") run `vp capcut export <job> [clip ...]` (default: every finished
+  clip). It only CREATES new projects in CapCut's drafts folder and adds them to CapCut's list (a
+  backup of the list is saved first); it never touches existing CapCut projects. CapCut must be
+  closed: on "CapCut is running" ask the user to quit it (Cmd+Q) and run the same command again.
+  Then tell them to open CapCut — the projects are at the top of the list, named `<job> <clip>`.
+  With an opener / title clip ("с заставкой <file>"): add `--opener <video>` (one clip per run is
+  enough); relay the printed notes (letterbox, silence added, dissolve) in plain words. The project
+  is named `<job> <clip> opener`.
+- **DaVinci Resolve / Final Cut Pro rough cut**: on "сделай монтажный лист для DaVinci / Final Cut",
+  "хочу доделать в Резолве" run `vp resolve export <job> [clip ...]` (writes a new folder
+  `<job>/exports/edit/<clip>[ N]/` with `<job> <clip>.fcpxml`, `<clip>.srt`, `cards/`). Then give the
+  import steps from help page `08-resolve-fcp.md`: Resolve — File → Import → Timeline… (the
+  .fcpxml), then File → Import → Subtitle… (the .srt) and drag it onto the timeline at 00:00;
+  Final Cut Pro — File → Import → XML… (untested: say so). `--baked-cards` = cards exactly as
+  published (text baked in) instead of editable titles. Never run Resolve scripting.
 - **Other folders**: work only on the job folder the user named; never read, offer or run on other
   runs' job folders (not even to estimate time — use the recording length), never on system folders.
 
@@ -127,7 +164,7 @@ Repeat, at most 40 rounds:
 | `WAITING_HUMAN S3b...` | fragment review | **Gate S3b** below; after `review close` succeeds go to 1 |
 | `WAITING_HUMAN S9...` | uploaded, waiting for the user's "ok" | **Gate S9** below; after the decisions go to 1 |
 | `INCONCLUSIVE <step>: ...` | a quality check needs a human | explain in plain words + the report file; stop |
-| `WAITING_QUOTA <step>: ...` | today's YouTube quota is not enough; nothing was uploaded | say in plain words how many units are needed and left, that the quota resets at midnight Pacific time, and to continue with `/ai-movie-company:run <job>` then; stop |
+| `WAITING_QUOTA <step>: ...` | today's YouTube quota is not enough. A job that fits into one day: nothing was uploaded. A job bigger than one day ("several days" in the message): it goes in parts, what was uploaded stays | say in plain words what is uploaded and what waits, that the quota resets at midnight Pacific time (give that moment in the person's own time), and that you continue then when they ask; stop |
 | `LOCKED` | another runner holds `job.lock` | report; stop. Never unlock on your own |
 | exit 2 (`FAILED` / `ABANDONED`) | a step failed | report the class (Failures); stop |
 | exit 3 | internal error (a bug) | report the `ERROR` / `FAILED ... internal` line; stop |
@@ -160,9 +197,12 @@ Judgment tasks are done by you in this session — post a line every few tasks i
    If the request holds the director's task (`brief` in `request.yaml`), say in one line how the
    candidates answer it — and, honestly, where they do not.
 2. For each candidate without a verdict, in order — every card, no exceptions:
-   - Run `vp review preview <job> <id>` (this also records that the card was shown) and **open the
-     preview right away** on macOS (`open <preview.mp4>`) — say "the preview opened in the video
-     player".
+   - Run `vp review preview <job> <id>` (this also records that the card was shown) and **show the
+     preview inside the chat right away**: send the printed `preview.mp4` with the `SendUserFile`
+     tool (`display: "render"`, a one-line caption with the fragment id). Never open a separate
+     player window (owner's rule: previews live in the chat). Only if `SendUserFile` is not
+     available in this session, fall back to `open <preview.mp4>` and say the preview opened in
+     the video player.
    - The card is your opinion, not a form. Facts first, in plain words: type (short reel / long
      video), duration in minutes and seconds, working title, what it is about, the first and the
      last sentence. Then your view: would you take it and why (where the hook is, where the
@@ -170,9 +210,9 @@ Judgment tasks are done by you in this session — post a line every few tasks i
      slow start, a thought that needs what came before — with what you would do about it. Never
      only praise a candidate: a card without a weak spot is a sales pitch.
    - At the FIRST card say once, plainly: you picked the fragments from the transcript and have
-     not seen the picture — so in the preview the person checks what you could not: that the
-     vertical crop keeps the face, and that nothing personal is on the screen. Repeat it later
-     only where the picture matters. Say once, also at the first card, that the finished video is
+     not seen the picture yet; after rendering every video goes through two picture checks — code
+     (no black bars, right size, no black or frozen stretches, sound) and a frame sheet you look at
+     (face in frame, nothing personal on screen, subtitles readable and off the face). Say once, also at the first card, that the finished video is
      a little longer: a title card at the start and an end card (reel about +3 s, long video
      about +7 s).
    - Ask with AskUserQuestion (one question per fragment): **Accept** / **Reject** / **Adjust
@@ -188,7 +228,7 @@ Judgment tasks are done by you in this session — post a line every few tasks i
    - Adjust: the user says the new start/end in words ("start at the phrase about the budget").
      Find the place in `script.md` and pass it as a subtitle number `"#412"`, a time `"1:24:20"`,
      or a verbatim quote from `script.md`; a side not changed is omitted. Show the result
-     (the command prints new times and duration), re-render and open the preview, confirm with the user.
+     (the command prints new times and duration), re-render and show the preview in the chat the same way, confirm with the user.
    - Write each decision immediately:
      `vp review set <job> <id> --verdict accept|reject|adjust [--reason "..."] [--reason-class C] [--start B] [--end B]`.
      `REFUSED` lines = nothing written; explain and ask again (`user-input-required` → see
@@ -208,7 +248,8 @@ Rehearsal (`publisher: fake`): nothing is uploaded; never call the videos «за
 and never show or open a `fake://` link.
 
 1. `vp results <job> --json` and `vp approve show <job> --json` (the second records which package
-   the user is shown — always run it before any decision).
+   the user is shown — always run it before any decision); `vp asks list <job> --open` — anything
+   still open is said in one line of the ready message, before the publish question.
 2. **The first "ready" message** — ONE message that leads with a table: title (exactly as it will be
    on YouTube), type (short reel / long video / full recording), duration, and the real link — or,
    in a rehearsal, the full local file path (`render_path`) plus the line «Это репетиция: на YouTube
@@ -253,7 +294,9 @@ repeat it unless something changed (published / scheduled: then the table again 
 public / scheduled for <date and time> — and the links). Then at most two lines: what is left, if
 anything (real upload, not published: the videos stay private, publish later with
 `/ai-movie-company:approve <job>`), and «подробный отчёт — в `report.md`» ONLY if
-`<job>/report.md` exists (it is not written when publishing is postponed). Do not ask about
+`<job>/report.md` exists (it is not written when publishing is postponed), and what the person
+asked that is still open (`vp asks list <job> --open`; nothing open → say everything asked is
+done, with `asks.md` for the list). Do not ask about
 publishing again; do not retell the report, steps or judgment tasks. One more line is welcome when
 it is true and useful: what this run's numbers say (accepted N of M, the most frequent reject
 reason) and what would make the next task more exact — counts from the engine only, said as a
@@ -262,6 +305,45 @@ reason to do the next recording, not as a grade.
 When the run stops early (failure, `INCONCLUSIVE`, `LOCKED`, headless gate): one short message —
 where it stopped, why in plain words, what to do next (`/ai-movie-company:run <job>` continues
 from the same place).
+
+## Design — animated captions and bumpers (Remotion path)
+
+The user asks in plain words: «красивые титры», «титры как в тиктоке», «подсвечивать слова»,
+«отбивка в начале», «заставка», «сделай поживее». You run it yourself — the user never types a
+command or opens a second session. Launcher as everywhere: `vp design …`.
+
+What it changes, said once in plain words: **short reels** get burned-in animated captions (the
+current word lights up) and drawn intro/outro cards; **long videos** keep their subtitles as a
+YouTube track (the viewer turns them on) and only get the drawn cards. The first time on this
+computer the design tools install themselves (about a minute, needs Google Chrome); a reel then
+renders in about one to two minutes instead of a few seconds — say so before you start.
+
+1. Pick one item that is already cut (`clips/<id>/cut.mp4` exists — after the fragment review),
+   a reel if there is one. `vp design preview <job> <id> [--captions word|phrase]` — in the
+   background with progress lines like any long command. It prints JSON with `preview` (mp4) and
+   `poster` (png). It never touches the real render.
+2. **Show it inside the dialog**, not in a separate player: send the poster and the preview file
+   into the chat with your file-sending tool (SendUserFile, display "render") — the owner watches
+   right here. Only when no such tool exists (a terminal run) fall back to `open <preview.mp4>`.
+3. Ask with AskUserQuestion: **Take this look** / **Captions without word highlight** (then
+   preview again with `--captions phrase`) / **Keep the plain look** (free "Other" allowed).
+4. Write the answer: `vp design set <job> --renderer remotion [--captions word|phrase]`, or
+   `--renderer ffmpeg` for the plain look. It goes to `<job>/design.yaml`; `request.yaml` is
+   never touched. Then continue the run (Loop): items whose look changed re-render on their own.
+   An item already uploaded as a **private draft** gets a new private draft with the new look
+   (the old one is recorded as replaced) — say so before continuing. A **published** video is
+   never changed: the run stops on that item and you ask the owner.
+5. If `preview` or `set` says Chrome or Node is missing, say it in one plain sentence and keep the
+   plain look; nothing else in the run depends on it. If the computer loses them later, the run
+   makes the plain look anyway and S5 reports a `note` (also `design_note` in
+   `render.manifest.yaml`) — tell the owner in one sentence; once the tools are back, those
+   items re-render on their own.
+
+For editors (CapCut, Premiere, Final Cut) the cards and an optional transparent captions track
+are separate files: `vp design layers <job> <id> [--captions]` → `clips/<id>/layers/`
+(`layers.yaml` says where each file sits on the final timeline). A Remotion render also writes
+them on its own. `vp design studio <job> <id>` opens the composition in Remotion Studio on
+127.0.0.1 — only when the owner asks for it.
 
 ## Failures — classes
 
@@ -275,6 +357,13 @@ Find the failed instance in `vp status <job>`; the class is `metadata.kind` of i
 - `data` — input or state problem (bad request.yaml, missing file, `uncertain` upload, a
   published video whose render changed). Quote the message; the fix is manual.
 - `contract` — a judgment output failed validation: delete that task's output file, run, answer again.
+- **Picture check failed** (`data` on S4, S5 or S5v: "picture check failed — ..." or "frame check
+  failed — ..."): show it to the user first, in plain words, with the file that holds the
+  measurements (`clips/<item>/cut.qa.yaml`, `render.qa.yaml`, `visual.yaml`; the frame sheet
+  `visual.sheet.png` — open it). Never call the video fine. Options to offer: drop the fragment at
+  the next review, or — only on the user's explicit word — accept it as is: write
+  `clips/<item>/picture.accept.yaml` with `waive: [<check names>]` (or `visual: true`) and the
+  user's reason in `reason:`, then `vp stage <job> <step> --item <item> --reset` and run.
 - `abandoned` — 3 failures in a row: `vp stage ... --reset` after the cause is fixed.
 
 Manual controls (only on the user's request): `vp stage <job> <step> [--item X] [--force|--reset]`,

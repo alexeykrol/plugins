@@ -212,7 +212,7 @@ def build_meta(model: dict[str, Any], rec: dict[str, Any], fields: dict[str, Aut
 
 
 class S6bMetadata(StepSpec):
-    id, deps, scope, version, gate = "S6b", ("S5",), "item", "1", None
+    id, deps, scope, version, gate = "S6b", ("S5v",), "item", "1", None
 
     def inputs(self, ctx: Ctx) -> list[Path]:
         j, i = ctx.job, ctx.item

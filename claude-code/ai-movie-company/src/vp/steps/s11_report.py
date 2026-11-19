@@ -4,7 +4,8 @@ report.md (owner-facing, Russian data): what was done; what was rejected and why
 review violations, revoked at publish, uncertain upload, deferred schedule); costs of the job
 (model tokens and USD, YouTube quota units); links; human time by kind from status.yaml
 (`review` — the central process metric — per recording and per published video; `full_scan`
-and `candidate_eval` separately, never mixed in). Publish times per video are in uploads.yaml
+and `candidate_eval` separately, never mixed in); the person's requests still owed (asks.yaml, only
+when the job has a ledger). Publish times per video are in uploads.yaml
 (`published.published_at`, SPEC §11) and listed here.
 
 The owner is notified once per distinct report (an identical rerun sends nothing).
@@ -14,7 +15,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from ..core.io import atomic_write, read_yaml
+from ..asks import report_lines as asks_lines
+from ..core.io import atomic_write
 from ..core.paths import FULL
 from ..core.status import Status
 from . import _results
@@ -107,6 +109,7 @@ def render_report(ctx: Ctx) -> str:
     else:
         links = [r for r in rows if r["url"]]
         lines += ["", "## Ссылки", ""] + [f"- {r['item']}: {r['url']}" for r in links]
+    lines += asks_lines(ctx.job)
     return "\n".join(lines) + "\n"
 
 
@@ -122,7 +125,7 @@ class S11Report(StepSpec):
 
     def inputs(self, ctx: Ctx) -> list[Path]:
         j = ctx.job
-        return [j.uploads_yaml, j.approval_yaml, j.review_yaml, j.crosslinks_yaml]
+        return [j.uploads_yaml, j.approval_yaml, j.review_yaml, j.crosslinks_yaml, j.asks_yaml]
 
     def outputs(self, ctx: Ctx) -> list[Path]:
         return [ctx.job.report_md]

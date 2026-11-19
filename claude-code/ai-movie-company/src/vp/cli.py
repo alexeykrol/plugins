@@ -15,6 +15,10 @@
   youtube authorize|convert-token|status     OAuth setup / connection check: vp.adapters.youtube:main(argv)
   results <job> [--json]                     what came out (links, files, states): vp.watch:results_main
   progress <job> [--json] [--wait N]         current long step, one line: vp.watch:progress_main
+  capcut export <job> [item ...] | check     new CapCut desktop project per clip: vp.adapters.capcut:main
+  resolve export <job> [item ...]            FCPXML rough cut + .srt (DaVinci Resolve, Final Cut Pro):
+                                             vp.adapters.fcpxml:main (alias: fcpxml)
+  asks add|set|list <job|-> ...              ledger of the person's requests: vp.asks:main
 
 Global option: --home <dir> (anywhere on the line, also after `learn` / `knowledge`) sets VP_HOME
 for the command — the pipeline home with config.yaml, knowledge store, journals.
@@ -47,6 +51,11 @@ SUBCOMMAND_MAINS = {
     "youtube": "vp.adapters.youtube:main",
     "results": "vp.watch:results_main",
     "progress": "vp.watch:progress_main",
+    "capcut": "vp.adapters.capcut:main",
+    "resolve": "vp.adapters.fcpxml:main",
+    "fcpxml": "vp.adapters.fcpxml:main",
+    "asks": "vp.asks:main",
+    "design": "vp.design:main",
 }
 
 
@@ -121,7 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("job")
     s.add_argument("item")
     for name in ("learn", "knowledge", "review", "approve", "doctor", "youtube", "results",
-                 "progress"):
+                 "progress", "capcut", "resolve", "fcpxml", "asks"):
         s = sub.add_parser(name, add_help=False)
         s.add_argument("rest", nargs=argparse.REMAINDER)
     return p

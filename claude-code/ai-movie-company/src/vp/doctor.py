@@ -95,7 +95,23 @@ def checks(home: Path | None = None) -> list[tuple[str, str, str]]:
     res.extend(_publisher_checks(cfg))
     res.extend(_notifier_checks(cfg))
     res.extend(_judge_checks(cfg))
+    res.extend(_design_checks(cfg))
     return res
+
+
+def _design_checks(cfg: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """The optional Remotion look: Node and Chrome. Missing ones FAIL only when the config
+    renders with remotion; otherwise they are a note (the plain look needs neither)."""
+    from .adapters.render_remotion import NODE_MIN_MAJOR, find_browser, find_node, remotion_settings
+    rs = remotion_settings(cfg)
+    on = cfg.get("renderer") == "remotion"
+    miss = "FAIL" if on else "WARN"
+    node, chrome = find_node(rs.get("node_bin")), find_browser(rs.get("browser_executable"))
+    suffix = "" if on else " (only for the optional design look)"
+    return [("OK" if node else miss, "design: node",
+             (node or f"Node.js {NODE_MIN_MAJOR}+ not found — nodejs.org") + suffix),
+            ("OK" if chrome else miss, "design: chrome",
+             (chrome or "Google Chrome not found — google.com/chrome") + suffix)]
 
 
 def _publisher_checks(cfg: dict[str, Any]) -> list[tuple[str, str, str]]:

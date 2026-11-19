@@ -345,7 +345,7 @@ def check_review(doc: Any, proposed: dict[str, Any], proposed_sha: str, timeline
     if not prop and not added and confirmed is not True:
         res.open.append("no_fragments_confirmed")
     for f in res.final:
-        rng = F.duration_range(profile, f["type"])
+        rng = F.duration_range(profile, f["type"], human=True)
         if not F.in_range(f["duration_ms"], rng):
             res.err(f"fragment {f['id']}", f"duration {f['duration_ms'] / 1000:.1f}s is outside "
                                            f"{rng[0] / 1000:g}-{rng[1] / 1000:g}s for {f['type']}")

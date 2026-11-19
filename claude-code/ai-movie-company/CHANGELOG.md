@@ -2,6 +2,42 @@
 
 All notable changes to ai-movie-company. Versions follow [semver](https://semver.org/).
 
+## 0.7.0 — 2026-11-19
+
+- **Editor exports** — CapCut project and FCPXML rough cut, see below.
+- **Elsa.** The editing director is now Elsa («Эльза»): a woman of about forty who loves working
+  with the person, warmer and livelier, with a very light, friendly irony (never at the person,
+  none in errors, refusals or at the publish question). The band reads «Эльза (режиссёр
+  монтажа) на связи». Persona card at the top of `persona/contract.md`.
+- **Asks ledger.** Every request of the person is recorded per job (`asks.yaml` / readable
+  `asks.md`) with a status and evidence; open ones are named before publishing and in the report.
+- **Picture QA.** No reel ships with bars: the real picture area is measured, a code check
+  (bars, size, black/frozen frames, silence) runs after cut and render, a frame check by the model
+  (face, personal data, subtitles) before upload; a hard gate, calibrated on real Zoom recordings.
+- **Remotion design path** (optional; needs Node and Chrome): animated reel captions, cards,
+  cover, editor layers; falls back to the plain look when the tools are missing.
+- **Quota over several days**: a job bigger than one day's YouTube quota uploads in parts instead
+  of waiting forever.
+- **Your own fragment may be short**: a reel the person picks may be down to 10 s.
+- **Previews in the chat**, not in a separate player.
+
+- CapCut export: `--opener <video>` puts a title clip before the cut in the same project — fitted into the cut's frame without stretching, silent track added when it has none, 0.8 s cross-dissolve baked in (`--dissolve`), cut and subtitles shifted to stay in sync.
+- **CapCut project per clip.** `vp capcut export <job> [clip ...]` makes a NEW CapCut desktop
+  project for each finished clip: the cut on a video track, the proofread subtitles as editable
+  text segments (one per cue; the cut is copied into the project because CapCut is sandboxed),
+  a 1080×1920 canvas for reels and 1920×1080 for long videos. Only new
+  folders are created; CapCut's project list is backed up before the new entry is added; nothing is
+  written while CapCut is running. The draft format is undocumented and follows CapCut 9.8.0 for
+  macOS (`src/vp/adapters/capcut_template.json`, re-derived by
+  `scripts/capcut_template_from_draft.py`). The clip→timeline model (`edit_timeline.py`) is
+  editor-neutral, ready for a DaVinci Resolve (FCPXML) writer.
+- **Rough cut for DaVinci Resolve / Final Cut Pro.** `vp resolve export <job> [clip ...]` (alias
+  `vp fcpxml`) writes an FCPXML 1.10 timeline per finished clip into `<job>/exports/edit/<clip>/`:
+  intro card, the cut with its audio, outro card on the spine; the card texts as editable Basic
+  Titles; canvas and frame rate of the clip (1080×1920 for reels). Subtitles go next to it as an
+  `.srt` on the same timeline (caption import from FCPXML differs between editors).
+  `--baked-cards` takes the cards from `render.mp4` instead. Final Cut Pro untested (not installed).
+
 ## 0.6.4 — 2026-11-19
 - **Install with one prompt.** A newcomer opens Claude Desktop → Code, pastes one text from the
   README, and Claude runs `install.sh`: no Terminal, no password, no Homebrew, no GitHub or Google

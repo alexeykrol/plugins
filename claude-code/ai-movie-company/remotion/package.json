@@ -1,0 +1,27 @@
+{
+  "name": "ai-movie-company-remotion",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Parametrised Remotion compositions of the AI Movie Company pipeline (bumpers, reel captions, cover). Driven only by props written by vp.adapters.render_remotion.",
+  "license": "SEE LICENSE IN ../LICENSE",
+  "scripts": {
+    "typecheck": "tsc",
+    "studio": "NODE_OPTIONS='--require ./scripts/localhost-only.cjs' remotion studio --no-open"
+  },
+  "dependencies": {
+    "@remotion/bundler": "4.0.540",
+    "@remotion/captions": "4.0.540",
+    "@remotion/cli": "4.0.540",
+    "@remotion/renderer": "4.0.540",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.540"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "typescript": "5.9.3"
+  },
+  "overrides": {
+    "csstype": "3.2.3"
+  }
+}

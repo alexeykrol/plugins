@@ -1,14 +1,24 @@
 """S4 — cut (SPEC S4). Code, ffmpeg. One instance per item (fragments of fragments.yaml + "full").
 
-  long / full  source frame, uncropped (21:9 is shown by YouTube with bars)
-  reel         9:16 band crop at the profile's fixed area `reel_crop: {x_frac, w_frac}` (v1;
-               face tracking is v2)
-  full         the whole recording: the source file is copied byte for byte (lossless, no re-encode)
+  Every kind first finds the source's ACTIVE PICTURE AREA (vp.adapters.picture.active_area:
+  cropdetect at several points of the fragment, widest rectangle seen) — a Zoom recording is often
+  a 16:9 picture inside a 21:9 canvas, with its own black bars (incident 2026-11-18).
+
+  reel         the largest 9:16 rectangle inside the active area, centred on the profile band
+               `reel_crop: {x_frac, w_frac}`, scaled to fill <source height>x<9:16 width>. A reel is
+               never letterboxed or pillarboxed. (Face tracking is v2.)
+  long         the active area when the source has bars (cropped, not scaled), else the frame
+  full         the whole recording: copied byte for byte when the source has no bars; cropped to
+               the active area (re-encode) when it has them
 
 clip.srt = subtitles.srt sliced to [in, out) and rebased to 0 (the cut timeline).
 
 Acceptance (code): duration = out − in ± 1 frame; audio present; first frame not black;
-clip.srt has no overlaps and no cue after the end of the cut.
+clip.srt has no overlaps and no cue after the end of the cut; the picture gate
+(vp.adapters.picture.inspect: size/aspect, black bars, black stretches, frozen picture, silence)
+passes — its report goes to cut.qa.yaml, also when it fails. Checks the owner waived for this clip
+in picture.accept.yaml (`waive: [bars, ...]`, with a reason) are reported, not enforced.
+The cut is the media editor exports (CapCut, FCPXML) take, so this gate covers them too.
 
 Also exports `fragment_record(ctx)` — the item's fragment as a normalised dict, used by S6a/S6b.
 """
@@ -20,8 +30,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from ..adapters import media
-from ..core.io import read_yaml
+from ..adapters import media, picture
+from ..core.io import read_yaml, write_yaml
 from ..core.srt import read_srt, slice_cues, write_srt
 from ..core.timefmt import parse_time
 from .base import FULL, Ctx, StepSpec, VPError, item_kind
@@ -82,8 +92,27 @@ def check_cues(cues, duration_ms: int) -> list[str]:
     return out
 
 
+def cut_qa(job, item: str) -> Path:
+    """Picture-gate report of the cut (S4 output)."""
+    return job.item_dir(item) / "cut.qa.yaml"
+
+
+def picture_accept(job, item: str) -> Path:
+    """Owner's waiver for one clip: {waive: [check names], visual: bool, reason: text}."""
+    return job.item_dir(item) / "picture.accept.yaml"
+
+
+def waived_checks(ctx: Ctx) -> list[str]:
+    """Code checks the owner accepted for this clip (picture.accept.yaml `waive`); a waiver
+    without a reason is ignored."""
+    doc = read_yaml(picture_accept(ctx.job, ctx.item), default=None)
+    if not isinstance(doc, dict) or not str(doc.get("reason") or "").strip():
+        return []
+    return sorted(str(x) for x in doc.get("waive") or [])
+
+
 class S4Cut(StepSpec):
-    id, deps, scope, version, gate = "S4", ("S3b",), "item", "1", None
+    id, deps, scope, version, gate = "S4", ("S3b",), "item", "2", None
 
     def inputs(self, ctx: Ctx) -> list[Path]:
         return [ctx.job.source_video, ctx.job.subtitles_srt]
@@ -94,10 +123,12 @@ class S4Cut(StepSpec):
         if rec["kind"] == "reel":
             crop = ctx.profile.get("reel_crop") or {}
             cfg["reel_crop"] = {"x_frac": float(crop.get("x_frac")), "w_frac": float(crop.get("w_frac"))}
+        cfg["picture_qa"] = picture.settings(ctx.config)
+        cfg["waive"] = waived_checks(ctx)
         return cfg
 
     def outputs(self, ctx: Ctx) -> list[Path]:
-        return [ctx.job.cut_mp4(ctx.item), ctx.job.clip_srt(ctx.item)]
+        return [ctx.job.cut_mp4(ctx.item), ctx.job.clip_srt(ctx.item), cut_qa(ctx.job, ctx.item)]
 
     def run(self, ctx: Ctx) -> dict:
         job, item = ctx.job, ctx.item
@@ -109,7 +140,12 @@ class S4Cut(StepSpec):
         end = min(end, src_info["duration_ms"])
         out = job.cut_mp4(item)
         out.parent.mkdir(parents=True, exist_ok=True)
-        if rec["kind"] == "full":
+        st = picture.settings(ctx.config)
+        src_area = picture.active_area(job.source_video, start, end, policy="union", st=st)
+        W, H = src_info["width"], src_info["height"]
+        crop_info: dict[str, Any] = {"source_area": src_area.as_dict(),
+                                     "source_bars": picture.bars(W, H, src_area, st)}
+        if rec["kind"] == "full" and not crop_info["source_bars"]:
             fd, tmp = tempfile.mkstemp(prefix=".cut.", suffix=".mp4", dir=out.parent)
             os.close(fd)
             try:
@@ -121,16 +157,16 @@ class S4Cut(StepSpec):
                 raise
         elif rec["kind"] == "reel":
             crop = self.config(ctx)["reel_crop"]
-            fd, tmp = tempfile.mkstemp(prefix=".uncropped.", suffix=".mp4", dir=out.parent)
-            os.close(fd)
-            try:
-                media.cut(job.source_video, start, end, tmp)
-                media.crop_fraction(tmp, out, crop["x_frac"], crop["w_frac"])
-            finally:
-                if os.path.exists(tmp):
-                    os.unlink(tmp)
+            rect, out_w, out_h = picture.reel_crop_rect(W, H, src_area, crop["x_frac"], crop["w_frac"])
+            crop_info.update(crop=rect.as_dict(), out_size=[out_w, out_h])
+            media.cut(job.source_video, start, end, out,
+                      vf=media.crop_scale_filter(rect.x, rect.y, rect.w, rect.h, out_w, out_h))
         else:
-            media.cut(job.source_video, start, end, out)
+            rect = picture.long_crop_rect(W, H, src_area, st)
+            vf = media.crop_scale_filter(rect.x, rect.y, rect.w, rect.h) if rect else None
+            if rect:
+                crop_info["crop"] = rect.as_dict()
+            media.cut(job.source_video, start, end, out, vf=vf)
 
         # ---- acceptance -------------------------------------------------------------------
         info = media.probe(out)
@@ -147,6 +183,10 @@ class S4Cut(StepSpec):
             ratio = info["width"] / info["height"]
             if abs(ratio - 9 / 16) > 0.03:
                 raise VPError("data", f"{item}: reel frame {info['width']}x{info['height']} is not 9:16")
+        report = picture.apply_waivers(picture.inspect(out, rec["kind"], config=ctx.config),
+                                       waived_checks(ctx))
+        write_yaml(cut_qa(job, item), {**report, **crop_info})
+        picture.require_clean(report, f"{item} cut")
         cues = slice_cues(read_srt(job.subtitles_srt), start, end, rebase=True)
         bad = check_cues(cues, expected)
         if bad:

@@ -1,6 +1,6 @@
 {
   "name": "ai-movie-company",
-  "version": "0.6.4",
+  "version": "0.7.0",
   "types": "./types/index.d.ts",
   "description": "AI movie company: an editing director you talk to in Claude. He turns a recorded lecture or interview with subtitles into a reviewed YouTube series: agrees the task with you, proofreads subtitles, proposes reels and long fragments for your review in the chat, renders clips with captions, cards and thumbnails, writes metadata, uploads private drafts and publishes only what you approve in the dialog.",
   "author": {

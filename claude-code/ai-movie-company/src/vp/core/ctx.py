@@ -147,6 +147,14 @@ def _make_renderer(ctx: Ctx) -> Any:
     kind = ctx.config.get("renderer", "ffmpeg")
     if kind == "ffmpeg":
         return _load_attr("vp.adapters.render:FfmpegRenderer")(ctx.config)
+    if kind == "remotion":
+        # Node or Chrome missing: the item is made in the plain look with a note, never a failure.
+        kind, note = _load_attr("vp.adapters.render_remotion:effective_renderer")(ctx.config)
+        if kind == "ffmpeg":
+            r = _load_attr("vp.adapters.render:FfmpegRenderer")(ctx.config)
+            r.design_note = note
+            return r
+        return _load_attr("vp.adapters.render_remotion:RemotionRenderer")(ctx.config)
     raise VPError("data", f"unknown renderer {kind!r}")
 
 

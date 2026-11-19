@@ -9,7 +9,10 @@ A task is a folder `judge/<task>/` inside a job (or inside `<home>/selection/wor
 
 - `task.yaml` — task name and `output:` — the exact file name to write;
 - `prompt.md` — the instructions, including the required output format;
-- `input.<name>` — the inputs the prompt refers to by `<name>`.
+- `input.<name>` — the inputs the prompt refers to by `<name>`;
+- `attach.<name>` — images for the task (the `s5v.<item>` picture check attaches a contact sheet
+  of frames). `input.attachments` lists their absolute paths: **open every listed image with the
+  Read tool and look at it** before answering — the answer is about what is in the frames.
 
 `CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" "${CLAUDE_PLUGIN_ROOT}/scripts/vp" judge-pending <job>` lists pending tasks as
 `<task>\t<output path>`.
@@ -37,6 +40,9 @@ A task is a folder `judge/<task>/` inside a job (or inside `<home>/selection/wor
   Russian), unless the prompt says otherwise.
 - **Author fields**: text the author fixed in the input (`locked`, `extend` prefixes) is kept
   byte for byte.
+- **Picture check** (`s5v.*`): answer each question from the frames only; `yes` when it is true
+  in any frame, and list those frame numbers in `problem_frames`. Never answer from the
+  transcript or from what the video should look like.
 - **Proofreading** (`s1.proofread.*`): fix recognition errors, punctuation and noise only;
   never change the meaning; an emptied line keeps its id with empty text.
 

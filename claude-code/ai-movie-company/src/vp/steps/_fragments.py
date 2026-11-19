@@ -446,11 +446,17 @@ def parse_kind(value: Any) -> str:
 
 # ---- ranges and overlaps ----------------------------------------------------------------------
 
-def duration_range(profile: dict[str, Any], kind: str) -> tuple[int, int]:
-    """(min_ms, max_ms) of a fragment type from the resolved profile."""
+def duration_range(profile: dict[str, Any], kind: str, human: bool = False) -> tuple[int, int]:
+    """(min_ms, max_ms) of a fragment type from the resolved profile. `min_s` is what the model
+    proposes; a person's own choice at the review gate (`human=True`) may go down to
+    `human_min_s` when the profile sets it (owner's test drive 2026-11-18: a 25 s reel he picked
+    was refused by code)."""
     r = profile.get(kind) or {}
     try:
-        return int(float(r["min_s"]) * 1000), int(float(r["max_s"]) * 1000)
+        lo = float(r["min_s"])
+        if human and r.get("human_min_s") is not None:
+            lo = min(lo, float(r["human_min_s"]))
+        return int(lo * 1000), int(float(r["max_s"]) * 1000)
     except (KeyError, TypeError, ValueError) as e:
         raise VPError("data", f"profile lacks {kind}.min_s/max_s") from e
 

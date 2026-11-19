@@ -8,6 +8,11 @@ returns the raw output text. The calling step validates it (invalid -> VPError("
 output_name is the file name inside judge/<task>/, by convention "output.<ext>"
 (e.g. "output.txt", "output.yaml", "output.json").
 
+attachments (optional) {name: path} — images the judge must look at (S5v contact sheet). They are
+copied to judge/<task>/attach.<name>; their absolute paths and sha256 become the input
+`attachments` (so a changed picture supersedes an old answer). ClaudeCliJudge lets the CLI read
+the task folder (--add-dir, Read tool); in the plugin session the judge skill opens them.
+
 Implementations:
   ClaudeCliJudge  `claude -p --output-format json --model <M>`, full prompt on stdin;
                   output = JSON field `result`; usage -> cost journal
@@ -86,8 +91,26 @@ class Judge:
         })
         return d
 
+    def with_attachments(self, task: str, inputs: dict[str, str],
+                         attachments: dict[str, Path] | None, ctx: "Ctx") -> dict[str, str]:
+        """Copy attachments into the task dir; returns inputs + the `attachments` listing."""
+        if not attachments:
+            return inputs
+        d = self.task_dir(task, ctx)
+        d.mkdir(parents=True, exist_ok=True)
+        lines = []
+        for name, src in attachments.items():
+            if not _NAME_RE.match(name):
+                raise VPError("internal", f"bad attachment name {name!r}")
+            data = Path(src).read_bytes()
+            dst = d / f"attach.{name}"
+            atomic_write(dst, data)
+            lines.append(f"{dst.resolve()}  sha256={sha256_bytes(data)}")
+        return {**inputs, "attachments": "\n".join(lines)}
+
     def run(self, task: str, prompt: str, inputs: dict[str, str], output_name: str,
-            ctx: "Ctx") -> str:
+            ctx: "Ctx", attachments: dict[str, Path] | None = None) -> str:
+        inputs = self.with_attachments(task, inputs, attachments, ctx)
         d = self.write_task(task, prompt, inputs, output_name, ctx)
         text = self._produce(task, prompt, inputs, output_name, d, ctx)
         atomic_write(d / output_name, text)
@@ -123,7 +146,8 @@ class ManualJudge(Judge):
     kind = "manual"
 
     def run(self, task: str, prompt: str, inputs: dict[str, str], output_name: str,
-            ctx: "Ctx") -> str:
+            ctx: "Ctx", attachments: dict[str, Path] | None = None) -> str:
+        inputs = self.with_attachments(task, inputs, attachments, ctx)
         d = self.write_task(task, prompt, inputs, output_name, ctx)
         out = d / output_name
         if out.exists():
@@ -143,13 +167,17 @@ class ClaudeCliJudge(Judge):
         self.timeout_s = timeout_s
         self.env = env
 
-    def command(self) -> list[str]:
-        return [self.executable, "-p", "--output-format", "json", "--model", self.model]
+    def command(self, read_dir: Path | None = None) -> list[str]:
+        cmd = [self.executable, "-p", "--output-format", "json", "--model", self.model]
+        if read_dir is not None:   # attachments: the model opens the images with the Read tool
+            cmd += ["--add-dir", str(read_dir), "--allowedTools", "Read"]
+        return cmd
 
     def _produce(self, task, prompt, inputs, output_name, d, ctx) -> str:
         full = compose_prompt(prompt, inputs)
+        read_dir = d.resolve() if "attachments" in inputs else None
         try:
-            proc = subprocess.run(self.command(), input=full, capture_output=True, text=True,
+            proc = subprocess.run(self.command(read_dir), input=full, capture_output=True, text=True,
                                   timeout=self.timeout_s, env=self.env)
         except FileNotFoundError as e:
             raise VPError("internal", f"judge executable not found: {self.executable}") from e

@@ -1,5 +1,5 @@
 ---
-description: Meet the editing director — he finds your recording, agrees the task with you, prepares the job and runs it with the gates in this dialog
+description: Meet the editing director — she finds your recording, agrees the task with you, prepares the job and runs it with the gates in this dialog
 argument-hint: [folder-or-video-path]
 allowed-tools: Bash, Read, Write, Glob, Grep, AskUserQuestion
 ---

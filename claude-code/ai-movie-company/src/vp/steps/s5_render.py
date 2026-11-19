@@ -11,7 +11,10 @@ the clip refers to (t_final = t_clip + intro_ms).
 
 Acceptance (code): duration = clip + cards ± 1 frame and equals the manifest; LUFS measured on
 render.mp4 within tolerance; final.srt has no overlaps, its last cue ends no later than the end
-of speech (intro_ms + clip duration) — cues are clipped there, never moved.
+of speech (intro_ms + clip duration) — cues are clipped there, never moved; the picture gate
+(vp.adapters.picture.inspect over the clip part, cards excluded: frame size = the cut's, no black
+bars, no black stretch, picture not frozen, no long silence) passes. Its report goes to
+render.qa.yaml (also on failure) and its verdict into render.manifest.yaml `picture`.
 """
 from __future__ import annotations
 
@@ -19,12 +22,12 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from ..adapters import media
+from ..adapters import media, picture
 from ..adapters.render import brand_settings, card_durations, measure_lufs, render_settings, video_info
 from ..core.io import read_yaml, write_yaml
 from ..core.srt import Cue, read_srt, write_srt
 from .base import Ctx, StepSpec, VPError
-from .s4_cut import fragment_record
+from .s4_cut import fragment_record, waived_checks
 
 
 def final_cues(clip_cues: list[Cue], intro_ms: int, clip_ms: int) -> list[Cue]:
@@ -56,8 +59,13 @@ def final_srt_violations(cues: list[Cue], intro_ms: int, clip_ms: int) -> list[s
     return out
 
 
+def render_qa(job, item: str) -> Path:
+    """Picture-gate report of the render (S5 output)."""
+    return job.item_dir(item) / "render.qa.yaml"
+
+
 class S5Render(StepSpec):
-    id, deps, scope, version, gate = "S5", ("S6a",), "item", "1", None
+    id, deps, scope, version, gate = "S5", ("S6a",), "item", "2", None
 
     def inputs(self, ctx: Ctx) -> list[Path]:
         j, i = ctx.job, ctx.item
@@ -65,13 +73,22 @@ class S5Render(StepSpec):
 
     def config(self, ctx: Ctx) -> dict:
         kind = fragment_record(ctx)["kind"]
-        return {"kind": kind, "renderer": ctx.config.get("renderer", "ffmpeg"),
-                "brand": brand_settings(ctx.config), "render": render_settings(ctx.config),
-                "cards": list(card_durations(ctx.config, kind))}
+        from ..adapters.render_remotion import effective_renderer
+        # The renderer that will really draw (remotion falls back to ffmpeg without Node/Chrome),
+        # so installing the tools later re-renders the items made in the plain look.
+        cfg = {"kind": kind, "renderer": effective_renderer(ctx.config)[0],
+               "brand": brand_settings(ctx.config), "render": render_settings(ctx.config),
+               "cards": list(card_durations(ctx.config, kind)),
+               "picture_qa": picture.settings(ctx.config), "waive": waived_checks(ctx)}
+        if cfg["renderer"] == "remotion":  # the look chosen in the dialog re-renders the item
+            from ..adapters.render_remotion import remotion_settings
+            rs = remotion_settings(ctx.config)
+            cfg["remotion"] = {k: rs[k] for k in ("font_family", "accent_color", "captions", "crf")}
+        return cfg
 
     def outputs(self, ctx: Ctx) -> list[Path]:
         j, i = ctx.job, ctx.item
-        return [j.render_mp4(i), j.render_manifest(i), j.final_srt(i)]
+        return [j.render_mp4(i), j.render_manifest(i), j.final_srt(i), render_qa(j, i)]
 
     def run(self, ctx: Ctx) -> dict:
         j, item = ctx.job, ctx.item
@@ -106,13 +123,28 @@ class S5Render(StepSpec):
         if bad:
             raise VPError("data", f"{item}: final.srt invalid: {bad[:5]}")
 
+        report = picture.apply_waivers(
+            picture.inspect(j.render_mp4(item), kind, span=(intro_ms, duration_ms - outro_ms),
+                            config=ctx.config, expect_size=(clip_info["width"], clip_info["height"])),
+            waived_checks(ctx))
+        write_yaml(render_qa(j, item), report)
+        picture.require_clean(report, f"{item} render")
+
         write_srt(j.final_srt(item), cues, renumber=True)
         manifest: dict[str, Any] = {"item": item, "kind": kind, "intro_ms": intro_ms, "outro_ms": outro_ms,
                                     "clip_ms": clip_ms, "duration_ms": duration_ms,
-                                    "lufs": round(lufs, 2), "renderer": type(ctx.renderer).__name__}
+                                    "lufs": round(lufs, 2), "renderer": type(ctx.renderer).__name__,
+                                    "picture": {"ok": report["ok"], "waived": report["waived"],
+                                                "checks": sorted(report["checks"])}}
+        note = getattr(ctx.renderer, "design_note", None)
+        if note:
+            manifest["design_note"] = note
         write_yaml(j.render_manifest(item), manifest)
-        return {"kind": kind, "duration_ms": duration_ms, "intro_ms": intro_ms, "outro_ms": outro_ms,
-                "lufs": round(lufs, 2)}
+        out = {"kind": kind, "duration_ms": duration_ms, "intro_ms": intro_ms, "outro_ms": outro_ms,
+               "lufs": round(lufs, 2)}
+        if note:
+            out["note"] = note
+        return out
 
 
 STEP = S5Render()

@@ -32,7 +32,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-from ..adapters.publisher import PublisherError, UploadOutcomeUnknown, make_vp_key, vp_tag
+from ..adapters.publisher import (PublisherError, UploadOutcomeUnknown, estimate_upload_units,
+                                  make_vp_key, vp_tag)
 from ..core.io import MISSING, now_iso, sha256_file, sha256_obj
 from ..core.status import Status
 from ._package import (DEFAULT_CATEGORY, DEFAULT_LANGUAGE, final_snippet, fragment_info,
@@ -163,9 +164,16 @@ def _needs_new_upload(entry: dict[str, Any] | None, render_sha: str) -> bool:
 
 
 def quota_precheck(ctx: Ctx) -> dict[str, int] | None:
-    """Once per run, before the first new upload: do this job's remaining new uploads fit into
-    today's YouTube quota? Raises WaitingQuota otherwise (nothing uploaded). Real YouTube only."""
+    """Before a new upload: do this job's remaining new uploads fit into today's YouTube quota?
+    A job that fits into one quota day is checked once per run, all or nothing (WaitingQuota,
+    nothing uploaded). A job bigger than a whole day would never fit, so it goes over several
+    days: each new upload is checked alone and the run stops when today's quota is used up.
+    Real YouTube only."""
     cache = ctx._shared.setdefault("s8_quota", {})
+    if "split" in cache:
+        info = _quota.check_one(cache["split"], cache["daily"], ctx.costs)
+        ctx.log.event("quota_precheck", **info)
+        return info
     if "info" in cache:
         return cache["info"]
     if ctx.publisher_kind != "youtube":
@@ -176,6 +184,9 @@ def quota_precheck(ctx: Ctx) -> dict[str, int] | None:
     new = sum(1 for it in job.items() or []
               if _needs_new_upload(uploads.get(it), sha256_file(job.render_mp4(it))))
     daily = int((ctx.config.get("budget") or {}).get("youtube_quota_per_day", 10000))
+    if estimate_upload_units(new) > daily:
+        cache["split"], cache["daily"] = new, daily
+        return quota_precheck(ctx)
     info = _quota.check(new, daily, ctx.costs)
     ctx.log.event("quota_precheck", **info)
     cache["info"] = info

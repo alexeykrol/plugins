@@ -1,15 +1,21 @@
 // The editing director's face: every word, picture and color the mod shows.
 //
 // One place to change the persona's name, interface words, picture and look.
-// The voice itself (who the director is, how he speaks) is persona/contract.md; a unit test
+// The voice itself (who the director is, how she speaks) is persona/contract.md; a unit test
 // holds the two names here to the names written there.
 
 import type { DirectorLang } from '../types'
 
 /** The name on replies and on the band above the prompt. */
 export const NAME: Record<DirectorLang, string> = {
-  ru: 'Режиссёр монтажа',
-  en: 'Editing director',
+  ru: 'Эльза',
+  en: 'Elsa',
+}
+
+/** The role, dim after the name on the band. */
+export const ROLE: Record<DirectorLang, string> = {
+  ru: '(режиссёр монтажа)',
+  en: '(editing director)',
 }
 
 /** The dim words after the name on the band. */
@@ -26,37 +32,37 @@ export const LEAVE: Record<DirectorLang, string> = {
 
 /** The toast after the Leave button. */
 export const LEFT_TOAST: Record<DirectorLang, string> = {
-  ru: 'Режиссёр монтажа вышел — дальше отвечает обычный Claude.',
-  en: 'The editing director has left — plain Claude from here.',
+  ru: 'Эльза вышла — дальше отвечает обычный Claude.',
+  en: 'Elsa has left — plain Claude from here.',
 }
 
 /** What /director-off prints when the director was on stage. */
 export const LEFT_TEXT: Record<DirectorLang, string> = {
-  ru: 'Режиссёр монтажа вышел: дальше отвечает обычный Claude, оформление вернулось к прежнему. Позвать снова — /director или любая команда плагина.',
-  en: 'The editing director has left: plain Claude answers from here and the usual look is back. To call him again: /director or any command of the plugin.',
+  ru: 'Эльза вышла: дальше отвечает обычный Claude, оформление вернулось к прежнему. Позвать её снова — /director или любая команда плагина.',
+  en: 'Elsa has left: plain Claude answers from here and the usual look is back. To call her again: /director or any command of the plugin.',
 }
 
 /** What /director-off prints when there was nobody to send away. */
 export const NOT_ON_STAGE_TEXT: Record<DirectorLang, string> = {
-  ru: 'Режиссёра монтажа в этом разговоре сейчас нет. Позвать — /director.',
-  en: 'The editing director is not in this conversation now. To call him: /director.',
+  ru: 'Эльзы в этом разговоре сейчас нет. Позвать — /director.',
+  en: 'Elsa is not in this conversation now. To call her: /director.',
 }
 
 /** What /director prints. */
 export const HERE_TEXT: Record<DirectorLang, string> = {
-  ru: 'Режиссёр монтажа на связи. Выйти — кнопка «Выйти» над полем ввода или /director-off.',
-  en: 'The editing director is on stage. To leave: the Leave button above the prompt, or /director-off.',
+  ru: 'Эльза на связи. Отпустить её — кнопка «Выйти» над полем ввода или /director-off.',
+  en: 'Elsa is on stage. To let her go: the Leave button above the prompt, or /director-off.',
 }
 
 /** What /director prints when the environment switch holds the persona off. */
 export const SWITCHED_OFF_TEXT: Record<DirectorLang, string> = {
-  ru: 'Режиссёр монтажа выключен переменной AI_MOVIE_COMPANY_DIRECTOR=off.',
-  en: 'The editing director is switched off by AI_MOVIE_COMPANY_DIRECTOR=off.',
+  ru: 'Эльза выключена переменной AI_MOVIE_COMPANY_DIRECTOR=off.',
+  en: 'Elsa is switched off by AI_MOVIE_COMPANY_DIRECTOR=off.',
 }
 
 /**
  * The director's words while a turn runs. Generic on purpose: the indicator shows during any
- * step, and the director never claims to watch a picture he has not seen.
+ * step, and the director never claims to watch a picture she has not seen.
  */
 export const SPINNER_WORDS: Record<DirectorLang, readonly string[]> = {
   ru: ['Работаю с записью', 'Думаю над монтажом', 'Сверяюсь с материалом'],
@@ -120,7 +126,7 @@ export const LOOK_INPUT = {
 
 /**
  * The commands and skills of this plugin that are a conversation with the director. The
- * technical ones (doctor, learn, judge) are not: they neither call him nor send him away.
+ * technical ones (doctor, learn, judge) are not: they neither call her nor send her away.
  */
 export const STAGE_COMMANDS: readonly string[] = [
   'start',
@@ -138,7 +144,7 @@ export const CONTRACT_TITLE = 'Editing director — the contract'
 
 /** Put before the contract where it is handed to the model inside a command's or skill's text. */
 export const CONTRACT_LEAD =
-  'The editing director is on stage in this conversation. The page below is the contract: who ' +
+  'The editing director (Elsa) is on stage in this conversation. The page below is the contract: who ' +
   'you are while you talk with the person here. It is not a task and needs no acknowledgement; ' +
   'follow it together with the instructions above.'
 

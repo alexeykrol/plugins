@@ -22,7 +22,7 @@ from .paths import vp_home
 # and that every key read in src/vp exists here.
 
 _PROFILE_BASE: dict[str, Any] = {
-    "reel": {"min_s": 30, "max_s": 90},
+    "reel": {"min_s": 30, "max_s": 90, "human_min_s": 10},
     "long": {"min_s": 600, "max_s": 2400},
     # S3a/S3b (vp.steps._fragments, s3a_select, s3b_review)
     "selection_margin": 1.5,
@@ -35,6 +35,8 @@ _PROFILE_BASE: dict[str, Any] = {
            "after_speech_filter": True, "silence_db": -40.0, "silence_min_s": 0.5},
     "names": [],
 }
+
+RENDERERS = ("ffmpeg", "remotion")
 
 DEFAULTS: dict[str, Any] = {
     "judge": "claude_cli",          # claude_cli | fake | manual   (env VP_JUDGE overrides)
@@ -56,7 +58,7 @@ DEFAULTS: dict[str, Any] = {
     },
     "notifier": "session",          # session (log only; gates in the dialog) | file | telegram
     "telegram": {"token_env": "VP_TELEGRAM_TOKEN", "chat_id_env": "VP_TELEGRAM_CHAT_ID"},
-    "renderer": "ffmpeg",
+    "renderer": "ffmpeg",           # ffmpeg | remotion (per job also design.yaml, see vp.design)
     "budget": {"max_usd_per_run": 20.0, "youtube_quota_per_day": 10000},
     "retries": {"transport": 3, "backoff_s": [2, 5, 15]},
     "loop_guard": {"max_failures": 3},
@@ -88,6 +90,34 @@ DEFAULTS: dict[str, Any] = {
         "reel_sub_margin_v": 40,
         "thumb_font_px": 72,
         "thumb_max_bytes": 2 * 1024 * 1024,
+    },
+    # Picture gate after S4/S5 and on editor-export media (vp.adapters.picture.DEFAULTS)
+    "picture_qa": {
+        "samples": 7, "sample_frames": 10, "crop_limit": 24, "bar_min_frac": 0.01,
+        "bar_max_luma": 20, "bar_confirm_points": 3,
+        "aspect_tolerance": 0.01, "black_min_s": 1.0, "black_pixel_threshold": 0.03,
+        "freeze_noise_db": -60, "freeze_min_s": 2.0,
+        "frozen_share_max": {"reel": 0.99, "long": None, "full": None},
+        "silence_db": -40.0, "silence_max_s": {"reel": 10.0, "long": None, "full": None},
+    },
+    # S5v visual check by the model (vp.steps.s5v_visual.DEFAULTS)
+    "s5v": {"frames": 6},
+    # Remotion design path (vp.adapters.render_remotion.REMOTION_DEFAULTS); used when
+    # renderer is remotion
+    "remotion": {
+        "node_bin": None,
+        "workspace": None,
+        "concurrency": None,
+        "browser_executable": None,
+        "allow_browser_download": False,
+        "gl": None,
+        "crf": 16,
+        "timeout_s": 3600,
+        "install_timeout_s": 900,
+        "font_family": "-apple-system, 'SF Pro Display', 'Helvetica Neue', Arial, sans-serif",
+        "accent_color": "#FFD23F",
+        "captions": {"highlight": "word", "font_frac": 0.085, "y_frac": 0.72, "plate": False,
+                     "max_words": 3, "max_chars": 18},
     },
     # S6b (vp.steps.s6b_metadata.DEFAULTS)
     "s6b": {"description_reserve": 600, "tags_reserve": 20, "min_chapters": 3,
@@ -180,9 +210,11 @@ def load_config(home: str | os.PathLike | None = None) -> dict[str, Any]:
     return cfg
 
 
-def resolve_job_config(config: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
+def resolve_job_config(config: dict[str, Any], request: dict[str, Any],
+                       design: dict[str, Any] | None = None) -> dict[str, Any]:
     """Config for one job: adds `profile_name` and `profile` (profile + request `overrides`);
-    request `publisher: fake|youtube` overrides the publisher for this job only.
+    request `publisher: fake|youtube` overrides the publisher for this job only; the job's
+    design.yaml (`renderer`, `remotion` — chosen in the dialog, vp.design) overrides the look.
 
     Raises VPError(data) for an unknown profile or publisher.
     """
@@ -200,6 +232,14 @@ def resolve_job_config(config: dict[str, Any], request: dict[str, Any]) -> dict[
         cfg["publisher_source"] = "request"
     cfg["profile_name"] = name
     cfg["profile"] = deep_merge(profiles[name], (request or {}).get("overrides") or {})
+    design = design or {}
+    if design.get("renderer") is not None:
+        if design["renderer"] not in RENDERERS:
+            raise VPError("data", f"design.yaml renderer must be one of {list(RENDERERS)}, "
+                                  f"got {design['renderer']!r}")
+        cfg["renderer"] = design["renderer"]
+    if isinstance(design.get("remotion"), dict):
+        cfg["remotion"] = deep_merge(cfg.get("remotion") or {}, design["remotion"])
     return cfg
 
 

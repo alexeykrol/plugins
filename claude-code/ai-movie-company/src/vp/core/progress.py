@@ -29,7 +29,7 @@ MIN_INTERVAL_S = 2.0
 STALE_S = 120.0     # a file not updated for this long while the job is not locked = idle
 
 STEP_NAMES = {"S0": "intake", "S1": "proofread", "S2": "retime", "S3a": "select", "S3b": "review",
-              "S4": "cut", "S5": "render", "S6a": "design texts", "S6b": "metadata",
+              "S4": "cut", "S5": "render", "S5v": "picture check", "S6a": "design texts", "S6b": "metadata",
               "S7": "thumbnail", "S8": "upload", "S10": "crosslinks", "S9": "package",
               "PUB": "publish", "S11": "report", "preview": "preview"}
 

@@ -188,13 +188,26 @@ def has_audio(path: str | os.PathLike) -> bool:
     return probe(path)["has_audio"]
 
 
-def cut(src: str | os.PathLike, start_ms: int, end_ms: int, out: str | os.PathLike) -> Path:
-    """Frame-accurate cut [start_ms, end_ms) with re-encode."""
+def cut(src: str | os.PathLike, start_ms: int, end_ms: int, out: str | os.PathLike,
+        vf: str | None = None) -> Path:
+    """Frame-accurate cut [start_ms, end_ms) with re-encode; `vf` = optional video filter
+    (e.g. crop_scale_filter), applied in the same encode."""
     if end_ms <= start_ms or start_ms < 0:
         raise VPError("data", f"bad cut range {start_ms}..{end_ms}")
     return _render_to(out, ["-ss", _sec(start_ms), "-i", str(src), "-t", _sec(end_ms - start_ms),
-                            "-map", "0:v:0", "-map", "0:a:0?", *VIDEO_ENC, *AUDIO_ENC,
-                            "-movflags", "+faststart"])
+                            "-map", "0:v:0", "-map", "0:a:0?", *(["-vf", vf] if vf else []),
+                            *VIDEO_ENC, *AUDIO_ENC, "-movflags", "+faststart"])
+
+
+def crop_scale_filter(x: int, y: int, w: int, h: int, out_w: int | None = None,
+                      out_h: int | None = None) -> str:
+    """ffmpeg filter: crop the rectangle (even sizes), then scale to out_w×out_h when given
+    (fill, no padding — the rectangle already has the target aspect)."""
+    w, h = w - w % 2, h - h % 2
+    vf = f"crop={w}:{h}:{x}:{y}"
+    if out_w and out_h and (out_w, out_h) != (w, h):
+        vf += f",scale={out_w}:{out_h}:flags=lanczos"
+    return vf + ",setsar=1"
 
 
 def crop(src: str | os.PathLike, out: str | os.PathLike, x: int, y: int, w: int, h: int) -> Path:

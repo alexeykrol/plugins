@@ -87,6 +87,10 @@ class Job:
     @property
     def report_md(self) -> Path: return self.root / "report.md"
     @property
+    def asks_yaml(self) -> Path: return self.root / "asks.yaml"
+    @property
+    def asks_md(self) -> Path: return self.root / "asks.md"
+    @property
     def approval_shown(self) -> Path: return self.root / "approval.shown.yaml"
     @property
     def review_shown(self) -> Path: return self.root / "fragments.review.shown.yaml"
@@ -123,6 +127,15 @@ class Job:
     def request(self) -> dict[str, Any]:
         """Parsed request.yaml ({} if missing). Never modified by the pipeline."""
         data = read_yaml(self.request_yaml, default={})
+        return data if isinstance(data, dict) else {}
+
+    @property
+    def design_yaml(self) -> Path: return self.root / "design.yaml"
+
+    def design(self) -> dict[str, Any]:
+        """Parsed design.yaml ({} if missing): the look the owner chose in the dialog
+        (renderer, caption style), written by `vp design set`. See vp.design."""
+        data = read_yaml(self.design_yaml, default={})
         return data if isinstance(data, dict) else {}
 
     def _source(self, key: str, default_name: str) -> Path:
