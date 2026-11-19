@@ -9,3 +9,4 @@ Each plugin lives in its own folder with its own guide.
 |---|---|---|
 | **BestMentor** (`bestmentor`) — the book "Theory of Castes and Roles" | Claude answers from the book: chapter, quote, or "the book doesn't cover this" | [bestmentor](bestmentor/README.md) |
 | **pen** — post editor | Proofreads drafts and transcripts in any language, translates them into American English, fits them to X and LinkedIn | [pen](pen/README.md) |
+| **AI Movie Company** (`ai-movie-company`) — an editing director | Turns a recorded lecture or interview with subtitles into a reviewed YouTube series; private drafts, published only on your word. Code tab and terminal only | [ai-movie-company](ai-movie-company/README.md) |

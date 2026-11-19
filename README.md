@@ -8,6 +8,7 @@ Plugins for AI assistants. Each plugin lives in its own folder with its own inst
 |---|---|---|---|
 | **BestMentor** (`bestmentor`) — the book "Theory of Castes and Roles" as a knowledge base | Claude answers from the book: chapter, quote, or "the book doesn't cover this" | Chat, Cowork and Code in the Claude app, terminal, VS Code | [claude-code/bestmentor](claude-code/bestmentor/README.md) |
 | **pen** — post editor | Proofreads drafts and transcripts in any language, translates them into American English, fits them to X and LinkedIn | Chat, Cowork and Code in the Claude app, terminal, VS Code | [claude-code/pen](claude-code/pen/README.md) |
+| **AI Movie Company** (`ai-movie-company`) — an editing director | Turns a recorded lecture or interview with subtitles into a reviewed YouTube series: reels and long fragments with captions, cards, thumbnails and metadata; private drafts, published only on your word | Code tab of the Claude app, terminal (macOS, Linux) | [claude-code/ai-movie-company](claude-code/ai-movie-company/README.md) |
 
 ## Sections
 

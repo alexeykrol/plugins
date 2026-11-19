@@ -1,0 +1,42 @@
+# Short checkable rules. Each rule has a source; seed rules come from SPEC S3 and the donor prompt.
+rules:
+- id: R001
+  applies_to: [reel, long]
+  kind: forbid
+  text: "Не начинать с ответа на чужой вопрос без самого вопроса."
+  sources: [SPEC S3 rules.yaml example]
+- id: R002
+  applies_to: [reel, long]
+  kind: forbid
+  text: "Не резать на середине перечисления или примера."
+  sources: [SPEC S3 rules.yaml example]
+- id: R003
+  applies_to: [reel, long]
+  kind: forbid
+  text: "Не добирать фрагменты для количества; ноль сильных мест — допустимый ответ."
+  sources: [SPEC S3a, donor step1_select_segments.md]
+- id: R004
+  applies_to: [reel]
+  kind: prefer
+  text: "Первая фраза рилса сама по себе цепляет: тезис, парадокс, вопрос или сильная эмоция."
+  sources: [SPEC S3 criteria/reel.md]
+- id: R005
+  applies_to: [reel]
+  kind: forbid
+  text: "Не брать в рилс больше одной мысли: два тезиса подряд — это два рилса или ни одного."
+  sources: [SPEC S3 criteria/reel.md]
+- id: R006
+  applies_to: [reel, long]
+  kind: prefer
+  text: "Конец фрагмента — завершённая мысль или вывод, а не обрыв."
+  sources: [donor step1_select_segments.md]
+- id: R007
+  applies_to: [long]
+  kind: forbid
+  text: "Не делить запись механически на равные интервалы и не склеивать несвязанные темы ради длины."
+  sources: [donor step1_select_segments.md]
+- id: R008
+  applies_to: [reel, long]
+  kind: forbid
+  text: "Фрагменты одного типа не должны дублировать друг друга или сильно пересекаться."
+  sources: [donor step1_select_segments.md]

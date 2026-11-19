@@ -9,6 +9,7 @@
 |---|---|---|---|
 | **BestMentor** (`bestmentor`) — книга «Теория каст и ролей» как база знаний | Claude отвечает по книге: глава, цитата, «в книге этого нет» | Chat, Cowork и Code приложения Claude, терминал, VS Code | [claude-code/bestmentor](claude-code/bestmentor/README.md) |
 | **pen** — редактор постов | Корректура текста и расшифровок на любом языке, перевод на американский английский, версии для X и LinkedIn | Chat, Cowork и Code приложения Claude, терминал, VS Code | [claude-code/pen](claude-code/pen/README.ru.md) |
+| **AI Movie Company** (`ai-movie-company`) — режиссёр монтажа | Из записи лекции или интервью с субтитрами делает проверенную серию для YouTube: рилсы и длинные фрагменты с титрами, заставками, обложками и описаниями; загружает закрытыми черновиками, публикует только по вашему слову | Вкладка Code приложения Claude, терминал (macOS, Linux) | [claude-code/ai-movie-company](claude-code/ai-movie-company/README.ru.md) |
 
 ## Разделы
 

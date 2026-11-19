@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# ai-movie-company launcher: runs the pipeline engine (`python -m vp <command> ...`).
+#
+# First run creates a private virtualenv and installs the pinned, hash-checked dependencies:
+#   <data>/venv-<X.Y>   data = $VP_RUNTIME_DIR, else $CLAUDE_PLUGIN_DATA, else ~/.ai_video_pipeline/runtime
+#   pip install --require-hashes --only-binary=:all: --no-deps -r requirements.lock
+# The venv is rebuilt when requirements.lock or the Python minor version changes, or when it is
+# broken. Bootstrap messages go to stderr; stdout belongs to the engine.
+#
+# Overrides: VP_PYTHON=<interpreter> runs the engine with that interpreter as is (no venv; dev repo:
+# VP_PYTHON=.venv/bin/python). Python >= 3.12 is required.
+set -euo pipefail
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SOURCE" ]; do
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
+export PYTHONPATH="$ROOT/src${PYTHONPATH:+:$PYTHONPATH}"
+
+say() { echo "ai-movie-company: $*" >&2; }
+
+if [ -n "${VP_PYTHON:-}" ]; then
+  exec "$VP_PYTHON" -m vp "$@"     # dev: bytecode caches allowed
+fi
+
+PY=""
+for cand in python3.14 python3.13 python3.12 python3; do
+  if command -v "$cand" >/dev/null 2>&1 \
+     && "$cand" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)' 2>/dev/null; then
+    PY="$(command -v "$cand")"
+    break
+  fi
+done
+if [ -z "$PY" ]; then
+  say "Python 3.12 or newer is required (macOS: brew install python@3.13; Linux: your package manager)."
+  exit 3
+fi
+
+PYVER="$("$PY" -c 'import sys; print(f"{sys.version_info[0]}.{sys.version_info[1]}")')"
+DATA="${VP_RUNTIME_DIR:-${CLAUDE_PLUGIN_DATA:-$HOME/.ai_video_pipeline/runtime}}"
+VENV="$DATA/venv-$PYVER"
+LOCKFILE="$ROOT/requirements.lock"
+WANT="$("$PY" -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest() + "-" + sys.argv[2])' "$LOCKFILE" "$PYVER")"
+STAMP="$VENV/.vp-lock-sha256"
+
+venv_ok() {
+  [ -x "$VENV/bin/python" ] \
+    && [ "$(cat "$STAMP" 2>/dev/null || true)" = "$WANT" ] \
+    && "$VENV/bin/python" -c 'import yaml' >/dev/null 2>&1
+}
+
+bootstrap() {
+  mkdir -p "$DATA"
+  guard="$DATA/.bootstrap.lock"; local waited=0
+  until mkdir "$guard" 2>/dev/null; do          # one bootstrap at a time
+    if [ "$waited" -ge 600 ]; then
+      say "another bootstrap holds $guard for 10 minutes; remove it if no install is running."
+      exit 3
+    fi
+    sleep 2; waited=$((waited + 2))
+  done
+  trap 'rmdir "$guard" 2>/dev/null || true' EXIT
+  if venv_ok; then rmdir "$guard" 2>/dev/null || true; trap - EXIT; return 0; fi  # done meanwhile
+  local tmp="$VENV.tmp.$$"
+  say "first run: creating $VENV and installing pinned dependencies from PyPI (hash-checked)..."
+  "$PY" -m venv "$tmp"
+  if ! "$tmp/bin/python" -m pip install --disable-pip-version-check --no-input -q \
+        --require-hashes --only-binary=:all: --no-deps -r "$LOCKFILE" >&2; then
+    rm -rf "$tmp"
+    say "dependency install failed (network, or no wheel for this Python/platform in requirements.lock)."
+    exit 3
+  fi
+  echo "$WANT" > "$tmp/.vp-lock-sha256"
+  rm -rf "$VENV"
+  mv "$tmp" "$VENV"
+  rmdir "$guard" 2>/dev/null || true
+  trap - EXIT
+  say "runtime ready ($VENV)."
+}
+
+if ! venv_ok; then
+  bootstrap
+fi
+export VP_VENV="$VENV"
+export PYTHONDONTWRITEBYTECODE=1    # no caches inside the versioned plugin folder
+exec "$VENV/bin/python" -m vp "$@"

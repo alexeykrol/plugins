@@ -18,6 +18,12 @@
       "source": "./claude-code/pen",
       "description": "Post editor for non-native English speakers: proofreads drafts and transcripts in any language, translates the meaning into American English, and delivers a thread-ready X version and a LinkedIn version within 3,000 characters.",
       "category": "productivity"
+    },
+    {
+      "name": "ai-movie-company",
+      "source": "./claude-code/ai-movie-company",
+      "description": "AI movie company: an editing director you talk to in Claude. He turns a recorded lecture or interview with subtitles into a reviewed YouTube series: agrees the task with you, proofreads subtitles, proposes reels and long fragments for your review in the chat, renders clips with captions, cards and thumbnails, writes metadata, uploads private drafts and publishes only what you approve in the dialog.",
+      "category": "productivity"
     }
   ]
 }

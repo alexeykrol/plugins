@@ -1,0 +1,11 @@
+# Seed case: an illustration written from the seed criteria, NOT a human verdict on a real recording.
+id: s0004
+type: long
+label: negative
+recording: seed
+verdict: seed
+reason_class: off_topic
+text: >-
+  Слышно меня? Сейчас включу демонстрацию экрана. Пока ждём остальных, напомню про домашнее задание
+  и про расписание на следующую неделю, потом вернёмся к агентам, если успеем.
+lesson: "Организационная часть и склейка несвязанных тем: нет тезиса, нет начала и конца темы."
