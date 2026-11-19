@@ -11,6 +11,8 @@
       --package-hash does not match, the formal review is stale or not ok, the publish choice is
       invalid or in the past, or no real user input arrived after the item was shown
       (vp.gates.human: `REFUSED user-input-required <item>: ...`, exit 4).
+      An approve for a real platform (publisher not `fake`) without the accepted terms is
+      `REFUSED consent-required: ...`, exit 5 — checked first, also for headless clients.
 
 Code writes approval.yaml; PUB publishes only an approve of the CURRENT package hash (same rule
 as the Telegram/file path).
@@ -141,6 +143,9 @@ def set_decision(job: Job, item: str, decision: str, publish: str | None,
             raise Refused(f"decision must be one of {', '.join(DECISIONS)}")
         if decision == "reject" and publish:
             raise Refused("--publish is only for approve")
+        if decision == "approve":      # no publish decision for a real platform without the terms
+            from ..safety import require_consent
+            require_consent(job_ctx(job).config.get("publisher"), "an approval to publish")
         order, review = _items(job)
         if item not in review["items"]:
             raise Refused(f"unknown item {item!r}; items: {', '.join(order)}")

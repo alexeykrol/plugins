@@ -2,6 +2,19 @@
 
 All notable changes to ai-movie-company. Versions follow [semver](https://semver.org/).
 
+## 0.8.3 — 2026-11-19
+
+- **The guard fails closed.** If the guard itself breaks or runs too long, install-shaped commands
+  are blocked with a plain reason and the way out (`AIMC_GUARD=off`); ordinary commands go
+  through, so a broken guard never locks up the session. It works in every session where the
+  plugin is enabled.
+- **Terms gate headless uploads too.** A real upload or publish without accepted terms (also from
+  clients like ai_lms) refuses with `REFUSED consent-required` (exit code 5) and sends nothing;
+  rehearsals are not affected.
+- **Security updates by exception to the 14-day hold:** Node 24.22.3 and Chrome Headless Shell
+  158.0.8127.36, verified against official checksums, a real Remotion frame and video rendered;
+  the exception is recorded in the audit with the owner's approval.
+
 ## 0.8.2 — 2026-11-19
 
 Safety on the person's computer.

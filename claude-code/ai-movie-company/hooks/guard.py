@@ -35,8 +35,24 @@ Off switch (documented, explicit): env AIMC_GUARD=off for the process that runs 
 `vp guard off` (behind the person's own answer) which writes <vp_home>/guard/settings.json.
 The terms gate and the protected state stay on even then.
 
-Contract: standard library only, fast, exit 0 on every path; an internal error prints nothing
-(no opinion) — a guard bug must not lock the person out of their computer.
+FAILS CLOSED on what matters, open on the rest (owner decision 2026-11-19). If the decision above
+crashes or runs past INTERNAL_DEADLINE_S (a SIGALRM watchdog, well inside the 10 s hook timeout
+of hooks.json), `fail_safe` decides from the raw event with a few plain, linear regexes:
+  - a Bash command that LOOKS like it adds outside code (install_shaped: package-manager install
+    verbs, npx/uvx/…, `claude plugin install|marketplace add`, `claude mcp add`, a download piped
+    into a shell or interpreter, `installer -pkg`) -> deny, with a plain reason and the way out;
+  - a Bash command or a Write/Edit that names the guard's protected files -> deny;
+  - anything else (ls, git, ffprobe, the plugin's own engine, editing a script …) -> no opinion,
+    so a guard bug never blocks normal work.
+  The guard's off switch is honoured on this path too: with AIMC_GUARD=off (or `vp guard off`)
+  install-shaped commands go through, so a broken hook can never brick the session — the way out
+  is to start Claude with AIMC_GUARD=off (Elsa says so in the stop reason and in her contract).
+  If fail_safe itself fails, the hook prints nothing (no opinion).
+Not covered (stated in docs/safety-terms-mode-2026-11-19.md): python3 missing or a syntax error
+in this file, and Claude Code's own hook timeout — both run before or outside this code and are
+fail-open by Claude Code's rules for non-blocking hook errors.
+
+Contract: standard library only, fast, exit 0 on every path.
 """
 from __future__ import annotations
 
@@ -45,6 +61,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -56,6 +73,7 @@ INSTALLER_URL = ("https://raw.githubusercontent.com/alexeykrol/plugins/main/clau
 APPROVAL_TTL_S = 30 * 60
 MAX_PENDING = 20
 MAX_SESSIONS = 50
+INTERNAL_DEADLINE_S = 4.0                 # < the 10 s hook timeout in hooks.json
 OWN_ROOT = Path(__file__).resolve().parent.parent
 
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "fish", "csh", "tcsh"}
@@ -781,21 +799,138 @@ def prompt(event: dict) -> None:
     write_json(path, {"latest": dict(rec, session_id=sid), "sessions": sessions})
 
 
-def main(argv: list[str]) -> int:
+# ---- fail-safe: the decision crashed or ran out of time ------------------------------------------
+
+class GuardDeadline(Exception):
+    """The decision took longer than INTERNAL_DEADLINE_S."""
+
+
+def _on_alarm(signum, frame):  # noqa: ARG001
+    raise GuardDeadline(f"the check took longer than {INTERNAL_DEADLINE_S:g} s")
+
+
+_PM = (r"(?:npm|pnpm|yarn|bun|pip[0-9.]*|pipx|uv|brew|port|cargo|gem|go|conda|mamba|micromamba|"
+       r"apt|apt-get|yum|dnf|composer|poetry|deno|snap|flatpak|mas)")
+_PM_VERBS = (r"(?:install|i|in|add|a|ci|clean-install|exec|x|dlx|update|up|upgrade|link|ln|"
+             r"rebuild|create|download|wheel|inject|reinstall|tap|bundle|cask|binstall|get|"
+             r"sync|require|global|create-project|localinstall|full-upgrade|dist-upgrade)")
+_B = r"(?:^|[\s;&|(`/'\"])"               # the start of a word in a command line
+_E = r"(?:\s|$|[;&|)])"                   # the end of it
+_INSTALL_SHAPED = [re.compile(x, re.I) for x in (
+    _B + _PM + r"\s+(?:-{1,2}[\w=./:-]+\s+(?:[^\s;&|-][^\s;&|]*\s+)?){0,4}" + _PM_VERBS + _E,
+    _B + r"uv\s+(?:pip\s+(?:install|sync)|tool\s+(?:install|run|upgrade)|run\s+[^;&|]*--with)",
+    _B + r"(?:go|pipx)\s+run" + _E,
+    _B + r"yarn\s*(?:$|[;&|)])",                               # bare `yarn` installs
+    _B + r"(?:npx|pnpx|bunx|uvx)\s",
+    _B + r"-m\s+(?:pip|pipx|uv|poetry)\s+(?:install|download|wheel|add|run|inject)",
+    _B + r"claude\s+(?:plugins?\s+(?:install|i|marketplace\s+add)|mcp\s+add)",
+    r"(?:curl|wget|fetch|aria2c)\b[^|]*\|&?\s*(?:sudo\s+)?(?:env\s+)?(?:\w+=\S*\s+)*"
+    r"(?:[a-z]*sh|python[0-9.]*|node|perl|ruby|php|osascript|eval|source)\b",
+    # a download saved to a file and then run (errs toward yes: on this path safety wins)
+    r"(?:curl|wget)\b[^;&|]*\s(?:-o|-O|-LO|-fLO|-sLO|--output|--output-document)\b.*?(?:&&|;|\|\|)"
+    r"\s*(?:[a-z]*sh|python[0-9.]*|node|perl|ruby|chmod|open|installer|\./)",
+    _B + r"(?:[a-z]*sh|eval|source|\.|python[0-9.]*|node|perl|ruby)\b[^;&|]*(?:\$\(|`|<\()\s*"
+    r"(?:curl|wget)\b",
+    r"(?:^|[\s;&|(])installer\s+[^;&|]*-pkg",
+)]
+
+
+def install_shaped(command: str) -> bool:
+    """A coarse, crash-proof look at a command: could it bring outside code onto the machine?
+    Used only when the real classifier failed; errs toward yes for install verbs."""
+    text = command[:20000]
+    return any(rx.search(text) for rx in _INSTALL_SHAPED)
+
+
+def _guard_off_quiet() -> bool:
     try:
-        which = argv[1] if len(argv) > 1 else ""
+        return not guard_on()
+    except BaseException:  # noqa: BLE001
+        return (os.environ.get("AIMC_GUARD") or "").strip().lower() == "off"
+
+
+def fail_safe_reason(err: BaseException) -> str:
+    what = "timed out" if isinstance(err, GuardDeadline) else f"hit an internal error ({type(err).__name__})"
+    return (
+        f"AI Movie Company install guard: STOPPED to be safe. The guard {what} while checking this "
+        f"command, and the command looks like it brings outside code onto the person's computer, "
+        f"so it was not run. Do this: in the person's language (Russian: plain words, Elsa's "
+        f"voice) say that the plugin's safety check broke on this command and that nothing was "
+        f"installed. Retry once later; if the guard keeps failing, tell the person the way out: "
+        f"quit Claude and start it again with AIMC_GUARD=off (Terminal: `AIMC_GUARD=off claude`), "
+        f"or `vp guard off` after their own answer — and that turning the check off is their "
+        f"choice, not yours. Never try to get around this guard yourself.")
+
+
+def fail_safe(which: str, raw: str, err: BaseException) -> dict | None:
+    """The decision when pretool() crashed or timed out (see the module docstring)."""
+    if which != "pretool":
+        return None
+    try:
+        event = json.loads(raw) if raw.strip() else {}
+    except ValueError:
+        event = {}
+    if not isinstance(event, dict):
+        event = {}
+    tin = event.get("tool_input") if isinstance(event.get("tool_input"), dict) else {}
+    tool = str(event.get("tool_name") or "")
+    if tool in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
+        target = str(tin.get("file_path") or tin.get("notebook_path") or "")
+        body = " ".join(str(tin.get(k) or "") for k in ("content", "new_string", "new_source"))
+        if any(m in target for m in PROTECTED_MARKERS) or "AIMC_GUARD" in body:
+            return decision("deny", protected_reason())
+        return None
+    if tool == "Bash" or not tool:
+        command = str(tin.get("command") or "") if tool else raw      # unreadable event: look at it all
+        if any(m in command for m in PROTECTED_MARKERS):
+            return decision("deny", protected_reason())
+        if install_shaped(command) and not _guard_off_quiet():
+            return decision("deny", fail_safe_reason(err))
+    return None
+
+
+def _arm() -> bool:
+    try:
+        signal.signal(signal.SIGALRM, _on_alarm)
+        signal.setitimer(signal.ITIMER_REAL, INTERNAL_DEADLINE_S)
+        return True
+    except (AttributeError, ValueError, OSError):      # no SIGALRM (Windows) or not main thread
+        return False
+
+
+def _disarm() -> None:
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+    except (AttributeError, ValueError, OSError):
+        pass
+
+
+def main(argv: list[str]) -> int:
+    which = argv[1] if len(argv) > 1 else ""
+    raw = ""
+    out = None
+    try:
+        _arm()
         raw = sys.stdin.read() if not sys.stdin.isatty() else ""
         event = json.loads(raw) if raw.strip() else {}
         if not isinstance(event, dict):
-            return 0
+            raise ValueError("the hook event is not a JSON object")
         if which == "pretool":
             out = pretool(event)
-            if out:
-                sys.stdout.write(json.dumps(out, ensure_ascii=False))
         elif which == "prompt":
             prompt(event)
-    except BaseException:  # noqa: BLE001 - a hook must never break the session
-        pass
+        _disarm()
+    except BaseException as err:  # noqa: BLE001 - a hook must never break the session
+        _disarm()
+        try:
+            out = fail_safe(which, raw, err)
+        except BaseException:  # noqa: BLE001 - the last line: no opinion
+            out = None
+    if out:
+        try:
+            sys.stdout.write(json.dumps(out, ensure_ascii=False))
+        except BaseException:  # noqa: BLE001
+            pass
     return 0
 
 

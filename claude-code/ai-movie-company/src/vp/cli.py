@@ -36,7 +36,10 @@
 Global option: --home <dir> (anywhere on the line, also after `learn` / `knowledge`) sets VP_HOME
 for the command — the pipeline home with config.yaml, knowledge store, journals.
 
-Exit codes: 0 done/gate/locked, 2 failed/abandoned, 3 internal / not implemented.
+Exit codes: 0 done/gate/locked, 2 failed/abandoned, 3 internal / not implemented,
+5 consent-required: a real upload/publish (run, stage, resolve-upload, approve-ingest,
+`approve set --decision approve`) without the accepted terms; the line starts with
+`REFUSED consent-required`, nothing was sent; rehearsals (publisher: fake) are not affected.
 """
 from __future__ import annotations
 
@@ -48,7 +51,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .core import runner
-from .core.errors import VPError
+from .core.errors import EXIT_CONSENT_REQUIRED, ConsentRequired, VPError
 from .core.lock import job_lock
 from .core.paths import Job
 
@@ -109,6 +112,9 @@ def _with_ctx(job: Job, fn: Callable[..., int], *args: Any) -> int:
             cfg = runner.prepare_config(job, None)
             ctx = runner.make_ctx(job, cfg)
             rc = fn(ctx, *args)
+        except ConsentRequired as c:
+            print(f"REFUSED consent-required: {c.msg}")
+            return EXIT_CONSENT_REQUIRED
         except VPError as e:
             print(f"ERROR {e}")
             return 3 if e.kind == "internal" else 2

@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 from ..core import runner
 from ..core.ctx import Ctx
-from ..core.errors import VPError
+from ..core.errors import EXIT_CONSENT_REQUIRED, ConsentRequired, VPError
 from ..core.lock import job_lock
 from ..core.paths import Job
 
@@ -43,9 +43,13 @@ def locked(job: Job, fn: Callable[[], int]) -> int:
 
 def guarded(fn: Callable[[], int]) -> int:
     """Uniform error output: REFUSED (+ error lines) / ERROR; exit codes 2 / 3; a missing user
-    input (UserInputRequired) is REFUSED with exit code 4."""
+    input (UserInputRequired) is REFUSED with exit code 4; a real publish without the accepted
+    terms (ConsentRequired) is `REFUSED consent-required` with exit code 5."""
     try:
         return fn()
+    except ConsentRequired as e:
+        print(f"REFUSED consent-required: {e.msg}")
+        return EXIT_CONSENT_REQUIRED
     except UserInputRequired as e:
         print(f"REFUSED {e.message}")
         return RC_USER_INPUT

@@ -124,6 +124,8 @@ def _make_publisher(ctx: Ctx) -> Any:
         path = (ctx.config.get("fake_publisher") or {}).get("state_path") or ctx.home / "fake_publisher.json"
         return FakePublisher(path, costs=ctx.costs)
     if kind == "youtube":
+        from ..safety import require_consent   # no real platform without accepted terms
+        require_consent(kind, "any upload, publish or channel check")
         cls = _load_attr("vp.adapters.youtube:YouTubePublisher")
         return cls(ctx.config.get("youtube") or {}, costs=ctx.costs)
     raise VPError("data", f"unknown publisher {kind!r}")

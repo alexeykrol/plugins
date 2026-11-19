@@ -14,10 +14,13 @@ missing, and the director retries with `vp extras install` (resumable: done step
 
 The steps (pinned; https; sha256 checked before anything is unpacked; no sudo, no Homebrew;
 nothing outside <vp_home>/extras, <vp_home>/remotion and Claude's own plugin folder):
-  node      Node.js 24.22.2 (nodejs.org, SHASUMS256; released 2026-10-27)  ~28 MB, ~200 MB on disk
-  browser   Chrome Headless Shell 158.0.8127.2 (Google, Chrome for Testing — the version Remotion
-            4.0.540 is tested with; Google publishes no checksum file, the pin = sha256 of the file
-            whose MD5 matched Google's x-goog-hash, 2026-11-19)              ~105 MB, ~205 MB on disk
+  node      Node.js 24.22.3 (nodejs.org, SHASUMS256 with a valid release-key signature; security
+            release of 2026-11-10 — owner-approved exception to the 14-day hold, audit
+            2026-11-19 addendum)                                           ~28 MB, ~200 MB on disk
+  browser   Chrome Headless Shell 158.0.8127.36 (Google, Chrome for Testing, Stable of 2026-11-11
+            with the Nov 9–11 fixes — owner-approved exception to the 14-day hold; render-tested
+            with Remotion 4.0.540 on 2026-11-19; Google publishes no checksum file, the pin =
+            sha256 of the file whose MD5 matched Google's x-goog-hash)     ~105 MB, ~205 MB on disk
   workspace the plugin's Remotion project: `npm ci --ignore-scripts` from the committed lockfile
             (every pin >= 14 days old: scripts/check_lock_age.py)            ~270 MB on disk
   plugin    the Remotion plugin for Claude (skills only, no code), from the Anthropic Directory
@@ -88,29 +91,29 @@ class Component:
 
 _NODE_SRC = "nodejs.org (the official Node.js site)"
 _SHELL_SRC = "Google (Chrome for Testing — a Chrome without windows, made for drawing video)"
-_CFT = "https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.2"
+_CFT = "https://storage.googleapis.com/chrome-for-testing-public/158.0.8127.36"
 PINS: dict[str, tuple[Component, Component]] = {
     "arm64": (
-        Component(key="node", title="Node.js", version="24.22.2",
-                  url="https://nodejs.org/dist/v24.22.2/node-v24.22.2-darwin-arm64.tar.xz",
-                  sha256="1f5ac075be50bed4780ea3be19a007fda95ea4d527d28d76d0b91de47d915115",
-                  size=27_508_812, archive="tar.xz", top="node-v24.22.2-darwin-arm64", exe="bin/node",
+        Component(key="node", title="Node.js", version="24.22.3",
+                  url="https://nodejs.org/dist/v24.22.3/node-v24.22.3-darwin-arm64.tar.xz",
+                  sha256="1d64136c8a43d648d1b3bad10797a4c995b1ca032d2bde8799de43b37f058fe5",
+                  size=27_519_132, archive="tar.xz", top="node-v24.22.3-darwin-arm64", exe="bin/node",
                   source=_NODE_SRC),
-        Component(key="browser", title="Chrome Headless Shell", version="158.0.8127.2",
+        Component(key="browser", title="Chrome Headless Shell", version="158.0.8127.36",
                   url=f"{_CFT}/mac-arm64/chrome-headless-shell-mac-arm64.zip",
-                  sha256="8268f070e7c443b0b1d2147f3cfc7a617e6550aa95715c7b985e9f32491a3bf9",
-                  size=105_056_164, archive="zip", top="chrome-headless-shell-mac-arm64",
+                  sha256="c24d40a3786322ff3a5e3ac6eed162226cbaf07ebe468715407827226b0f8897",
+                  size=105_057_133, archive="zip", top="chrome-headless-shell-mac-arm64",
                   exe="chrome-headless-shell", source=_SHELL_SRC)),
     "x86_64": (
-        Component(key="node", title="Node.js", version="24.22.2",
-                  url="https://nodejs.org/dist/v24.22.2/node-v24.22.2-darwin-x64.tar.xz",
-                  sha256="6965578fd823e72c1b5387f5ab84cb25368f886e02eb8779e6f0fce6b91c27b7",
-                  size=29_283_332, archive="tar.xz", top="node-v24.22.2-darwin-x64", exe="bin/node",
+        Component(key="node", title="Node.js", version="24.22.3",
+                  url="https://nodejs.org/dist/v24.22.3/node-v24.22.3-darwin-x64.tar.xz",
+                  sha256="4daeec962855c1a6e66cda398a25037319dc1bbd4a0939188b3547afbbfb6490",
+                  size=29_287_204, archive="tar.xz", top="node-v24.22.3-darwin-x64", exe="bin/node",
                   source=_NODE_SRC),
-        Component(key="browser", title="Chrome Headless Shell", version="158.0.8127.2",
+        Component(key="browser", title="Chrome Headless Shell", version="158.0.8127.36",
                   url=f"{_CFT}/mac-x64/chrome-headless-shell-mac-x64.zip",
-                  sha256="fc75411f42e693cc8f380b840a3d29678c5dafd92a94945d0c6fb1a5d9697ec5",
-                  size=112_123_268, archive="zip", top="chrome-headless-shell-mac-x64",
+                  sha256="e0c5d07d8f5bcc5bdd5ef370e7daf3770856b585fcc9eecf441c7e3bb2e3d1cf",
+                  size=112_306_247, archive="zip", top="chrome-headless-shell-mac-x64",
                   exe="chrome-headless-shell", source=_SHELL_SRC)),
 }
 ARCH = platform.machine()

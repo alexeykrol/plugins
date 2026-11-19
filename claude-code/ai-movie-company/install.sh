@@ -72,10 +72,10 @@ FF_BASE=https://ffmpeg.martin-riedl.de/download/macos
 #    `otool -l`, 2026-11-19; docs = the project's own page):
 #      Claude Code (CLI)              13.0  docs code.claude.com/docs/en/setup ("macOS 13.0+"); measured 13.0
 #      Claude desktop app             13.0  measured: LSMinimumSystemVersion in Claude.app/Contents/Info.plist
-#      Chrome Headless Shell 158      13.0  measured (chrome-headless-shell-mac-arm64, 158.0.8127.2)
+#      Chrome Headless Shell 158      13.0  measured (chrome-headless-shell-mac-arm64, 158.0.8127.2 and .36)
 #      ffmpeg 9.0.2 (martin-riedl)    12.0  measured
 #      uv 0.13.6                      11.0  measured
-#      Node.js 24.22.2                13.5  docs github.com/nodejs/node/blob/v24.x/BUILDING.md
+#      Node.js 24.22.3                13.5  docs github.com/nodejs/node/blob/v24.x/BUILDING.md
 #                                           ("macOS arm64 >= 13.5"); measured 13.5 — add-ons only
 #    So: below 13.0 nothing works (FAILED); 13.0–13.4 installs everything but the add-ons.
 #    Free space, measured on the 2026-11-19 clean install: Claude CLI 337 MB, Python venv 156 MB,

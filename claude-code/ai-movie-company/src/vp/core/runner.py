@@ -4,6 +4,9 @@ Outcomes of one instance and what the runner does:
   done            manifest written last, status done (+ human_time if a gate was open)
   skipped         (step raised Skip) manifest with existing outputs, status skipped; counts as satisfied
   waiting_human   (WaitingHuman) status waiting_human with opened_at; the whole run stops, exit 0
+  consent         (ConsentRequired) a real platform was about to be touched without the accepted
+                  terms: status waiting_human (gate consent), output `REFUSED consent-required ...`,
+                  nothing sent; the whole run stops, exit 5
   waiting_judgment(JudgmentPending) status waiting_judgment; run stops, exit 0
   inconclusive    (Inconclusive) status inconclusive + one notification; run stops, exit 0
   failed          VPError data/contract/transport (after the step's own retries) or internal bug;
@@ -21,7 +24,8 @@ from typing import Any, Callable, Iterable
 from .config import load_config, resolve_job_config
 from .ctx import Ctx
 from . import progress
-from .errors import Inconclusive, JudgmentPending, Skip, VPError, WaitingHuman, WaitingQuota
+from .errors import (EXIT_CONSENT_REQUIRED, ConsentRequired, Inconclusive, JudgmentPending, Skip,
+                     VPError, WaitingHuman, WaitingQuota)
 from .graph import Graph, Instance, StepSpec
 from .io import now_iso, parse_iso
 from .lock import holder, job_lock
@@ -67,6 +71,7 @@ class Runner:
         self.out = out
         self.max_failures = int((ctx.config.get("loop_guard") or {}).get("max_failures", 3))
         self.internal_error = False
+        self.consent_refused = False
 
     # ---- whole run -----------------------------------------------------------------------
     def run_all(self) -> int:
@@ -115,6 +120,8 @@ class Runner:
         return self._exit(any_failed)
 
     def _exit(self, any_failed: bool) -> int:
+        if self.consent_refused:
+            return EXIT_CONSENT_REQUIRED
         if self.internal_error:
             return EXIT_INTERNAL
         return EXIT_FAILED if any_failed else EXIT_OK
@@ -150,6 +157,8 @@ class Runner:
             self.out(f"{inst.key}: fresh, nothing to do (use --force)")
             return EXIT_OK
         outcome = self._run_instance(inst, spec, ctx, fr, items)
+        if self.consent_refused:
+            return EXIT_CONSENT_REQUIRED
         if outcome in ("done", "skipped", _STOP):
             return EXIT_OK
         return EXIT_INTERNAL if self.internal_error else EXIT_FAILED
@@ -210,6 +219,16 @@ class Runner:
                                              "opened_at": now_iso()})
             self.out(f"WAITING_HUMAN {inst.key}: {w.what}")
             ctx.log.event("waiting_human", step=inst.step, item=inst.item, gate=w.gate)
+            return _STOP
+        except ConsentRequired as c:
+            if not (prev and prev["state"] == "waiting_human"
+                    and (prev.get("metadata") or {}).get("gate") == "consent"):
+                self.status.append(inst.step, inst.item, "waiting_human",
+                                   metadata={"gate": "consent", "what": c.msg,
+                                             "opened_at": now_iso()})
+            self.consent_refused = True
+            self.out(f"REFUSED consent-required {inst.key}: {c.msg}")
+            ctx.log.event("consent_required", step=inst.step, item=inst.item)
             return _STOP
         except JudgmentPending as j:
             if not (prev and prev["state"] == "waiting_judgment"
@@ -314,7 +333,8 @@ def _load_default_steps() -> list[StepSpec]:
 def run(job: Job, *, steps: Iterable[StepSpec] | None = None, config: dict[str, Any] | None = None,
         services: dict[str, Any] | None = None, factories: dict[str, Callable] | None = None,
         out: Out = print, sleep: Callable[[float], None] | None = None) -> int:
-    """`python -m vp run <job>`. Returns the exit code (0 done/gate/locked, 2 failed, 3 internal)."""
+    """`python -m vp run <job>`. Returns the exit code (0 done/gate/locked, 2 failed, 3 internal,
+    5 consent-required)."""
     with job_lock(job) as got:
         if not got:
             out("LOCKED")

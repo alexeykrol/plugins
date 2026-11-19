@@ -213,7 +213,15 @@ was, vets it (exact name and version, a release at least 14 days old, fresh inci
 install scripts, look-alike names), tells you her verdict and asks **«Ставим» / «Не ставим»**.
 Only after your own «Ставим» does that exact command run, once, within 30 minutes; any other
 command is a new check. The plugin's own pinned installs pass without a stop: the installer from
-this store, `vp extras install` and `npm ci --ignore-scripts` of its own lockfile.
+this store, `vp extras install` and `npm ci --ignore-scripts` of its own lockfile. The guard
+works in **every Claude session where the plugin is enabled** — any folder, any task, not only
+while Elsa makes a video.
+
+**If the guard itself breaks, it fails safe.** Should its check crash or take too long, a command
+that looks like an install is stopped anyway (with a plain reason), while ordinary commands —
+reading files, git, ffmpeg, the plugin's own engine — go through, so a guard bug never stops your
+normal work. If it keeps failing, the way out is to quit Claude and start it with
+`AIMC_GUARD=off` (Terminal: `AIMC_GUARD=off claude`); Elsa tells you this herself when it happens.
 
 The guard also keeps its own records (your acceptance of the terms, approvals, its settings, the
 record of your answers) out of reach of Claude's file tools. **To turn the guard off** — an

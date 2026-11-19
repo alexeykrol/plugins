@@ -161,6 +161,24 @@ def consent_state() -> dict[str, Any]:
             "files": terms_files()}
 
 
+def require_consent(publisher_kind: str | None, what: str = "upload or publish") -> None:
+    """Headless gate (owner, 2026-11-19): a real platform (anything but the fake rehearsal
+    publisher) is touched only after the person accepted the CURRENT terms — also when a client
+    such as ai_lms calls the engine without the dialog. Raises ConsentRequired; nothing is sent."""
+    from .core.errors import ConsentRequired
+    if (publisher_kind or "youtube") == "fake":
+        return
+    st = consent_state()
+    if st["accepted"]:
+        return
+    why = (f"the terms were accepted in an older version ({st['accepted_version']})"
+           if st["outdated"] else "the terms are not accepted")
+    raise ConsentRequired(
+        f"{why}; {what} on {publisher_kind or 'youtube'} waits until the person accepts the "
+        f"terms {TERMS_VERSION} in the dialog (`vp consent show`, then their own «Принимаю»). "
+        f"Nothing was sent. Rehearsals (publisher: fake) are not affected.")
+
+
 def consent_main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="vp consent")
     sub = p.add_subparsers(dest="cmd", required=True)

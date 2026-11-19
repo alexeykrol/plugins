@@ -252,6 +252,7 @@ Repeat, at most 40 rounds:
 | `LOCKED` | another runner holds `job.lock` | report; stop. Never unlock on your own |
 | exit 2 (`FAILED` / `ABANDONED`) | a step failed | report the class (Failures); stop |
 | exit 3 | internal error (a bug) | report the `ERROR` / `FAILED ... internal` line; stop |
+| exit 5, `REFUSED consent-required ...` | real YouTube, but the terms are not accepted; nothing was sent | the terms flow (`vp consent show`, the person's own «Принимаю»), then go to 1. Headless: report the line; never accept for the person |
 
 Two rounds in a row with the same `WAITING_JUDGMENT` and nothing answered → stop and report.
 

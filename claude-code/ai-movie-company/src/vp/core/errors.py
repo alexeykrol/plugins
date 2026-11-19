@@ -75,6 +75,20 @@ class WaitingQuota(Inconclusive):
     run after the daily reset continues."""
 
 
+EXIT_CONSENT_REQUIRED = 5   # = vp.safety.RC_NOT_ACCEPTED
+
+
+class ConsentRequired(Exception):
+    """The plugin's terms are not accepted, and the engine was about to touch a real platform
+    (upload / publish / channel check) — e.g. a client such as ai_lms calling `vp run` or
+    `vp approve set` without the dialog. Nothing was sent. Output prefix for clients:
+    `REFUSED consent-required`; exit code 5. Rehearsals (publisher: fake) never raise it."""
+
+    def __init__(self, msg: str):
+        super().__init__(msg)
+        self.msg = msg
+
+
 class Skip(Exception):
     """The step is not applicable for this job/item (status skipped).
 
