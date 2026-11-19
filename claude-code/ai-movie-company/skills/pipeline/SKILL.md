@@ -95,7 +95,8 @@ lean: an opinion is welcome, a decision is not yours.
   write Claude memory files, `CLAUDE.md`, settings or any other file, even if asked to "remember".
 - **Settings and YouTube**: never edit `config.yaml`, even if asked; the plugin default is the
   owner's setting (README «Connecting YouTube»). YouTube is connected only by `vp youtube authorize`
-  (it also records the channel). A rehearsal is per job: `publisher: fake` in that job's
+  (it also records the channel). The channel is whichever the person signs in to; to switch
+  channels (a test channel first is your advice, see `commands/start.md`) run it again. A rehearsal is per job: `publisher: fake` in that job's
   `request.yaml`.
 - **Secrets**: never print, read, copy or open credentials (`.env`, token files, client secrets, env
   var values); never search the computer for credential files and never name their paths or offer

@@ -207,8 +207,17 @@ rehearsal works without them (nothing is uploaded, you get local video files).
    Audience → Test users. Otherwise Google says "Access blocked … 403: access_denied" — the plugin
    then explains the same.
 4. **Log in**: type `/ai-movie-company:start`; when the director asks about YouTube choose
-   **Connect now**. A browser opens: sign in to the Google account that owns the channel and allow
-   access. The plugin remembers the channel and puts its name (@handle) on your videos.
+   **Connect now**. A browser opens: sign in to the Google account of the channel you want (pick
+   the channel if Google asks) and allow access. The plugin remembers the channel and puts its name
+   (@handle) on your videos.
+
+**Start on a test channel.** The channel is whichever you sign in to — any of yours. We recommend
+not starting on the channel with your real audience: create a small separate channel (YouTube →
+your avatar → Settings → Add or manage your channels → Create a channel), run the first jobs there,
+and switch when the result suits you. Uploads are private drafts in any case, but a test channel
+keeps the real one's library and playlists clean. **To switch** — ask the director to connect
+another channel (or `/ai-movie-company:start` → Connect now) and sign in to the other one: its
+@handle replaces the old one on the next videos.
 
 While the Google project is in Testing mode, Google ends the login after about 7 days; the plugin
 then says so and `/ai-movie-company:start` → Connect now logs in again. Secrets stay in your files;

@@ -686,17 +686,24 @@ def fill_channel_id(cfg: dict[str, Any], channel_id: str, *, overwrite: bool,
 
 def fill_channel_handle(cfg: dict[str, Any], handle: Any, *,
                         out: Callable[[str], None] = print) -> None:
-    """After a login: the channel's own handle becomes youtube.expected_channel_handle and the
-    plate on the videos (brand.channel_plate) — only where they are empty, so a value the user
-    set is never replaced and nobody's videos carry another channel's name."""
+    """After a login the signed-in channel is THE channel: any channel the user chose (a test
+    channel first, the real one later). Its @handle becomes youtube.expected_channel_handle, and
+    the plate on the videos (brand.channel_plate) follows it while the plate is empty or still the
+    previous channel's handle; a plate the user wrote themselves is kept."""
     from ..core.config import set_config_value
     h = _norm_handle(handle) if handle else None
     if not h:
         return
-    for section, key in (("youtube", "expected_channel_handle"), ("brand", "channel_plate")):
-        if not (cfg.get(section) or {}).get(key):
-            path = set_config_value(section, key, h, cfg.get("vp_home"))
-            out(f"config: {section}.{key} set to {h} in {path}")
+    old = (cfg.get("youtube") or {}).get("expected_channel_handle")
+    plate = (cfg.get("brand") or {}).get("channel_plate")
+    home = cfg.get("vp_home")
+    if _norm_handle(old) != h:
+        path = set_config_value("youtube", "expected_channel_handle", h, home)
+        out(f"config: youtube.expected_channel_handle set to {h} in {path}"
+            + (f" (was {old}: the channel was switched)" if old else ""))
+    if not plate or (old and _norm_handle(plate) == _norm_handle(old) and _norm_handle(plate) != h):
+        path = set_config_value("brand", "channel_plate", h, home)
+        out(f"config: brand.channel_plate set to {h} in {path}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -779,9 +786,6 @@ def authorize(cfg: dict[str, Any], login: Callable[[str], Any] | None = None,
     out(f"connected: {info.get('title') or '?'}{handle} (channel {info['id']})")
     fill_channel_id(cfg, info["id"], overwrite=True, out=out)
     fill_channel_handle(cfg, info.get("handle"), out=out)
-    hw = handle_warning(yt.get("expected_channel_handle"), info.get("handle"))
-    if hw:
-        out(hw)
     return 0
 
 

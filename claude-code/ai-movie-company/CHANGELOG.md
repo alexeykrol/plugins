@@ -2,6 +2,13 @@
 
 All notable changes to ai-movie-company. Versions follow [semver](https://semver.org/).
 
+## 0.6.2 — 2026-11-19
+- **Any channel, a test channel first.** The channel is whichever the person signs in to; the
+  director advises starting on a separate test channel without a real audience and switching when
+  the result suits. A new login switches the channel cleanly: its @handle replaces the old one as
+  the expected handle and on the plate (a plate text the user wrote is kept). README «Connecting
+  YouTube» explains how to create a test channel and how to switch.
+
 ## 0.6.1 — 2026-11-19
 - **Public release.** MIT license; published in the public store `alexeykrol/plugins`
   (`claude plugin marketplace add alexeykrol/plugins`, `claude plugin install ai-movie-company@krol`).
