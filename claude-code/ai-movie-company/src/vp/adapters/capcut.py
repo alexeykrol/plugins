@@ -53,15 +53,17 @@ import math
 import os
 import re
 import shutil
+import stat
 import subprocess
 import time
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 
 from ..core.errors import VPError
-from ..core.io import atomic_write, read_yaml
-from ..core.paths import vp_home
+from ..core.io import atomic_write, now_iso, read_yaml
+from ..core.paths import Job, vp_home
 from . import media
 from .edit_timeline import ClipTimeline, build_clip_timeline, clip_items, fit_cues
 
@@ -69,6 +71,9 @@ TEMPLATE_PATH = Path(__file__).with_name("capcut_template.json")
 AUDIO_TEMPLATE_PATH = Path(__file__).with_name("capcut_audio_template.json")
 DEFAULT_DRAFTS = Path.home() / "Movies" / "CapCut" / "User Data" / "Projects" / "com.lveditor.draft"
 ROOT_META = "root_meta_info.json"
+MADE_MARKER = ".vp-made.json"
+MADE_TOOL = "ai-movie-company"
+STAGING_PREFIX = ".vp-staging-"
 MEDIA_DIR = "Resources/media"   # the cut is copied here (CapCut cannot read the job folder)
 SUB_Y = {"reel": -0.6, "long": -0.8, "full": -0.8}   # subtitle position, canvas units (-1 = bottom)
 SUB_SIZE = {"reel": 6.0, "long": 5.0, "full": 5.0}    # CapCut text size units
@@ -589,16 +594,103 @@ def register(root: Path, entry: dict, backup_dir: Path) -> Path | None:
     return backup
 
 
+def _read_made_marker(folder: Path) -> dict[str, Any] | None:
+    path = folder / MADE_MARKER
+    try:
+        if not stat.S_ISREG(path.lstat().st_mode):
+            return None
+        marker = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return None
+    if not isinstance(marker, dict) or marker.get("tool") != MADE_TOOL:
+        return None
+    if not isinstance(marker.get("clip_id"), str) or not marker["clip_id"]:
+        return None
+    for field in ("job_id", "version"):
+        if field not in marker or (marker[field] is not None and
+                                   (not isinstance(marker[field], str) or not marker[field])):
+            return None
+    try:
+        created_at = datetime.fromisoformat(marker["created_at"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    if created_at.utcoffset() != timedelta(0):
+        return None
+    return {key: marker[key] for key in ("tool", "job_id", "clip_id", "version", "created_at")}
+
+
+def check_drafts(drafts_root: str | Path) -> dict[str, list[dict[str, Any]]]:
+    """Inspect one drafts root, returning unregistered, stale_staging and missing_registered lists.
+
+    Every staging directory is listed with seconds since its last directory modification.
+    A missing registry is empty. Legacy rows without a stored folder path are skipped.
+    """
+    root = Path(drafts_root).expanduser().absolute()
+    registry = root / ROOT_META
+    try:
+        data = json.loads(registry.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        data = {"all_draft_store": []}
+    except (ValueError, RecursionError) as e:
+        raise VPError("data", f"invalid CapCut registry: {registry}") from e
+    entries = data.get("all_draft_store") if isinstance(data, dict) else None
+    if not isinstance(entries, list):
+        raise VPError("data", f"invalid CapCut registry: {registry}")
+
+    registered = set()
+    missing = []
+    for entry in entries:
+        stored = entry.get("draft_fold_path") if isinstance(entry, dict) else None
+        if not isinstance(stored, str) or not stored.strip() or "\x00" in stored:
+            continue
+        folder = Path(stored)
+        if not folder.is_absolute():
+            # Exports using a relative root include that root in the stored folder path.
+            stored_root = entry.get("draft_root_path")
+            if isinstance(stored_root, str) and stored_root and folder.is_relative_to(stored_root):
+                folder = folder.relative_to(stored_root)
+            folder = root / folder
+        try:
+            info = folder.stat()
+        except (FileNotFoundError, NotADirectoryError):
+            info = None
+        if info is not None and stat.S_ISDIR(info.st_mode):
+            registered.add((info.st_dev, info.st_ino))
+        else:
+            missing.append({"folder": str(folder), "draft_id": entry.get("draft_id"),
+                            "draft_name": entry.get("draft_name")})
+
+    unregistered, staging = [], []
+    now = time.time()
+    for folder in sorted(root.iterdir()):
+        try:
+            info = folder.lstat()
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISDIR(info.st_mode):
+            continue
+        if folder.name.startswith(STAGING_PREFIX):
+            staging.append({"folder": str(folder), "age_seconds": max(0.0, now - info.st_mtime)})
+        elif (info.st_dev, info.st_ino) not in registered:
+            marker = _read_made_marker(folder)
+            if marker is not None:
+                unregistered.append({"folder": str(folder), "marker": marker})
+    return {"unregistered": unregistered, "stale_staging": staging, "missing_registered": missing}
+
+
 def write_draft(tl: ClipTimeline, name: str, root: Path | None = None,
                 running: Callable[[], bool] = capcut_running,
                 backup_dir: Path | None = None, cover: bool = True,
                 opener_src: str | Path | None = None,
                 dissolve_ms: int = DISSOLVE_MS,
-                audio: list[AudioClip] | None = None) -> dict[str, Any]:
+                audio: list[AudioClip] | None = None, *, job_id: str | None = None,
+                version: str | None = None) -> dict[str, Any]:
     """Create one new CapCut project folder for `tl` and register it. Never overwrites.
 
     `audio`: separate audio clips (source paths); each file is copied into the project's media
-    folder and the draft gets audio tracks (see build_draft_info)."""
+    folder and the draft gets audio tracks (see build_draft_info).
+    Jobless or unversioned exports record null for the corresponding provenance field.
+    """
     root = Path(root) if root else drafts_root()
     if running():
         raise VPError("data", "CapCut is running. Quit CapCut (Cmd+Q) and run the export again: "
@@ -627,7 +719,7 @@ def write_draft(tl: ClipTimeline, name: str, root: Path | None = None,
                  for n, c in enumerate(audio)]
     in_project = [dataclasses.replace(c, path=folder / rel) for c, rel in zip(audio, audio_rel)]
 
-    stage = root / f".vp-staging-{uuid.uuid4().hex[:8]}"
+    stage = root / f"{STAGING_PREFIX}{uuid.uuid4().hex[:8]}"
     stage.mkdir()
     try:
         (stage / media_rel).parent.mkdir(parents=True)
@@ -653,6 +745,9 @@ def write_draft(tl: ClipTimeline, name: str, root: Path | None = None,
             _cover(dataclasses.replace(tl, video_path=stage / media_rel), stage / "draft_cover.jpg")
             if (stage / "draft_cover.jpg").exists():
                 shutil.copy2(stage / "draft_cover.jpg", tdir / "draft_cover.jpg")
+        marker = {"tool": MADE_TOOL, "job_id": job_id, "clip_id": tl.item,
+                  "version": version, "created_at": now_iso()}
+        (stage / MADE_MARKER).write_text(_dump(marker), encoding="utf-8")
         if folder.exists():          # appeared meanwhile: never write into an existing folder
             raise VPError("data", f"folder appeared while exporting: {folder}")
         os.rename(stage, folder)
@@ -728,13 +823,14 @@ def export_version(job_root: str | Path, version: str | None = None, *,
             tl, audio, inputs = (parts or textjob.capcut_parts)(job_root, v, vdir, video=video,
                                                                 music=music, **volumes)
             res = write_draft(tl, f"{title} {v}", root=root, running=running,
-                              backup_dir=backup_dir, audio=audio)
+                              backup_dir=backup_dir, audio=audio, job_id=Job(job_root).job_id,
+                              version=v)
             drafts = [res]
         else:
             if video or music:
                 raise VPError("data", "--video/--music apply to text jobs only")
             drafts = export_job(job_root, root=root, running=running, backup_dir=backup_dir,
-                                name_suffix=f" {v}")
+                                name_suffix=f" {v}", version=v)
             inputs = {"clips": [d["item"] for d in drafts]}
         record = {"version": v, "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                   "kind": "text" if textjob.is_text_job(job_root) else "recording",
@@ -755,7 +851,8 @@ def export_version(job_root: str | Path, version: str | None = None, *,
 def export_job(job_root: str | Path, items: list[str] | None = None, root: Path | None = None,
                running: Callable[[], bool] = capcut_running,
                backup_dir: Path | None = None, opener: str | Path | None = None,
-               dissolve_ms: int = DISSOLVE_MS, name_suffix: str = "") -> list[dict[str, Any]]:
+               dissolve_ms: int = DISSOLVE_MS, name_suffix: str = "", *,
+               version: str | None = None) -> list[dict[str, Any]]:
     job_root = Path(job_root).expanduser().resolve()
     if opener and not Path(opener).expanduser().is_file():
         raise VPError("data", f"opener file not found: {opener}")
@@ -768,12 +865,14 @@ def export_job(job_root: str | Path, items: list[str] | None = None, root: Path 
     if running():
         raise VPError("data", "CapCut is running. Quit CapCut (Cmd+Q) and run the export again.")
     warning = version_warning(capcut_version(), load_template())
+    job_id = Job(job_root).job_id
     out = []
     for item in items:
         tl = build_clip_timeline(job_root, item)
         name = f"{job_root.name} {item}" + (" opener" if opener else "") + name_suffix
         out.append(write_draft(tl, name, root=root, running=running, backup_dir=backup_dir,
-                               opener_src=opener, dissolve_ms=dissolve_ms))
+                               opener_src=opener, dissolve_ms=dissolve_ms, job_id=job_id,
+                               version=version))
         out[-1]["warning"] = warning
     return out
 
@@ -848,11 +947,26 @@ def main(argv: list[str]) -> int:
                "drafts": str(drafts_root()),
                "drafts_exists": drafts_root().is_dir(),
                "format": load_template()["source"]}
-        print(json.dumps(res, ensure_ascii=False) if a.json else
-              f"CapCut running: {res['running']}\ndrafts: {res['drafts']} "
+        if res["drafts_exists"]:
+            try:
+                res["orphans"] = check_drafts(drafts_root())   # read-only: nothing is changed
+            except VPError as e:
+                res["orphans_error"] = e.msg
+        if a.json:
+            print(json.dumps(res, ensure_ascii=False))
+            return 0
+        print(f"CapCut running: {res['running']}\ndrafts: {res['drafts']} "
               f"({'found' if res['drafts_exists'] else 'missing'})\n"
               f"draft format: CapCut {res['format']['capcut_app_version']}; installed: "
               f"{res['installed_version'] or 'not found'}")
+        orphans = res.get("orphans") or {}
+        for key, label in (("unregistered", "our project not in CapCut's list"),
+                           ("stale_staging", "unfinished export folder"),
+                           ("missing_registered", "listed in CapCut, folder missing")):
+            for o in orphans.get(key, []):
+                print(f"{label}: {o['folder']}")
+        if res.get("orphans_error"):
+            print(f"drafts check: {res['orphans_error']}")
         return 0
     res = export_job(a.job, a.items or None, root=Path(a.drafts).expanduser() if a.drafts else None,
                      opener=a.opener, dissolve_ms=int(round(max(0.0, a.dissolve) * 1000)))

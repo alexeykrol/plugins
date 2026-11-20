@@ -2,6 +2,31 @@
 
 All notable changes to ai-movie-company. Versions follow [semver](https://semver.org/).
 
+## 0.8.5 — 2026-11-20
+
+- **Elsa restarts Claude and closes CapCut herself.** She never asks you to press ⌘Q any more (it
+  quits whatever window is in front — often the browser). When a restart is needed she asks with
+  two buttons, «Перезапустить Claude» / «Позже», closes Claude, opens it again and greets you back.
+  She refuses while a render or an upload is running.
+- **Install ends by itself.** After installing, Claude closes for a few seconds and opens a new tab
+  with «Эльза» already typed in — press Enter. Running the same install text over an existing
+  install updates it: projects and their progress stay, and the new tab asks Elsa to continue the
+  project from where you stopped instead of starting over.
+- **Steps outside the chat come as a framed card.** When you have to do something by hand (copy a
+  key on a website, for example), a card above the prompt says exactly what to do, what not to do,
+  and asks «Понятно, что сделать?», with a «Не понял(а), покажите» button.
+- **Stock, pictures and keys.** Pexels, Pixabay, Gemini and OpenAI keys are taken from the
+  clipboard, like ElevenLabs; Elsa searches stock footage and makes pictures with your own key.
+- **Scenario map.** Elsa knows which starting points (recording, text, stock, storyboard…) work with
+  no services, which need ElevenLabs or a pictures key, and roughly what each costs.
+- **Scene and beat analysis, montage plan, take cleanup** built into the engine.
+- **One ElevenLabs key for everything, connected once.** Speech recognition, the voice-over and
+  the music now all use your own ElevenLabs key, copied once from the ElevenLabs site — no
+  connector to add and no Claude restart. Elsa plays four different voices, you pick one, and
+  every scene is voiced straight into the job folder with exact word timings; the music is made the
+  same way (paid ElevenLabs plans; on the free plan Elsa says so before anything is charged). A key
+  saved earlier for recognition keeps working. The terms say so (version `2026-11-21-draft`).
+
 ## 0.8.4 — 2026-11-20
 
 - **Documents to approve open beside the chat.** When Elsa asks you to approve a brief or another

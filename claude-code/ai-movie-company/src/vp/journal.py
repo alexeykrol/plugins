@@ -40,6 +40,9 @@ from .core.errors import VPError
 from .core.paths import vp_home
 
 NOTE_KINDS = ("deadend", "surprise", "feedback")
+# telemetry kind of each note (vp.telemetry): a dead end is its own kind, a surprise is a question
+# the plugin had no scenario for, the rest is the journal
+TELEMETRY_KINDS = {"deadend": "deadend", "surprise": "question", "feedback": "journal"}
 KINDS = ("prompt",) + NOTE_KINDS
 JOB_FILE = "journal.jsonl"
 PACK_DAYS = 14
@@ -108,6 +111,9 @@ def note(job: str | None, kind: str, text: str, now: datetime | None = None) -> 
         path = _append(folder / JOB_FILE, rec)
     else:
         path = _append(journal_dir() / f"{now.strftime('%Y-%m-%d')}.jsonl", rec)
+    from . import telemetry
+    telemetry.record(TELEMETRY_KINDS.get(kind, "journal"), note_kind=kind, text=text,
+                     job=rec.get("job"), at=rec["at"])
     return {**rec, "file": str(path)}
 
 
@@ -343,6 +349,12 @@ def feedback_main(argv: list[str]) -> int:
     a = ap.parse_args(argv)
     path = feedback_pack(a.days, a.out)
     shown = reveal(path) if a.reveal else False
+    from . import telemetry
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = None
+    telemetry.record("feedback_pack", file=str(path), bytes=size, days=a.days, revealed=shown)
     print(json.dumps({"file": str(path), "revealed": shown}, ensure_ascii=False) if a.json
           else str(path))
     return 0

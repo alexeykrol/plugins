@@ -21,6 +21,21 @@
 // one large line saying what to do, the document, and the answer buttons; a press goes to the
 // chat as the person's own message, so the skills receive «Утверждаю» exactly as if typed.
 //
+// The channel to the person: at a session's start the mod sends the engine's telemetry in the
+// background (`vp telemetry flush --detach`) and asks for news (`vp messages poll --json`): messages
+// from the plugin's authors, a newer version already downloaded by an update ("quit Claude and open
+// it again"), the reminder to turn auto-update on. A notice is shown — a toast and a line above the
+// prompt — only while nothing runs: no turn, no document waiting for an answer, no open question,
+// and `vp busy` false (no render, upload or generation; a restart would kill it). Otherwise it waits
+// and is looked at again when a turn ends.
+//
+// A hand step outside the chat (quit and reopen Claude, quit CapCut, open a site, copy a key) is
+// never plain chat text: the model calls the mod's tool `show_action`, and a framed card leads the
+// band above the prompt (a pane where no band is drawn) with a «👉 ОДНО ДЕЙСТВИЕ» mark, the one
+// action, how to do it, the look-alike not to touch (❌), what comes after, the check «Вы поняли,
+// что нужно сделать именно это?» and its buttons. A restart card is kept in `$.store`; when Claude
+// opens again within a day a welcome-back card picks the work up from that place.
+//
 // The mod never touches the engine's rules: gates, refusals and the human-answer guard live in
 // the skills, the commands and src/vp.
 
@@ -35,11 +50,27 @@ import type {
   UiOpenResult,
 } from 'claude-code'
 
-import type { DirectorLang, DirectorMood, LiveProgress, TurnWork, WorkTask } from '../types'
+import type {
+  ActionCard,
+  ChannelNotice,
+  DirectorLang,
+  DirectorMood,
+  LiveProgress,
+  PendingRestart,
+  TurnWork,
+  WelcomeCard,
+  WorkTask,
+} from '../types'
 
 import { faceAt, FRAME_MS, MOOD_WORDS } from './faces'
 import { makeColors } from './make-colors.js'
 import {
+  ACCENT,
+  ACTION_UNCLEAR,
+  ACTION_CHECK,
+  ACTION_MARK,
+  ACTION_NOT_MARK,
+  ACTION_RESTART_NOTE,
   AVATAR,
   AVATAR_TEXT,
   BACK_NOTE,
@@ -48,6 +79,8 @@ import {
   BAND_INK_SOFT,
   bandColor,
   CALLED_NOTE,
+  CONTINUE,
+  continueText,
   CONTRACT_LEAD,
   DOC_BUTTONS,
   DOC_EMPTY,
@@ -67,8 +100,16 @@ import {
   NAME,
   NAME_CALL_NOTE,
   NOT_ON_STAGE_TEXT,
+  NOTICE_DISMISS,
   ON_STAGE,
   releasedText,
+  REMINDER_LATER,
+  REMINDER_ON,
+  REMINDER_TEXT,
+  RESTART_LATER,
+  RESTART_NOW,
+  restartAskNote,
+  resumeNote,
   ROLE,
   SPINNER_WORDS,
   STAGE_COMMANDS,
@@ -78,9 +119,11 @@ import {
   SWITCHED_OFF_NOTE,
   SWITCHED_OFF_TEXT,
   THINKING,
+  updateReadyText,
   VERSION,
   warmHue,
   WARM_HUES,
+  WELCOME_BACK,
 } from './persona'
 import { SPLASH, SPLASH_ALT, SPLASH_HEIGHT, SPLASH_WIDTH } from './splash'
 
@@ -94,10 +137,15 @@ const mood = atom({ plugin: 'ai-movie-company', key: 'mood' } as const, 'idle')
 const beat = atom({ plugin: 'ai-movie-company', key: 'beat' } as const, 0)
 const work = atom({ plugin: 'ai-movie-company', key: 'work' } as const, IDLE_WORK)
 const doc = atom({ plugin: 'ai-movie-company', key: 'doc' } as const, null)
+const notice = atom({ plugin: 'ai-movie-company', key: 'notice' } as const, null)
+const action = atom({ plugin: 'ai-movie-company', key: 'action' } as const, null)
+const welcome = atom({ plugin: 'ai-movie-company', key: 'welcome' } as const, null)
 
 /** `$.store` keys: what outlives the session's process. */
 const STORE_SESSIONS = 'on-stage-sessions'
 const STORE_LANG = 'lang'
+/** The restart card kept across the restart it asks for (PendingRestart). */
+const STORE_RESTART = 'pending-restart'
 /** How many sessions' "on stage" marks are kept; the oldest go first. */
 const MAX_SESSIONS = 50
 /** How many replies' first sightings are kept in this process. */
@@ -130,6 +178,14 @@ let splashReply: string | undefined
 const START_DELAY_MS = 30
 /** How often the band looks at the engine's progress and moves its colour. */
 const TICK_MS = 2000
+/** How long after a session starts the channel is asked (the session settles first). */
+const CHANNEL_DELAY_MS = 1500
+/** How often a waiting notice is looked at again (each look may ask `vp busy`). */
+const RECHECK_MS = 30_000
+/** How often the mod asks for news; the engine itself asks the network at most every 6 hours. */
+const REPOLL_MS = 30 * 60_000
+/** `$.store` key: the version whose "restart Claude" notice was shown (once per version). */
+const STORE_RESTART_SHOWN = 'restart-shown'
 /** The engine's mirror of the running step, in the pipeline home. */
 const LIVE_FILE = 'progress-live.json'
 /** A mirror older than this belongs to a run that died: nothing is running. */
@@ -179,6 +235,91 @@ const DOC_TOOL_SCHEMA = {
   required: ['file_path', 'title'],
   additionalProperties: false,
 } as const
+
+/** The pane that holds the action card where the surface draws no band (vscode). */
+const ACTION_PANE = 'action'
+/** The model's tools that put up and take down the action card. */
+const ACTION_TOOL = 'show_action'
+const CLEAR_ACTION_TOOL = 'clear_action'
+const ACTION_COLUMNS = 60
+const MAX_ACTION_TITLE = 80
+const MAX_ACTION_HOW = 300
+const MAX_ACTION_NOTE = 200
+/** The model's own buttons, each naming the action; the mod adds «Не понял(а), покажите» after them. */
+const MAX_ACTION_BUTTONS = 2
+/** A key combination in a step's words (⌘Q, Cmd + Q, Ctrl+W, Command-Tab): never a way for a novice. */
+const KEY_COMBO = /[⌘⌃⌥]|\b(cmd|command|ctrl|control|option|alt)\s*[+\-]\s*\S/i
+/** How long a restart card waits for Claude to be opened again. */
+const RESTART_TTL_MS = 24 * 60 * 60 * 1000
+
+const ACTION_TOOL_DESCRIPTION = [
+  'Shows ONE hand step the person must do outside this chat on a framed, highlighted card above the',
+  'prompt (where their eye is): a large «👉 ОДНО ДЕЙСТВИЕ» mark, the action in bold, how to do it, the',
+  'most likely mistake marked ❌, what comes after, the check «Вы поняли, что нужно сделать именно',
+  'это?», your buttons and «Не понял(а), покажите». A press arrives in the chat as the person\'s own',
+  'message carrying the label. Call it EVERY time before you ask the person to do anything by hand',
+  'outside the chat: opening a site, signing in, copying a key or a code, finding a file, closing a',
+  'window, and anything that can break the session or lose work. A chat message alone is NEVER enough',
+  'for those: a novice told to quit Claude with a key combination quit her web browser and lost',
+  'everything. Rules: `how` points at something VISIBLE on screen (a button, a field, a menu by its',
+  'words), NEVER at a key combination; `not_this` names in advance the most likely mistake for this',
+  'very step; every button names the action («Понятно: копирую ключ»), never a bare «OK». Restarting',
+  'Claude and quitting CapCut are done by the engine on a button, not by the person\'s keys. One card =',
+  'one action; never chain two actions in one card or one message. Use kind "restart" for a step after',
+  'which Claude closes and opens again: the card is remembered and a welcome-back card lets the person',
+  'continue from this place. After calling it, do not give the next step until the person answers.',
+].join(' ')
+
+const ACTION_TOOL_SCHEMA = {
+  type: 'object',
+  properties: {
+    title: {
+      type: 'string',
+      description: "The one action, short, in the person's language, e.g. «Скопируйте ключ ElevenLabs».",
+    },
+    how: {
+      type: 'string',
+      description:
+        'How exactly to do it, pointing at something visible on screen, e.g. «Нажмите кнопку «Copy» справа ' +
+        'от ключа на открытой странице». Never a key combination.',
+    },
+    not_this: {
+      type: 'string',
+      description:
+        'The most likely mistake for this step, named in advance, e.g. «Не нажимайте «Delete» рядом с ' +
+        'ключом» or «Окно браузера не закрывайте». Give it whenever something nearby can be mistaken ' +
+        'for the target (another app, another window, another button).',
+    },
+    after: {
+      type: 'string',
+      description: 'What the person will see or do afterwards, e.g. «Вставьте ключ сюда, в чат — дальше я сама».',
+    },
+    kind: {
+      type: 'string',
+      enum: ['restart', 'step'],
+      description:
+        '"restart" when Claude closes and opens again after this step (it is remembered across the ' +
+        'restart); "step" otherwise (default).',
+    },
+    buttons: {
+      type: 'array',
+      items: { type: 'string' },
+      minItems: 1,
+      maxItems: MAX_ACTION_BUTTONS,
+      description:
+        "Button labels in the person's language that name the action, e.g. «Понятно: копирую ключ» " +
+        '(English: "Got it: copying the key"). The card adds «Не понял(а), покажите» after them by itself.',
+    },
+  },
+  required: ['title', 'how', 'buttons'],
+  additionalProperties: false,
+} as const
+
+const CLEAR_ACTION_TOOL_DESCRIPTION =
+  'Takes the action card (show_action) down from above the prompt, e.g. once the step is done or no ' +
+  'longer needed. A press on one of its buttons takes it down by itself.'
+
+const CLEAR_ACTION_TOOL_SCHEMA = { type: 'object', properties: {}, additionalProperties: false } as const
 
 /** The time now, or null on a host that keeps no clock. */
 async function nowOf($: EngineInterface): Promise<number | null> {
@@ -545,7 +686,9 @@ async function setMood($: EngineInterface, next: DirectorMood): Promise<void> {
 
 /** A tool call as the bar names it: its own description, else the tool and what it works on. */
 function toolLabel(tool: string, input: Record<string, unknown>): string {
-  if (tool.endsWith(`__${DOC_TOOL}`) && typeof input.title === 'string' && input.title.trim() !== '') {
+  const isOwnTitled = tool.endsWith(`__${DOC_TOOL}`) || tool.endsWith(`__${ACTION_TOOL}`)
+
+  if (isOwnTitled && typeof input.title === 'string' && input.title.trim() !== '') {
     return clip(input.title)
   }
 
@@ -727,10 +870,35 @@ async function registerDocTool($: EngineInterface): Promise<void> {
   }
 }
 
+/** Declares the action card's tools; without them the hand steps go into the chat, framed. */
+async function registerActionTools($: EngineInterface): Promise<void> {
+  try {
+    await $.tool.register({
+      name: ACTION_TOOL,
+      description: ACTION_TOOL_DESCRIPTION,
+      inputSchema: ACTION_TOOL_SCHEMA,
+      isDeferred: false,
+    })
+    await $.tool.register({
+      name: CLEAR_ACTION_TOOL,
+      description: CLEAR_ACTION_TOOL_DESCRIPTION,
+      inputSchema: CLEAR_ACTION_TOOL_SCHEMA,
+      isDeferred: false,
+    })
+  } catch {
+    // A host without model tools: the contract says how to frame a hand step in the chat.
+  }
+}
+
 /** The button labels the model asked for, else the defaults; a reason when they are unusable. */
-function docButtonsOf(value: unknown, words: DirectorLang): string[] | { error: string } {
+function docButtonsOf(
+  value: unknown,
+  words: DirectorLang,
+  defaults: Record<DirectorLang, readonly string[]> = DOC_BUTTONS,
+  most: number = MAX_DOC_BUTTONS,
+): string[] | { error: string } {
   if (value === undefined) {
-    return [...DOC_BUTTONS[words]]
+    return [...defaults[words]]
   }
 
   if (!Array.isArray(value)) {
@@ -738,8 +906,8 @@ function docButtonsOf(value: unknown, words: DirectorLang): string[] | { error: 
   }
   const labels = value.map(one => (typeof one === 'string' ? one.replace(/\s+/g, ' ').trim() : ''))
 
-  if (labels.length === 0 || labels.length > MAX_DOC_BUTTONS || labels.some(one => one === '')) {
-    return { error: `buttons must be 1 to ${MAX_DOC_BUTTONS} non-empty labels` }
+  if (labels.length === 0 || labels.length > most || labels.some(one => one === '')) {
+    return { error: `buttons must be 1 to ${most} non-empty labels` }
   }
 
   if (labels.some(one => one.length > MAX_BUTTON_LABEL)) {
@@ -849,6 +1017,586 @@ async function noteTypedChoice($: EngineInterface, text: string): Promise<void> 
   }
 }
 
+// ---- The channel to the person ----
+
+/** Notices found by the last poll and not shown yet, the most important first. */
+let pendingNotices: ChannelNotice[] = []
+let lastPollAt = Number.NEGATIVE_INFINITY
+let lastCheckAt = Number.NEGATIVE_INFINITY
+let isPolling = false
+
+function vpArgv($: EngineInterface, ...args: string[]): string[] {
+  return [`${$.plugin.root}/scripts/vp`, ...args]
+}
+
+/** The engine ran on this computer before (its home holds telemetry or logs): asking it now
+ * never starts the first-run install of its Python environment in the middle of a session. */
+async function isChannelReady($: EngineInterface): Promise<boolean> {
+  const home = await pipelineHome($)
+
+  if (home === undefined) {
+    return false
+  }
+
+  try {
+    const entries = await $.fs.list(home)
+
+    return entries.some(one => one.name === 'telemetry' || one.name === 'logs')
+  } catch {
+    return false
+  }
+}
+
+function noticesOf(answer: unknown, words: DirectorLang, restartShown: unknown): ChannelNotice[] {
+  if (typeof answer !== 'object' || answer === null) {
+    return []
+  }
+  const rec = answer as Record<string, unknown>
+  const out: ChannelNotice[] = []
+  const update = rec.update as Record<string, unknown> | null | undefined
+
+  if (update && update.restart_needed === true && typeof update.installed_newest === 'string' &&
+      update.installed_newest !== restartShown) {
+    out.push({ source: 'restart', id: 0, kind: update.installed_newest, text: updateReadyText(words, update.installed_newest), lang: words })
+  }
+
+  for (const one of Array.isArray(rec.messages) ? rec.messages : []) {
+    const m = one as Record<string, unknown>
+
+    if (typeof m.id === 'number' && typeof m.text === 'string' && m.text.trim() !== '') {
+      out.push({ source: 'message', id: m.id, kind: typeof m.kind === 'string' ? m.kind : 'info', text: m.text.trim(), lang: words })
+    }
+  }
+  const reminder = rec.reminder as Record<string, unknown> | null | undefined
+
+  if (reminder && reminder.due === true) {
+    out.push({ source: 'reminder', id: 0, kind: 'reminder', text: REMINDER_TEXT[words], lang: words })
+  }
+
+  return out
+}
+
+/** Sends the telemetry in the background and asks for news; failures are silent. */
+async function pollChannel($: EngineInterface): Promise<void> {
+  if (isPolling) {
+    return
+  }
+  isPolling = true
+
+  try {
+    if (!(await isChannelReady($))) {
+      return
+    }
+    lastPollAt = await $.clock.now()
+
+    try {
+      await $.process.run(vpArgv($, 'telemetry', 'flush', '--detach'), { timeoutMs: 15_000 })
+    } catch {
+      // Sent next time.
+    }
+    const words = await read($, lang)
+    const asked = await $.process.run(vpArgv($, 'messages', 'poll', '--json', '--lang', words), { timeoutMs: 20_000 })
+
+    if (asked.exitCode === 0) {
+      pendingNotices = noticesOf(JSON.parse(asked.stdout), words, await $.store.get(STORE_RESTART_SHOWN))
+    }
+  } catch {
+    // No engine, no network: nothing to show.
+  } finally {
+    isPolling = false
+  }
+}
+
+/** True while nothing runs: no turn, no document or question waiting, the engine idle. */
+async function isQuiet($: EngineInterface): Promise<boolean> {
+  if ((await read($, work)).isRunning || (await read($, mood)) === 'waiting' || (await read($, progress)) !== null) {
+    return false
+  }
+  const held = await read($, doc)
+
+  if (held !== null && held.sent === null) {
+    return false
+  }
+  // A hand step or the welcome back waiting for the person: one thing at a time above the prompt.
+  const step = await read($, action)
+
+  if ((step !== null && step.sent === null) || (await read($, welcome)) !== null) {
+    return false
+  }
+
+  try {
+    const asked = await $.process.run(vpArgv($, 'busy', '--json'), { timeoutMs: 15_000 })
+
+    return asked.exitCode === 0 && (JSON.parse(asked.stdout) as { busy?: unknown }).busy === false
+  } catch {
+    return false
+  }
+}
+
+/** Shows the first waiting notice if the moment is quiet, and records it as shown. */
+async function showNotice($: EngineInterface, isForced = false): Promise<void> {
+  if (pendingNotices.length === 0 || (await read($, notice)) !== null) {
+    return
+  }
+  const now = await $.clock.now()
+
+  if (!isForced && now - lastCheckAt < RECHECK_MS) {
+    return
+  }
+  lastCheckAt = now
+
+  if (!(await isQuiet($))) {
+    return
+  }
+  const next = pendingNotices.shift()
+
+  if (next === undefined) {
+    return
+  }
+  await update($, notice, () => next)
+  $.ui.toast(next.text)
+
+  try {
+    if (next.source === 'message') {
+      await $.process.run(vpArgv($, 'messages', 'ack', String(next.id)), { timeoutMs: 15_000 })
+    } else if (next.source === 'restart') {
+      await $.store.set(STORE_RESTART_SHOWN, next.kind)
+    } else {
+      await $.process.run(vpArgv($, 'update', 'reminder', 'shown'), { timeoutMs: 15_000 })
+    }
+  } catch {
+    // Shown; at worst it is shown once more later.
+  }
+}
+
+/** A session starts: news once it settles. */
+function startChannel($: EngineInterface): void {
+  try {
+    $.clock.after(CHANNEL_DELAY_MS, () => {
+      pollChannel($)
+        .then(() => showNotice($, true))
+        .catch(() => undefined)
+    })
+  } catch {
+    // No clock: the first turn's end asks.
+  }
+}
+
+/** A turn ended: a waiting notice gets its chance; news are asked again now and then. */
+async function channelAfterTurn($: EngineInterface): Promise<void> {
+  if ((await $.clock.now()) - lastPollAt >= REPOLL_MS) {
+    await pollChannel($)
+    await showNotice($, true)
+
+    return
+  }
+  await showNotice($)
+}
+
+/** The reminder's yes goes to the chat as the person's own words; Elsa switches it on. */
+async function noticeAnswer($: EngineInterface, label: string | null): Promise<void> {
+  await update($, notice, () => null)
+
+  if (label !== null) {
+    try {
+      await $.prompt.submit({ text: label, asUser: true })
+    } catch {
+      // The person can say it in words.
+    }
+  }
+}
+
+/**
+ * The update notice's «Перезапустить Claude»: the model is told (a row the person does not see) to
+ * restart Claude with `vp app restart-claude`, which refuses while work runs; the press goes to the
+ * chat as the person's own words. Never a hand step with a key combination.
+ */
+async function restartAnswer($: EngineInterface, version: string, label: string): Promise<void> {
+  await update($, notice, () => null)
+
+  try {
+    await $.session.append({
+      message: { type: 'user', content: [{ type: 'text', text: restartAskNote(version) }] },
+    })
+    await $.prompt.submit({ text: label, asUser: true })
+  } catch {
+    // The person can say it in words.
+  }
+}
+
+/** The welcome-back card is up: the engine's restart marker has done its work (best effort). */
+function clearRestartMarker($: EngineInterface): void {
+  isChannelReady($)
+    .then(isReady =>
+      isReady ? $.process.run(vpArgv($, 'app', 'clear-restart'), { timeoutMs: 15_000 }) : undefined,
+    )
+    .catch(() => undefined)
+}
+
+/** Whether the session is drawn on a surface that has the band above the prompt. */
+async function hasBand($: EngineInterface): Promise<boolean> {
+  try {
+    const surfaces = await $.session.surfaces()
+
+    return surfaces.some(one => one === 'terminal' || one === 'desktop' || one === 'mobile')
+  } catch {
+    return false
+  }
+}
+
+/** A text input of the action tool, flattened; null when absent; a reason when unusable. */
+function actionTextOf(input: Record<string, unknown>, key: string, most: number): string | null | { error: string } {
+  const value = input[key]
+
+  if (value === undefined || value === null) {
+    return null
+  }
+
+  if (typeof value !== 'string') {
+    return { error: `${key} must be a text` }
+  }
+  const flat = value.replace(/\s+/g, ' ').trim()
+
+  if (flat.length > most) {
+    return { error: `${key} must be at most ${most} characters (one action, said briefly)` }
+  }
+
+  return flat === '' ? null : flat
+}
+
+/** Keeps a restart card across the restart, or forgets the one kept. */
+async function keepRestart($: EngineInterface, card: ActionCard | null): Promise<void> {
+  if (card === null || card.kind !== 'restart') {
+    await $.store.delete(STORE_RESTART)
+
+    return
+  }
+  const kept: PendingRestart = {
+    title: card.title,
+    how: card.how,
+    after: card.after,
+    lang: card.lang,
+    at: await nowOf($),
+  }
+  await $.store.set(STORE_RESTART, kept)
+}
+
+/** The restart card kept by an earlier process, if it is one. */
+function pendingOf(value: unknown): PendingRestart | undefined {
+  if (typeof value !== 'object' || value === null) {
+    return undefined
+  }
+  const rec = value as Record<string, unknown>
+
+  if (typeof rec.title !== 'string' || typeof rec.how !== 'string' || !isLang(rec.lang)) {
+    return undefined
+  }
+
+  return {
+    title: rec.title,
+    how: rec.how,
+    after: typeof rec.after === 'string' ? rec.after : null,
+    lang: rec.lang,
+    at: typeof rec.at === 'number' && Number.isFinite(rec.at) ? rec.at : null,
+  }
+}
+
+/**
+ * At a session's start: a restart card kept within RESTART_TTL_MS becomes the welcome-back card,
+ * and is dropped from the store either way, so it greets the person once.
+ */
+async function welcomeBack($: EngineInterface): Promise<void> {
+  const held = await $.store.get(STORE_RESTART)
+
+  if (held === undefined) {
+    return
+  }
+  await $.store.delete(STORE_RESTART)
+  const pending = pendingOf(held)
+  const now = await nowOf($)
+
+  if (pending === undefined || (pending.at !== null && now !== null && now - pending.at > RESTART_TTL_MS)) {
+    return
+  }
+  const card: WelcomeCard = { title: pending.title, how: pending.how, after: pending.after, lang: pending.lang }
+  await update($, welcome, () => card)
+  clearRestartMarker($)
+
+  if (!(await hasBand($))) {
+    try {
+      await $.ui.open({ id: ACTION_PANE, title: WELCOME_BACK[card.lang], columns: ACTION_COLUMNS })
+    } catch {
+      // Not drawn: the note still reaches the model with the person's first message.
+    }
+  }
+}
+
+/** The model's words after a card was put up: where it is, what to write, what not to do. */
+function actionResult(card: ActionCard, where: 'band' | 'pane' | { reason: string }): string {
+  const restart =
+    card.kind === 'restart'
+      ? ' Because kind is "restart", the step is remembered: when Claude is opened again within 24 hours ' +
+        `a welcome-back card with «${CONTINUE[card.lang]}» greets the person, and their press (or first ` +
+        'message) reaches you with a note to continue from this place.'
+      : ''
+
+  if (typeof where === 'object') {
+    return (
+      `isPlaced: false. No card can be drawn here (${where.reason}). Write the step in the chat yourself, ` +
+      `framed so it cannot be missed: a blockquote opening with "**${ACTION_MARK[card.lang]}**", then the ` +
+      `action in bold, how to do it${card.notThis === null ? '' : `, "${ACTION_NOT_MARK} ${card.notThis}" on its own line`}` +
+      `${card.after === null ? '' : ', what comes after'}; end with the question «${ACTION_CHECK[card.lang]}» ` +
+      `and the answers ${quoted(card.buttons)}, then wait for the answer before anything else.${restart}`
+    )
+  }
+  const place = where === 'band' ? 'in a frame above the prompt' : 'in the pane to the right of the chat'
+  const unclear =
+    ` If they press «${ACTION_UNCLEAR[card.lang]}», say the same step more simply (what exactly they will ` +
+    `see on screen) and show it again with ${ACTION_TOOL}.`
+
+  return (
+    `isPlaced: true. The card «${card.title}» is up ${place}, highlighted, with the check ` +
+    `«${ACTION_CHECK[card.lang]}» and the buttons ${quoted(card.buttons)}. Now write in the chat ONE short ` +
+    'line as a markdown heading that points at it, e.g. ' +
+    `"## ⬇ Одно действие — в рамке над полем ввода: прочитайте и нажмите «${card.buttons[0]}»", then end ` +
+    'your turn and wait. Do not repeat the step in other words and do not give the next step: their ' +
+    `press reaches you as their own message carrying the label.${unclear}${restart}`
+  )
+}
+
+/**
+ * The action tool: checks the step, puts the card above the prompt (or in a pane where no band is
+ * drawn) and keeps a restart card across the restart. A refusal says why, for the model.
+ */
+async function showAction($: EngineInterface, input: Record<string, unknown>): Promise<ToolCallResult> {
+  const refuse = (why: string): ToolCallResult => ({ deny: `${ACTION_TOOL}: ${why}. Nothing was shown.` })
+  const title = actionTextOf(input, 'title', MAX_ACTION_TITLE)
+  const how = actionTextOf(input, 'how', MAX_ACTION_HOW)
+  const notThis = actionTextOf(input, 'not_this', MAX_ACTION_NOTE)
+  const after = actionTextOf(input, 'after', MAX_ACTION_NOTE)
+
+  for (const one of [title, how, notThis, after]) {
+    if (one !== null && typeof one === 'object') {
+      return refuse(one.error)
+    }
+  }
+
+  if (typeof title !== 'string') {
+    return refuse('title is required: the one action, e.g. «Скопируйте ключ ElevenLabs»')
+  }
+
+  if (typeof how !== 'string') {
+    return refuse('how is required: what to press, pointing at something visible on screen')
+  }
+
+  if ([title, how].some(text => KEY_COMBO.test(text))) {
+    return refuse(
+      'a key combination is never the way: it acts on whatever app is in front (a novice quit her ' +
+        'browser that way). Point at something visible (a button, a menu by its words); restarting ' +
+        'Claude or quitting CapCut is done by the engine, not by the person',
+    )
+  }
+  const kind = input.kind ?? 'step'
+
+  if (kind !== 'restart' && kind !== 'step') {
+    return refuse('kind must be "restart" or "step"')
+  }
+
+  if (input.buttons === undefined) {
+    return refuse('buttons are required: 1 or 2 labels that name the action, e.g. «Понятно: копирую ключ»')
+  }
+  const words = langOf(`${title} ${how}`) ?? (await read($, lang))
+  const own = docButtonsOf(input.buttons, words, DOC_BUTTONS, MAX_ACTION_BUTTONS)
+
+  if (!Array.isArray(own)) {
+    return refuse(own.error)
+  }
+  const unclear = ACTION_UNCLEAR[words]
+  const buttons = own.includes(unclear) ? own : [...own, unclear]
+  const card: ActionCard = {
+    title,
+    how,
+    notThis: typeof notThis === 'string' ? notThis : null,
+    after: typeof after === 'string' ? after : null,
+    kind,
+    lang: words,
+    buttons,
+    sent: null,
+  }
+  await update($, action, () => card)
+  // A new step stands in for a welcome-back card still up.
+  await update($, welcome, () => null)
+  await keepRestart($, card)
+
+  if (await hasBand($)) {
+    return { result: actionResult(card, 'band') }
+  }
+  let opened: UiOpenResult
+
+  try {
+    opened = await $.ui.open({ id: ACTION_PANE, title: ACTION_MARK[words], columns: ACTION_COLUMNS })
+  } catch (error) {
+    opened = { isPlaced: false, reason: error instanceof Error ? error.message : String(error) }
+  }
+
+  return { result: actionResult(card, opened.isPlaced ? 'pane' : { reason: opened.reason }) }
+}
+
+/** clear_action: the card goes, and a restart kept for it is forgotten. */
+async function clearAction($: EngineInterface): Promise<ToolCallResult> {
+  const held = await read($, action)
+  await update($, action, () => null)
+  await keepRestart($, null)
+
+  return { result: held === null ? 'No action card was up.' : `The card «${held.title}» is taken down.` }
+}
+
+/** A button of the action card: its label goes to the chat as the person's own message. */
+async function sendActionChoice($: EngineInterface, label: string): Promise<void> {
+  const held = await read($, action)
+
+  if (held === null || held.sent !== null) {
+    return
+  }
+  await update($, action, now => (now === null ? now : { ...now, sent: label }))
+
+  try {
+    await $.prompt.submit({ text: label, asUser: true })
+  } catch {
+    // Not delivered: the card comes back, so the person can press again or type.
+    await update($, action, now => (now === null || now.sent !== label ? now : { ...now, sent: null }))
+  }
+}
+
+/** A typed answer that is one of the card's labels settles it as a press would. */
+async function noteTypedAction($: EngineInterface, text: string): Promise<void> {
+  const held = await read($, action)
+  const typed = text.replace(/\s+/g, ' ').trim()
+
+  if (held !== null && held.sent === null && held.buttons.includes(typed)) {
+    await update($, action, now => (now === null ? now : { ...now, sent: typed }))
+  }
+}
+
+/**
+ * The welcome-back card goes, Elsa comes on stage, and the notes for the model say where the work
+ * stopped (with the contract, when this conversation has not had it yet).
+ */
+async function takeWelcome($: EngineInterface): Promise<string[]> {
+  const held = await read($, welcome)
+
+  if (held === null) {
+    return []
+  }
+  await update($, welcome, () => null)
+  // The words go on in the language the step was given in.
+  await setLang($, held.lang)
+  await enter($)
+  const contract = await noteForModel($, false)
+  const note = resumeNote(held.title, held.how)
+
+  return contract === undefined ? [note] : [contract, note]
+}
+
+/**
+ * The welcome-back card's button: the notes go into the conversation as a row the person does not
+ * see (a plugin's own prompt does not pass its own prompt.submit hook), then the person's
+ * "let's continue" goes as their own message.
+ */
+async function sendContinue($: EngineInterface): Promise<void> {
+  const held = await read($, welcome)
+
+  if (held === null) {
+    return
+  }
+  const text = continueText(held.lang, held.title)
+  const notes = await takeWelcome($)
+
+  try {
+    await $.session.append({
+      message: { type: 'user', content: [{ type: 'text', text: notes.join('\n\n') }] },
+    })
+    await $.prompt.submit({ text, asUser: true })
+  } catch {
+    // Not delivered: the card comes back, so the person can press again or type.
+    await update($, welcome, now => now ?? held)
+  }
+}
+
+/** The action card: the marker, the one action, how, the look-alike not to touch, after, the check. */
+function actionCardTree(
+  $: EngineInterface,
+  ui: ReturnType<EngineInterface['ui']['resolve']>,
+  card: ActionCard,
+): JSX.Element {
+  const { Box, Button, Text } = ui
+  const words = card.lang
+
+  return (
+    <Box key="action-card" flexDirection="column" gap={1} borderStyle="bold" borderColor={ACCENT} paddingX={1}>
+      <Text bold size="title" color="#ffffff" backgroundColor={ACCENT}>
+        {` ${ACTION_MARK[words]} `}
+      </Text>
+      <Text bold size="heading">
+        {card.title}
+      </Text>
+      <Text>{card.how}</Text>
+      {card.notThis === null ? null : (
+        <Text bold color="#b3392f">
+          {`${ACTION_NOT_MARK} ${card.notThis}`}
+        </Text>
+      )}
+      {card.after === null ? null : <Text dimColor>{card.after}</Text>}
+      {card.kind === 'restart' ? <Text dimColor>{ACTION_RESTART_NOTE[words]}</Text> : null}
+      <Text bold>{ACTION_CHECK[words]}</Text>
+      <Box flexDirection="row" gap={1}>
+        {card.buttons.map((label, i) => (
+          <Button
+            key={`action-answer-${i}`}
+            label={label}
+            variant={i === 0 ? 'primary' : 'secondary'}
+            onPress={() => sendActionChoice($, label)}
+          />
+        ))}
+      </Box>
+    </Box>
+  )
+}
+
+/** The welcome-back card: where the work stopped, and the one button that goes on from there. */
+function welcomeCardTree(
+  $: EngineInterface,
+  ui: ReturnType<EngineInterface['ui']['resolve']>,
+  card: WelcomeCard,
+): JSX.Element {
+  const { Box, Button, Text } = ui
+  const words = card.lang
+
+  return (
+    <Box key="welcome-card" flexDirection="column" gap={1} borderStyle="bold" borderColor={ACCENT} paddingX={1}>
+      <Text bold size="heading">
+        {`${WELCOME_BACK[words]} «${card.title}»`}
+      </Text>
+      {card.after === null ? null : <Text dimColor>{card.after}</Text>}
+      <Box flexDirection="row" gap={1}>
+        <Button key="welcome-continue" label={CONTINUE[words]} variant="primary" onPress={() => sendContinue($)} />
+      </Box>
+    </Box>
+  )
+}
+
+/** The card that waits for the person now, drawn; null when none does. */
+async function cardNow($: EngineInterface, ui: ReturnType<EngineInterface['ui']['resolve']>): Promise<JSX.Element | null> {
+  const held = await read($, action)
+
+  if (held !== null && held.sent === null) {
+    return actionCardTree($, ui, held)
+  }
+  const back = await read($, welcome)
+
+  return back === null ? null : welcomeCardTree($, ui, back)
+}
+
 function isFinished(tasks: readonly WorkTask[]): boolean {
   return tasks.length > 0 && tasks.every(one => one.status === 'completed')
 }
@@ -869,6 +1617,8 @@ export const register: Register = on => {
       argumentHint: '[folder-or-video-path]',
     })
     await registerDocTool($)
+    startChannel($)
+    await registerActionTools($)
     const storedLang = await $.store.get(STORE_LANG)
 
     if (isLang(storedLang)) {
@@ -883,6 +1633,13 @@ export const register: Register = on => {
       await paint($)
     }
 
+    // Claude opened again after a restart the director asked for: the person is met where they left.
+    try {
+      await welcomeBack($)
+    } catch {
+      // A host without a store: no welcome-back card.
+    }
+
     return next(e)
   })
 
@@ -890,12 +1647,24 @@ export const register: Register = on => {
   // opens with her face. A message that only calls her by name does too, and becomes the
   // guided start: the model is told beside it, the person's words stay as typed.
   on('prompt.submit', async ($, e, next) => {
+    let resumed: string[] = []
+
     if (e.isMeta !== true) {
       await noteLang($, e.command === undefined ? e.text : e.command.args, false)
 
       if (e.command === undefined && e.origin.kind !== 'plugin') {
         await noteTypedChoice($, e.text)
+        await noteTypedAction($, e.text)
       }
+
+      // The person typed instead of pressing «Продолжить»: the model is told all the same.
+      if (e.origin.kind !== 'plugin') {
+        resumed = await takeWelcome($)
+      }
+    }
+
+    if (resumed.length > 0) {
+      return next({ ...e, context: [...(e.context ?? []), ...resumed] })
     }
 
     if (e.command !== undefined && isStageName(ownShortName(e.command.name, $.plugin.name))) {
@@ -955,7 +1724,14 @@ export const register: Register = on => {
       // Bookkeeping only.
     }
     // The mod's own tool is answered here; every other call goes on to the engine.
-    const result = e.tool === docToolName($.plugin.name) ? await showDocument($, input) : await next(e)
+    const result =
+      e.tool === docToolName($.plugin.name)
+        ? await showDocument($, input)
+        : e.tool === `mcp__${$.plugin.name}__${ACTION_TOOL}`
+          ? await showAction($, input)
+          : e.tool === `mcp__${$.plugin.name}__${CLEAR_ACTION_TOOL}`
+            ? await clearAction($)
+            : await next(e)
 
     try {
       await noteToolEnd($, e.tool, input, result, isMain)
@@ -981,6 +1757,12 @@ export const register: Register = on => {
 
       if (e.answer !== '' && (await read($, onStage))) {
         await noteLang($, e.answer, true)
+      }
+
+      try {
+        await channelAfterTurn($)
+      } catch {
+        // The channel never stands in the way of a turn.
       }
     }
 
@@ -1113,9 +1895,62 @@ export const register: Register = on => {
 
   // The band above the prompt: who the person is talking to (her face moving with her mood),
   // which release she is, what the engine and the model are doing now, and the way out.
+  // A hand step waiting for the person (or the welcome back after a restart) leads the band, framed,
+  // whether or not the director is on stage.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey || !(await read($, onStage))) {
+    if (e.props.hasSurvey) {
       return next(e)
+    }
+    const shown = await read($, notice)
+    const noticeRow = (() => {
+      if (shown === null) {
+        return null
+      }
+      const { Box, Button, Markdown } = $.ui.resolve(e)
+      const buttons =
+        shown.source === 'reminder' ? (
+          <Box flexDirection="row" gap={1}>
+            <Button key="notice-on" label={REMINDER_ON[shown.lang]} variant="primary" onPress={() => noticeAnswer($, REMINDER_ON[shown.lang])} />
+            <Button key="notice-later" label={REMINDER_LATER[shown.lang]} variant="secondary" onPress={() => noticeAnswer($, null)} />
+          </Box>
+        ) : shown.source === 'restart' ? (
+          <Box flexDirection="row" gap={1}>
+            <Button
+              key="notice-restart"
+              label={RESTART_NOW[shown.lang]}
+              variant="primary"
+              onPress={() => restartAnswer($, shown.kind, RESTART_NOW[shown.lang])}
+            />
+            <Button key="notice-later" label={RESTART_LATER[shown.lang]} variant="secondary" onPress={() => noticeAnswer($, null)} />
+          </Box>
+        ) : (
+          <Button key="notice-dismiss" label={NOTICE_DISMISS[shown.lang]} onPress={() => noticeAnswer($, null)} />
+        )
+
+      return (
+        <Box flexDirection="column" borderStyle="round" borderColor={BAND_EDGE} paddingX={1}>
+          <Markdown text={`## ${shown.text}`} />
+          {buttons}
+        </Box>
+      )
+    })()
+
+    const card = await cardNow($, $.ui.resolve(e))
+
+    if (!(await read($, onStage))) {
+      if (noticeRow === null && card === null) {
+        return next(e)
+      }
+      const { Box } = $.ui.resolve(e)
+      // A hand step waiting for the person stands in for the engine's own row; a notice sits above it.
+      const below = card ?? (await next(e))
+
+      return (
+        <Box flexDirection="column">
+          {noticeRow}
+          {below}
+        </Box>
+      )
     }
     const words = await read($, lang)
     const paper = bandColor(await read($, tint))
@@ -1143,6 +1978,7 @@ export const register: Register = on => {
 
       return (
         <Box flexDirection="column" backgroundColor={paper} paddingX={1}>
+          {card}
           <Box flexDirection="row" gap={1}>
             <Text bold color={BAND_INK}>
               {AVATAR_TEXT} {NAME[words]}
@@ -1152,6 +1988,7 @@ export const register: Register = on => {
             </Text>
             <Button key="leave" label={LEAVE[words]} onPress={() => leaveByButton($)} />
           </Box>
+          {noticeRow}
           {engineBar}
           {turnBar}
         </Box>
@@ -1169,6 +2006,7 @@ export const register: Register = on => {
         borderColor={BAND_EDGE}
         paddingX={1}
       >
+        {card}
         <Box flexDirection="row" gap={1} alignItems="center">
           <Svg
             source={faceAt(feeling, await read($, beat))}
@@ -1186,6 +2024,7 @@ export const register: Register = on => {
           <Text color={BAND_INK_SOFT}>{release}</Text>
           <Button key="leave" label={LEAVE[words]} onPress={() => leaveByButton($)} />
         </Box>
+        {noticeRow}
         {engineBar}
         {turnBar}
       </Box>
@@ -1235,5 +2074,20 @@ export const register: Register = on => {
         {answer}
       </Box>
     )
+  })
+
+  // The action card where the surface draws no band: the same card in a pane beside the chat. Once
+  // a button was pressed (or its label typed) the card gives way to what was sent.
+  on('ui.render', { component: 'Pane', requestId: ACTION_PANE }, async ($, e) => {
+    const ui = $.ui.resolve(e)
+    const { Text } = ui
+    const card = await cardNow($, ui)
+
+    if (card !== null) {
+      return card
+    }
+    const held = await read($, action)
+
+    return held?.sent == null ? <Text dimColor>{'—'}</Text> : <Text bold>{docSentText(held.lang, held.sent)}</Text>
   })
 }

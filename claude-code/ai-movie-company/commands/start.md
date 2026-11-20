@@ -41,9 +41,9 @@ never something you ask them to type.
 
 Before the first message, without a word to the user, find out what there is:
 
-- run `vp doctor`, `vp youtube status`, `vp projects list --json`, `vp consent status --json`
-  and `vp mode status --json` (one Bash call is fine; `consent status` exits 5 when the terms are
-  not accepted — that is an answer, not a failure: put `; true` after it);
+- run `vp doctor`, `vp youtube status`, `vp projects list --json`, `vp consent status --json`,
+  `vp mode status --json` and `vp update auto status --json` (one Bash call is fine; `consent
+  status` exits 5 when the terms are not accepted — that is an answer, not a failure: put `; true` after it);
 - if `$ARGUMENTS` is given, look at that path (a folder or video → step 3; a text file → the
   "Text path" of the `pipeline` skill; a text job folder → its "Coming back").
 
@@ -75,7 +75,11 @@ contract's sections "The terms" and "Fewer questions" give the words.
    fine). Not asked again in this session.
 2. Then, if `vp mode status --json` has `offer_now: true` → `vp mode offer` and the one offer of
    fewer questions with its form. Yes → `vp mode enable`; no → `vp mode decline`.
-3. Then the project form above (without repeating the greeting).
+3. Then, if `vp update auto status --json` has `auto_update: false` and `offered: false` → the one
+   recommendation of auto-update (the contract's "Updates" gives the words), the line «## Нажмите
+   одну из кнопок ниже» and the form «Включить автообновление (рекомендуем)» / «Не сейчас». Yes →
+   `vp update auto on`; no → `vp update decline`.
+4. Then the project form above (without repeating the greeting).
 
 Already accepted and nothing to offer → straight to the project form.
 
@@ -117,7 +121,7 @@ back".
 
 One form: what does the person bring?
 
-- **«Запись с субтитрами»** — description: «видео и файл .srt, например из Zoom» → step 3.
+- **«Запись с субтитрами»** — description: «видео с файлом .srt (например из Zoom) или без него — тогда распознаю речь» → step 3.
 - **«Только текст»** — description: «пост, статья, сценарий — сделаю видео с голосом и музыкой» →
   the "Text path" of the `pipeline` skill (YouTube is not needed there; do not ask about it).
 
@@ -154,7 +158,8 @@ If `$ARGUMENTS` is given, use it as the path. Otherwise, **look yourself**: Glob
 доступ к файлам в папке… — so before that Glob, say the announcement of the contract's
 "Permissions" section (the folders announcement), then look and go on by
 yourself. Look for folders (depth up to 3) that contain a
-video (`.mp4` / `.mov` / `.mkv`) with an `.srt` next to it. Skip folders that already hold a
+video (`.mp4` / `.mov` / `.mkv`), with or without an `.srt` next to it (without one the speech is
+recognised, see below). Skip folders that already hold a
 finished job of another run (`status.yaml` present). Newest first. Then ask with AskUserQuestion:
 up to 3 of them as options (label — folder name, description — the path and the date), plus
 **«Другая папка»**. The user picks; never pick a folder for the user, even when asked to decide.
@@ -173,9 +178,10 @@ Then look in the folder (Glob, no failing commands) for:
 - optional exact word times (a `.json` next to them, e.g. `_cut.json`).
 
 Report in one line, plain words: "Found: video (1 h 12 min), subtitles, exact word times." No `.srt` →
-stop and explain: this version does not recognise speech; subtitles must come with the recording —
-in Zoom: the cloud recording page → the "Audio transcript" file (`.vtt`, convert to `.srt`), or
-the transcript the client sent. Several videos or subtitle files → ask which one.
+not a stop: the speech is recognised first — follow "Recording without subtitles" of the
+`pipeline` skill now, with `--video <file>` (the cost line and the two buttons «Расшифровать (≈ $X)»
+/ «У меня есть титры»); come back here when the subtitles are in the job folder. Several videos or
+subtitle files → ask which one.
 
 The job folder is the folder the user named (for a single video file — its parent folder), unless
 the user asks for another one. **Before** any `vp status`, Glob the folder for `status.yaml` and

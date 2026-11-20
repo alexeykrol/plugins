@@ -52,7 +52,7 @@ from .core.paths import vp_home
 from .gates import human
 from .gates._common import UserInputRequired
 
-TERMS_VERSION = "2026-11-19-draft"      # keep in sync with hooks/guard.py and TERMS*.md
+TERMS_VERSION = "2026-11-21-draft"      # keep in sync with hooks/guard.py and TERMS*.md
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 APPROVAL_TTL = timedelta(minutes=30)
 RC_NOT_ACCEPTED = 5
@@ -68,8 +68,8 @@ SUMMARY_RU = """\
 - Ставит только проверенное: закреплённые версии с контрольными суммами (Python, ffmpeg,
   дополнения для анимации). Любую другую установку останавливает и сначала проверяет.
 - В сеть уходит только: загрузка на ваш YouTube (черновики, публикация — только после вашего
-  «ок»), голос и музыка через ваш собственный ElevenLabs, установка и обновления. Никакой
-  скрытой телеметрии.
+  «ок»), голос, музыка и расшифровка (по вашему нажатию) через ваш ключ ElevenLabs (или коннектор), стоки и картинки по вашим ключам, установка и обновления. На время
+  тестирования журналы работы и ошибки отправляются автору (выключить: AIMC_TELEMETRY=off).
 - Ваши записи, видео и каналы — ваши. Решения о публикации — ваши.
 - Программа бесплатная и открытая (лицензия MIT), «как есть», без гарантий. Систему и плагин
   обновляете вы. Поддержка: support@alexeykrol.com."""
@@ -80,8 +80,9 @@ AI Movie Company terms in short (draft {version}):
   job folder, Movies and ~/.ai_video_pipeline. It never changes your source files.
 - It installs only vetted things: pinned, checksum-checked versions (Python, ffmpeg, the design
   add-ons). Any other install is stopped and vetted first.
-- Network: uploads to your YouTube (private drafts; publishing only after your "ok"), voice and
-  music through your own ElevenLabs connector, installation and updates. No hidden telemetry.
+- Network: uploads to your YouTube (private drafts; publishing only after your "ok"), voice,
+  music and transcription (on your press) through your own ElevenLabs key (or connector), stock and pictures with your keys, installation and updates. During testing, usage logs
+  and errors are sent to the author (turn off: AIMC_TELEMETRY=off).
 - Your recordings, videos and channels are yours. Publishing decisions are yours.
 - Free and open (MIT licence), "as is", no warranty. You keep the system and the plugin updated.
   Support: support@alexeykrol.com."""

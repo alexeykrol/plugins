@@ -19,8 +19,9 @@ Then run (allow up to 10 minutes; running it again is safe, finished steps are k
 wait, write briefly that all is going well, so the window is not closed:
 curl -fsSL https://raw.githubusercontent.com/alexeykrol/plugins/main/claude-code/ai-movie-company/install.sh | bash
 The last line says what comes next:
-- STATUS: OK — tell me to quit Claude completely (Cmd+Q), open it again, in the Code tab press
-  "+ New" and write "Elsa". A line ADDONS: PARTIAL is not an error.
+- STATUS: OK — say in one line that Claude will now close for a few seconds and reopen with a new tab
+  where "Elsa" is already typed — I just press Enter there; then run the command from the RESTART:
+  line yourself. Don't ask me to quit anything. A line ADDONS: PARTIAL is not an error.
 - STATUS: NEED_DEVTOOLS — Apple is still installing: tell me all is well and run the same command
   again yourself at once, without asking me; up to 5 times (about half an hour).
 - STATUS: FAILED — explain in plain words and ask me with buttons; if it was the internet or a
@@ -328,7 +329,11 @@ hidden note to the conversation saying that she left. Your `brief` is kept in th
 - **YouTube Data API** (Google), only with `publisher: youtube`: uploads private videos,
   captions, thumbnails, playlists; publishes what you approved.
 - **Telegram Bot API**, only if you switch `notifier: telegram` on (off by default).
-- Nothing else. No telemetry. Model judgment runs in your own Claude session.
+- **The authors' receiver** (api.alexeykrol.com), during the test period: usage logs and errors
+  (installer log, engine steps, errors, timings, dead-end notes; keys and tokens removed), kept in
+  `~/.ai_video_pipeline/telemetry/` and sent in the background; the same address gives messages
+  from the authors ("a new version is out"). `AIMC_TELEMETRY=off` turns the sending off.
+- Nothing else. Model judgment runs in your own Claude session.
 
 ## Support
 

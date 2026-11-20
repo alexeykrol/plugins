@@ -18,9 +18,10 @@ Job folder of a text job (the contract the dialog writes against):
   scenes.json         optional machine form of the scenes (see below), wins over script.md
   sketches/*.png      stage "sketches" (static storyboard pictures, one per scene)
   approvals.yaml      `vp text approve <job> sketches` — production waits for it
-  voice/S01.mp3 …     stage "voice": one file per scene, matched by scene id (S1 -> S01.mp3/s1.mp3);
+  voice/S01.mp3 …     stage "voice": one file per scene, matched by scene id (S1 -> S01.mp3/s1.mp3),
+                      made by `vp voice scenes` (+ voice/S01.alignment.json, word timings);
                       voice/samples/ (voice trials) and voice/flow.txt are ignored
-  music/*.mp3|wav     stage "music"
+  music/*.mp3|wav     stage "music" (`vp music make`, or the person's own track)
   timeline.json       stage "animation": built by `vp text timeline` from the voice files; the
                       Remotion composition is laid out on it
   renders/vN*.mp4     stage "render" (vN.mp4 = sound baked in; vN-picture.mp4 = picture only)
@@ -313,10 +314,13 @@ def next_step(folder: Path, nxt: str | None) -> dict[str, str]:
                      "chat", f"render stills to {_q(folder / 'sketches')}/S01.png …"),
         "approve_sketches": ("ask the person to approve the sketches; on «yes» record it",
                              f"vp text approve {j} sketches"),
-        "voice": ("voice every scene with ElevenLabs (one file per scene)",
-                  f"save {_q(folder / 'voice')}/S01.mp3, S02.mp3 … ; then vp text status {j}"),
-        "music": ("make one music track for the whole video",
-                  f"save {_q(folder / 'music')}/music.mp3"),
+        "voice": ("voice every scene with ElevenLabs (one file per scene; the voice_id comes from "
+                  "`vp voice list`, chosen by the person from three samples)",
+                  f"vp voice scenes {j} --voice <voice_id> ; then vp text status {j}"),
+        "music": ("make one music track for the whole video (ElevenLabs, paid plans; or the "
+                  "person's own file in music/)",
+                  f"vp music make {j} --prompt-file {_q(folder / 'music' / 'prompt.txt')} "
+                  f"--seconds <video length> --out {_q(folder / 'music')}/music.mp3"),
         "animation": ("measure the voice files and lay out the scenes (subtitle timing by code)",
                       f"vp text timeline {j}"),
         "render": ("animate the scenes in Remotion on timeline.json and render: "

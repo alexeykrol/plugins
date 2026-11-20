@@ -56,6 +56,64 @@ export type DocPane = {
   sent: string | null
 }
 
+/**
+ * A notice above the prompt, shown only while the engine is idle: a message from the plugin's
+ * authors (`vp messages poll`), a newer version downloaded by an update (restart Claude), or the
+ * reminder to turn auto-update on.
+ */
+export type ChannelNotice = {
+  /** `message` (from the feed, acknowledged by id), `restart`, or `reminder`. */
+  source: 'message' | 'restart' | 'reminder'
+  /** The feed's id for a message; 0 otherwise. */
+  id: number
+  /** `update` or `info` for a message; the source otherwise. */
+  kind: string
+  /** The text, in the person's language. */
+  text: string
+  /** The language of the notice's own words (buttons). */
+  lang: DirectorLang
+}
+
+/**
+ * A hand step the person is asked to do outside the chat, framed on its own card (the band above
+ * the prompt, or a pane where no band is drawn) and followed by the check «did you understand».
+ */
+export type ActionCard = {
+  /** The one action, e.g. «Закройте программу Claude». */
+  title: string
+  /** How to do it, pointing at something visible, e.g. «Нажмите кнопку «Copy» справа от ключа». */
+  how: string
+  /** The look-alike not to touch, or null. */
+  notThis: string | null
+  /** What the person will see or do afterwards, or null. */
+  after: string | null
+  /** A restart is remembered across it: the next session start greets the person. */
+  kind: 'restart' | 'step'
+  /** The language of the card's own words. */
+  lang: DirectorLang
+  /** The button labels, the understood one first. */
+  buttons: string[]
+  /** The label the person pressed (or typed), or null while the card waits. */
+  sent: string | null
+}
+
+/** The welcome-back card after a restart the director asked for. */
+export type WelcomeCard = {
+  /** The step the person was on when Claude closed. */
+  title: string
+  /** How that step was to be done (told to the model, not drawn). */
+  how: string
+  /** What the person was to do after it, or null. */
+  after: string | null
+  lang: DirectorLang
+}
+
+/** A restart card as kept in `$.store` across the restart. */
+export type PendingRestart = WelcomeCard & {
+  /** When the card was shown (ms, the mod's clock), or null on a host that keeps no clock. */
+  at: number | null
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'ai-movie-company': {
@@ -75,6 +133,12 @@ declare module 'claude-code' {
       work: TurnWork
       /** The document in the pane beside the chat, or null before the first one was shown. */
       doc: DocPane | null
+      /** The notice above the prompt, or null when there is none. */
+      notice: ChannelNotice | null
+      /** The hand step on the action card, or null when no card is up. */
+      action: ActionCard | null
+      /** The welcome-back card after a restart, or null. */
+      welcome: WelcomeCard | null
     }
   }
 }

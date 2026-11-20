@@ -12,12 +12,17 @@
 # The last lines are for the assistant that runs it:
 #   ADDONS: OK | ADDONS: PARTIAL <steps>  — the design add-ons; PARTIAL is not an error: the plugin
 #                               works in the plain look, Elsa retries later ("установи дополнения")
-#   STATUS: OK                — installed; quit Claude (Cmd+Q), open it, new Code session, say «Эльза»
+#   STATUS: OK                — installed; the RESTART: line above it restarts Claude and opens a new Code session with «Эльза» typed in
 #   STATUS: NEED_DEVTOOLS     — Apple is still installing its developer tools (its window was
 #                               opened and this run waited 6 minutes): run this again at once,
 #                               without asking — it waits on and then goes on; ~30 minutes in all
 #   STATUS: FAILED <step>     — the message above says what went wrong (`devtools`: Apple's window
 #                               was closed; a rerun opens it again)
+#
+# Its own log: every line it prints (and the engine's output) also goes to a lasting file,
+# ~/.ai_video_pipeline/logs/install-<UTC time>.log; once the engine is there, the log is turned into
+# test-period telemetry and sent in the background (`vp telemetry flush --detach`; a log of a run that
+# stopped earlier is sent by the engine's next flush). AIMC_TELEMETRY=off: kept locally, not sent.
 #
 # For testing (not for users): AIMC_STORE=<owner/repo | path to a marketplace folder> installs from
 # another store (default alexeykrol/plugins); AIMC_MARKETPLACE=<name> its marketplace name (default
@@ -35,10 +40,18 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 STEPS=7
 T0=$(date +%s)
+LOG_DIR="$HOME/.ai_video_pipeline/logs"
+INSTALL_LOG="$LOG_DIR/install-$(date -u +%Y%m%dT%H%M%SZ).log"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
 
-say()  { echo "$*"; }
-step() { echo "[$1/$STEPS] $2"; }
-fail() { echo "✗ $2"; echo "STATUS: FAILED $1"; exit 1; }
+# log TEXT... — one line into the lasting install log (never fails the install)
+log()  { printf '%s %s\n' "$(date -u +%H:%M:%S)" "$*" >>"$INSTALL_LOG" 2>/dev/null || true; }
+# log_file FILE PREFIX — a captured output into the install log
+log_file() { [ -f "$1" ] && sed "s/^/$(date -u +%H:%M:%S) $2 /" "$1" >>"$INSTALL_LOG" 2>/dev/null || true; }
+say()  { echo "$*"; log "$*"; }
+step() { echo "[$1/$STEPS] $2"; log "[$1/$STEPS] $2"; }
+fail() { echo "✗ $2"; log "✗ $2"; log "STATUS: FAILED $1"; echo "STATUS: FAILED $1"; exit 1; }
+log "install.sh started; store $STORE; macOS $(sw_vers -productVersion 2>/dev/null || echo ?); arch $(uname -m)"
 
 # fetch URL SHA256 DEST — https only, redirects included; the sha256 decides, not the server
 fetch() {
@@ -128,6 +141,7 @@ if ! devtools_ok; then
   until devtools_ok; do
     if [ "$waited" -ge "$DEVTOOLS_WAIT" ]; then
       say "Apple is still installing its developer tools."
+      log "STATUS: NEED_DEVTOOLS"
       echo "STATUS: NEED_DEVTOOLS"
       exit 0
     fi
@@ -228,7 +242,9 @@ if ! claude plugin marketplace list --json 2>/dev/null | json_has name "$MKT"; t
 else
   claude plugin marketplace update "$MKT" >/dev/null 2>&1 || true
 fi
+UPDATING=0
 if claude plugin list --json 2>/dev/null | json_has id "$PLUGIN_ID"; then
+  UPDATING=1
   claude plugin update "$PLUGIN_ID" >/dev/null 2>&1 || true
 else
   claude plugin install "$PLUGIN_ID" >/dev/null 2>&1 || fail plugin "could not install the plugin"
@@ -251,9 +267,11 @@ step 5 "plugin ai-movie-company $PLUGIN_VER: ready"
 VP="$PLUGIN_DIR/scripts/vp"
 export CLAUDE_PLUGIN_DATA="$HOME/.claude/plugins/data/$(echo "$PLUGIN_ID" | sed 's/[^A-Za-z0-9_-]/-/g')"
 "$VP" extras status --json >"$TMP/engine.log" 2>&1 || {
+  log_file "$TMP/engine.log" "engine:"
   tail -5 "$TMP/engine.log" | sed 's/^/      /'
   fail engine "the plugin's engine did not start (see above)"
 }
+log_file "$TMP/engine.log" "engine:"
 step 6 "engine: ready"
 
 # 7. The add-ons for the design look. A failure here does not fail the install: the plugin works in
@@ -273,6 +291,7 @@ elif [ -n "$ADDONS_HOLD" ] && ! grep -q '"all_installed": true' "$TMP/engine.log
 else
   step 7 "add-ons for the design look (Node.js, Chrome for drawing, Remotion), ~130 MB download…"
   "$VP" extras install 2>&1 | tee "$TMP/extras.log" | grep -v '^EXTRAS:' | sed 's/^/      /'
+  log_file "$TMP/extras.log" "extras:"
   last="$(grep '^EXTRAS:' "$TMP/extras.log" | tail -1)"
   case "$last" in
     "EXTRAS: OK") ADDONS="ADDONS: OK" ;;
@@ -282,6 +301,16 @@ else
 fi
 
 say "Done in $(( ($(date +%s) - T0) / 60 )) min $(( ($(date +%s) - T0) % 60 )) s."
-say "RESTART NEEDED: quit Claude completely (Cmd+Q), open it again, start a new session in the Code tab and write «Эльза»."
+say "Claude has to restart once to load the plugin; the command below does it (no keys to press)."
+log "$ADDONS"
+log "STATUS: OK"
+# the log -> telemetry, sent in the background; silent, never fails the install
+"$VP" telemetry flush --detach >/dev/null 2>&1 || true
 echo "$ADDONS"
+if [ "$UPDATING" = 1 ]; then
+  # an update keeps every project and its state; the new tab asks Elsa to pick up where we stopped
+  echo "RESTART: \"$VP\" app restart-claude --reason update --open-session \"Эльза, плагин обновился — продолжим мой проект с того места, где остановились. (👉 Нажмите Enter, чтобы отправить)\""
+else
+  echo "RESTART: \"$VP\" app restart-claude --reason install --open-session \"Эльза, привет! Плагин установлен — начнём. (👉 Нажмите Enter, чтобы отправить)\""
+fi
 echo "STATUS: OK"

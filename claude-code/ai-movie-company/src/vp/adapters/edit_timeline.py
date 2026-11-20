@@ -33,6 +33,8 @@ class ClipTimeline:
     canvas_w: int
     canvas_h: int
     cues: list[Cue] = field(default_factory=list)   # on the cut's time axis, within [0, duration]
+    audio_channels: int | None = None
+    audio_sample_rate: int | None = None
 
 
 def clip_items(job_root: str | Path) -> list[str]:
@@ -107,7 +109,8 @@ def build_clip_timeline(job_root: str | Path, item: str) -> ClipTimeline:
                         duration_ms=int(info["duration_ms"]), width=w, height=h,
                         fps=float(info.get("fps") or 30.0), has_audio=bool(info.get("has_audio")),
                         canvas_w=cw, canvas_h=ch,
-                        cues=fit_cues(cues, shift, int(info["duration_ms"])))
+                        cues=fit_cues(cues, shift, int(info["duration_ms"])),
+                        audio_channels=info.get("channels"), audio_sample_rate=info.get("sample_rate"))
 
 
 # ---- rough cut: every layer the pipeline produced, as separate editable items -----------------

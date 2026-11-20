@@ -151,8 +151,15 @@ def _render_to(out: str | os.PathLike, args_before_out: Sequence[str], timeout_s
     return out
 
 
+def _probe_int(value: int | str | None) -> int | None:
+    try:
+        return int(value) if value else None
+    except ValueError:
+        return None
+
+
 def probe(path: str | os.PathLike) -> dict[str, Any]:
-    """{duration_ms, width, height, fps, has_audio, video_codec, audio_codec, sample_rate}."""
+    """{duration_ms, width, height, fps, has_audio, video_codec, audio_codec, sample_rate, channels}."""
     p = Path(path)
     if not p.exists():
         raise VPError("data", f"media not found: {p}")
@@ -177,7 +184,8 @@ def probe(path: str | os.PathLike) -> dict[str, Any]:
             "fps": fps, "has_audio": a is not None,
             "video_codec": v.get("codec_name") if v else None,
             "audio_codec": a.get("codec_name") if a else None,
-            "sample_rate": int(a["sample_rate"]) if a and a.get("sample_rate") else None}
+            "sample_rate": _probe_int(a.get("sample_rate")) if a else None,
+            "channels": _probe_int(a.get("channels")) if a else None}
 
 
 def duration_ms(path: str | os.PathLike) -> int:

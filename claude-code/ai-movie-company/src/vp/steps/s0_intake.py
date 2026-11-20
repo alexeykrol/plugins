@@ -4,7 +4,9 @@ Gate: the route starts only when request.yaml exists with `enabled: true` (A3). 
 raises Inconclusive("route disabled ...") — the run stops (exit 0) and says why; no file is written,
 so the step re-runs as soon as request.yaml changes.
 
-Checks: request `platforms` and `brief` (optional text, at most 2000 characters); sources present;
+Checks: request `platforms` and `brief` (optional text, at most 2000 characters); sources present
+(video missing -> VPError data; video present but no SRT -> Inconclusive with the reason code
+`NEED_TRANSCRIPT`, the run stops like a gate: `INCONCLUSIVE S0: NEED_TRANSCRIPT: ...`, exit 0);
 ffprobe (duration, resolution, fps, audio); SRT parses and is non-empty; SRT duration <= video
 duration + 1 s; profile known; boundary mode `words` iff the words file has word timings, else
 `srt_only`; YouTube channel of the token == configured channel (auth problem or mismatch ->
@@ -28,6 +30,7 @@ from ._s2_retime import load_words
 CONTRACT_VERSION = 1
 SRT_SLACK_MS = 1000
 KNOWN_PLATFORMS = ("youtube",)
+NEED_TRANSCRIPT = "NEED_TRANSCRIPT"   # reason code: video present, subtitles missing
 
 
 def boundary_mode(ctx: Ctx) -> tuple[str, int]:
@@ -98,9 +101,15 @@ class S0Intake(StepSpec):
             raise VPError("data", f"unknown platforms {unknown}; known: {list(KNOWN_PLATFORMS)}")
         request_brief(req)  # a bad `brief` stops the route here, before any model work (S3a uses it)
 
-        for label, p in (("video", j.source_video), ("srt", j.source_srt)):
-            if not p.exists():
-                raise VPError("data", f"source {label} not found: {p.name}")
+        if not j.source_video.exists():
+            raise VPError("data", f"source video not found: {j.source_video.name}")
+        if not j.source_srt.exists():
+            # a recording without subtitles is a normal start (newcomers): the run stops like a
+            # gate with a reason code the skill acts on (`vp transcribe`); nothing is written, so
+            # S0 re-runs as soon as the subtitles appear
+            raise Inconclusive(f"{NEED_TRANSCRIPT}: the recording has no subtitles "
+                               f"({j.source_srt.name}) — `vp transcribe estimate` / `run`, "
+                               "or `vp transcribe import` for the person's own file")
         info = media.probe(j.source_video)
         if not info.get("width") or not info.get("duration_ms"):
             raise VPError("data", "source video has no video stream or zero duration")

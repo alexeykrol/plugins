@@ -2,7 +2,7 @@
 
   review show <job> [--json]                 candidates + current verdicts; the first call stamps
                                              started_at (human time of the review)
-  review preview <job> <frag>                low-res preview.mp4 of a fragment (current boundaries)
+  review preview <job> <frag> [--json]       preview.mp4 of a fragment (current boundaries)
   review set <job> <frag> --verdict accept|reject|adjust [--reason R] [--reason-class C]
                                              [--start B] [--end B]
   review add <job> --type reel|long --start B --end B --reason R [--title T] [--reason-class C]
@@ -23,11 +23,13 @@ from __future__ import annotations
 import argparse
 import copy
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import yaml
 
 from ..adapters import media
+from ..core.errors import VPError
 from ..core.io import atomic_write, dump_yaml, now_iso, read_json, read_yaml, sha256_file, write_json
 from ..core.lock import job_lock
 from ..core.paths import Job
@@ -37,6 +39,10 @@ from . import human
 from ._common import RC_OK, RC_REFUSED, Refused, guarded, job_ctx, locked, print_json
 
 PREVIEW_HEIGHT = 360
+CHAT_MAX_BYTES = 14_000_000
+CHAT_MIN_VIDEO_BPS = 250_000
+SENTENCE_ENDS = ".!?…"
+TRAILING_QUOTES = "\"'”’»›“‘„‚"
 
 
 # ---- loading ------------------------------------------------------------------------------------
@@ -106,13 +112,26 @@ def _sentence(text: str, last: bool) -> str:
     text = " ".join(str(text or "").split())
     if not text:
         return ""
-    marks = [i for i, ch in enumerate(text) if ch in ".!?…"]
+    marks = [i for i, ch in enumerate(text) if ch in SENTENCE_ENDS]
     if last:
         cut = [i for i in marks if i < len(text) - 1]
         out = text[cut[-1] + 1:].strip() if cut else text
         return out[-300:]
     out = text[:marks[0] + 1] if marks else text
     return out[:300]
+
+
+def _starts_mid_sentence(timeline: F.Timeline, first_cue: Any) -> bool:
+    """Check the last subtitle text before the fragment's effective first cue."""
+    try:
+        index = timeline.cue_index_of(first_cue)
+    except F.BoundaryError:
+        return False
+    for i in range(index - 1, -1, -1):
+        text = " ".join(timeline.cues[i].text.split()).rstrip(" " + TRAILING_QUOTES)
+        if text:
+            return text[-1] not in SENTENCE_ENDS
+    return False
 
 
 def _effective(state: ReviewState, res: ReviewResult) -> dict[str, dict[str, Any]]:
@@ -129,6 +148,17 @@ def _range_key(eff: dict[str, Any]) -> str:
     return f"{int(eff['start_ms'])}-{int(eff['end_ms'])}"
 
 
+def _preview_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except FileNotFoundError:
+        return 0
+
+
+def _preview_matches(size: int, meta: dict[str, Any], start_ms: int, end_ms: int) -> bool:
+    return size > 0 and (meta.get("start_ms"), meta.get("end_ms")) == (start_ms, end_ms)
+
+
 def _card(state: ReviewState, fid: str, item: dict[str, Any], eff: dict[str, Any]) -> dict[str, Any]:
     p = state.by_id.get(fid) or {}
     start_ms, end_ms = int(eff["start_ms"]), int(eff["end_ms"])
@@ -141,7 +171,7 @@ def _card(state: ReviewState, fid: str, item: dict[str, Any], eff: dict[str, Any
         last = _cue_text(state.timeline, eff.get("last_cue"))
     prev = state.job.preview_mp4(fid)
     meta = read_json(prev.with_suffix(".json"), default={}) or {}
-    fresh = prev.exists() and (meta.get("start_ms"), meta.get("end_ms")) == (start_ms, end_ms)
+    fresh = _preview_matches(_preview_size(prev), meta, start_ms, end_ms)
     return {
         "id": fid, "type": item.get("type") or p.get("type"),
         "origin": "added" if not p else ("adjusted" if moved else "proposed"),
@@ -152,6 +182,7 @@ def _card(state: ReviewState, fid: str, item: dict[str, Any], eff: dict[str, Any
         "title": item.get("title") or p.get("title"), "thesis": item.get("thesis") or p.get("thesis"),
         "why": p.get("why"), "score": p.get("score"),
         "first_sentence": _sentence(first, last=False), "last_sentence": _sentence(last, last=True),
+        "flags": ["starts_mid_sentence"] if _starts_mid_sentence(state.timeline, eff.get("first_cue")) else [],
         "preview": str(prev) if fresh else None,
         "verdict": item.get("verdict"), "reason": item.get("reason"),
         "reason_class": item.get("reason_class"),
@@ -212,6 +243,8 @@ def show(job: Job, as_json: bool) -> int:
             print(f"[{c['id']}] {c['type']} {c['duration_s']} s ({c['start']} - {c['end']}, "
                   f"{c['subtitles']}) {c['origin']}; verdict: {c['verdict'] or '-'}"
                   + (f" ({c['reason_class'] or '-'}: {c['reason']})" if c['reason'] else ""))
+            if "starts_mid_sentence" in c["flags"]:
+                print("  Warning: starts mid-sentence")
             for k in ("title", "thesis", "why"):
                 if c.get(k):
                     print(f"  {k}: {c[k]}")
@@ -224,7 +257,7 @@ def show(job: Job, as_json: bool) -> int:
     return guarded(body)
 
 
-def preview(job: Job, fid: str) -> int:
+def preview(job: Job, fid: str, as_json: bool = False) -> int:
     def body() -> int:
         state = ReviewState(job)
         res = state.check()
@@ -235,17 +268,29 @@ def preview(job: Job, fid: str) -> int:
         out = job.preview_mp4(fid)
         side = out.with_suffix(".json")
         meta = read_json(side, default={}) or {}
-        if not (out.exists() and (meta.get("start_ms"), meta.get("end_ms")) == (start_ms, end_ms)):
-            if not media.available():
-                raise Refused("ffmpeg/ffprobe not found on PATH")
+        size = _preview_size(out)
+        fits_chat = size <= CHAT_MAX_BYTES
+        matches = _preview_matches(size, meta, start_ms, end_ms)
+        needs_render = not matches or (not fits_chat and meta.get("fits_chat") is not False)
+        if needs_render and media.available():
             from ..core import progress
             with progress.tracking(job.root, "preview", fid, total=(end_ms - start_ms) / 1000,
                                    unit="s"):
-                render_preview(job.source_video, start_ms, end_ms, out)
-            write_json(side, {"start_ms": start_ms, "end_ms": end_ms, "rendered_at": now_iso(),
-                              "mode": preview_mode(start_ms, end_ms)})
+                out, fits_chat = render_preview(job.source_video, start_ms, end_ms, out,
+                                                max_bytes=CHAT_MAX_BYTES)
+            size = out.stat().st_size
+            meta = {"start_ms": start_ms, "end_ms": end_ms, "rendered_at": now_iso(),
+                    "mode": preview_mode(start_ms, end_ms)}
+        elif not matches:
+            raise Refused("ffmpeg/ffprobe not found on PATH")
+        details = {"size_mb": size / 1_000_000, "fits_chat": fits_chat}
+        if any(meta.get(key) != value for key, value in details.items()):
+            write_json(side, {**meta, **details})
         human.mark_shown(job.review_shown, {fid: _range_key(eff)}, "range")
-        print(str(out))
+        if as_json:
+            print_json({"path": str(out), **details})
+        else:
+            print(str(out))
         return RC_OK
     return guarded(body)
 
@@ -260,19 +305,53 @@ def preview_mode(start_ms: int, end_ms: int) -> str:
     return "copy" if end_ms - start_ms > PREVIEW_COPY_ABOVE_MS else "encode"
 
 
-def render_preview(src: Path, start_ms: int, end_ms: int, out: Path) -> Path:
+def render_preview(src: Path, start_ms: int, end_ms: int, out: Path,
+                   max_bytes: int | None = None) -> Path | tuple[Path, bool]:
     """Fast preview for watching, never for publishing: 360p re-encode for short fragments,
-    keyframe-snapped stream copy for long ones (preview_mode)."""
+    keyframe-snapped stream copy for long ones (preview_mode).
+    With a byte cap, return (path, fits_chat). Keep the normal preview if neither retry fits.
+    """
     if end_ms <= start_ms:
         raise Refused(f"empty fragment range {start_ms}..{end_ms}")
-    head = ["-ss", f"{start_ms / 1000:.3f}", "-i", str(src), "-t", f"{(end_ms - start_ms) / 1000:.3f}",
+    duration = (end_ms - start_ms) / 1000
+    head = ["-ss", f"{start_ms / 1000:.3f}", "-i", str(src), "-t", f"{duration:.3f}",
             "-map", "0:v:0", "-map", "0:a:0?"]
+
+    def encode(height: int, video_rate: list[str], audio_rate: str) -> list[str]:
+        return [*head, "-vf", f"scale=-2:{height}", "-c:v", "libx264", "-preset", "veryfast",
+                *video_rate, "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", audio_rate,
+                "-movflags", "+faststart"]
+
     if preview_mode(start_ms, end_ms) == "copy":
-        return media._render_to(out, [*head, "-c", "copy", "-avoid_negative_ts", "make_zero",
-                                      "-movflags", "+faststart"])
-    return media._render_to(out, [*head, "-vf", f"scale=-2:{PREVIEW_HEIGHT}",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart"])
+        initial = [*head, "-c", "copy", "-avoid_negative_ts", "make_zero", "-movflags", "+faststart"]
+    else:
+        initial = encode(PREVIEW_HEIGHT, ["-crf", "30"], "64k")
+    if max_bytes is None:
+        return media._render_to(out, initial)
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    # Allow room for MP4 overhead and reserve part of the bitrate for audio.
+    total_bps = int(0.90 * max_bytes * 8 / duration)
+    audio_bps = min(64_000, total_bps // 4)
+    video_bps = total_bps - audio_bps
+    with TemporaryDirectory(prefix=f".{out.stem}.", dir=out.parent) as tmp:
+        normal = Path(tmp) / out.name
+        media.run_ffmpeg([*initial, str(normal)])
+        if normal.stat().st_size <= max_bytes:
+            return normal.replace(out), True
+        if video_bps >= CHAT_MIN_VIDEO_BPS:
+            candidate = normal.with_stem(f"{normal.stem}.chat")
+            for height in (PREVIEW_HEIGHT, 240):
+                args = encode(height, ["-b:v", str(video_bps)], str(audio_bps))
+                try:
+                    media.run_ffmpeg([*args, str(candidate)])
+                except VPError:
+                    continue
+                if 0 < _preview_size(candidate) <= max_bytes:
+                    # The floor applies to the target budget (checked above), not to the measured
+                    # rate: x264 undershoots on static screen recordings at good quality.
+                    return candidate.replace(out), True
+        return normal.replace(out), False
 
 
 def _clean(v: str | None) -> str | None:
@@ -393,6 +472,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("preview")
     s.add_argument("job")
     s.add_argument("frag")
+    s.add_argument("--json", action="store_true")
     s = sub.add_parser("set")
     s.add_argument("job")
     s.add_argument("frag")
@@ -422,7 +502,7 @@ def main(argv: list[str]) -> int:
     if a.cmd == "show":
         return show(job, a.json)
     if a.cmd == "preview":
-        return preview(job, a.frag)
+        return preview(job, a.frag, a.json)
     if a.cmd == "set":
         return set_verdict(job, a.frag, a.verdict, a.reason, a.reason_class, a.start, a.end)
     if a.cmd == "add":

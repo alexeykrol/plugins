@@ -30,6 +30,9 @@ class CostJournal:
             rec[k] = fields.pop(k, 0) or 0
         rec.update(fields)
         append_line(self.path, json.dumps(rec, ensure_ascii=False, default=str))
+        from .. import telemetry
+        telemetry.record("cost", **{("cost_kind" if k == "kind" else k): v for k, v in rec.items()
+                                    if k != "at"})
         return rec
 
     def records(self, job: str | None = None) -> list[dict[str, Any]]:

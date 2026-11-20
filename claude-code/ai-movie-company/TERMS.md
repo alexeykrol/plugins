@@ -2,7 +2,7 @@
 
 # AI Movie Company — terms of use
 
-> **DRAFT for the owner, version `2026-11-19-draft`.** Written by the development agent from the
+> **DRAFT for the owner, version `2026-11-21-draft`.** Written by the development agent from the
 > plugin's code and the MIT licence; not reviewed by a lawyer. Have a lawyer read it before
 > relying on it, in particular for the jurisdictions where the plugin is offered. Nothing here adds
 > to or limits the [LICENSE](LICENSE); where they differ, the LICENSE prevails.
@@ -62,11 +62,24 @@ Checked against the plugin's code on 2026-11-19:
   playlists, and publishing of exactly what you approved. Signing in happens on Google's own page;
   the plugin never sees your password; the access key stays on your computer.
 - **ElevenLabs** — voice and music for a video made from a text go through **your own**
-  ElevenLabs connector in Claude, under your ElevenLabs account and its terms. The plugin's code
-  does not contact ElevenLabs itself.
+  ElevenLabs key (or, if you connected it instead, your own ElevenLabs connector in Claude), under
+  your ElevenLabs account and its terms: the plugin's code sends the text to be voiced and the
+  music description, and only after you chose to go ahead at the stated price. **Transcription** of
+  a recording without subtitles happens only when you press "Transcribe": the plugin's code sends
+  the recording's audio to ElevenLabs with the same key. The key is kept only on your computer.
+- **Stock and pictures** — Pexels, Pixabay (ready-made video and photos), Google Gemini and OpenAI
+  (picture generation): only if you give your own key, and only on your request; what is sent is
+  the search words or the picture description, under your account and the service's terms.
 - **The installation sources** in section 2, when something is installed or updated.
 - **Telegram** — only if you switch notifications to Telegram yourself (off by default).
-- Nothing else: no telemetry, no analytics, no advertising, no hidden recipients. The animation
+- **Test-period telemetry — the authors' receiver** (`api.alexeykrol.com`): while the plugin is
+  being tested, usage logs and errors (the installer's log, the engine's steps, errors and timings,
+  Elsa's notes on dead ends) are recorded on your computer in `~/.ai_video_pipeline/telemetry/` and
+  sent to the author to improve the plugin; keys and tokens are removed first. The plugin also asks
+  the same address for messages from the authors (for example "a new version is out"). To turn the
+  sending off, set `AIMC_TELEMETRY=off` in Claude's environment (settings `env`); the messages are
+  then asked without the installation's id.
+- Nothing else: no analytics, no advertising, no hidden recipients. The animation
   tools' telemetry is switched off and their local servers listen on your computer only
   (127.0.0.1).
 

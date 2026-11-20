@@ -188,7 +188,30 @@ class Runner:
         done = same.index(inst) if inst in same else 0
         with progress.tracking(self.job.root, inst.step, inst.item, done=done,
                                total=max(len(same), 1)):
-            return self._run_tracked(inst, spec, ctx, fr, items)
+            return self._run_recorded(inst, spec, ctx, fr, items)
+
+    def _run_recorded(self, inst: Instance, spec: StepSpec, ctx: Ctx, fr: Any,
+                      items: list[str] | None) -> str:
+        """Telemetry of one step instance: its start, then how it ended and how long it took."""
+        from .. import telemetry
+        job = self.job.job_id
+        telemetry.record("step", event="start", step=inst.step, item=inst.item, job=job,
+                         job_dir=str(self.job.root), reason=fr.reason)
+        t0 = time.monotonic()
+        outcome = "crashed"
+        try:
+            outcome = self._run_tracked(inst, spec, ctx, fr, items)
+            return outcome
+        finally:
+            last = self.status.last(inst.step, inst.item) or {}
+            meta = last.get("metadata") or {}
+            telemetry.record("step", event="end", step=inst.step, item=inst.item, job=job,
+                             outcome=outcome, state=last.get("state"),
+                             duration_s=round(time.monotonic() - t0, 3),
+                             error_kind=meta.get("kind") if last.get("state") in
+                             ("failed", "abandoned") else None,
+                             error=meta.get("error") or meta.get("message"),
+                             gate=meta.get("gate"))
 
     def _run_tracked(self, inst: Instance, spec: StepSpec, ctx: Ctx, fr: Any,
                      items: list[str] | None) -> str:

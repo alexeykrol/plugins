@@ -1,4 +1,4 @@
-"""S5v — visual check of the finished picture by the model (what code cannot see).
+"""S5v — verify the finished MP4, then check the picture by model judgment.
 
 Code (S4/S5) already proved frame size, no black bars, no black or frozen picture, no long silence,
 loudness. This step answers the rest with one look:
@@ -20,6 +20,7 @@ cites visual.yaml instead of "I have not seen the picture".
 from __future__ import annotations
 
 import re
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -27,8 +28,9 @@ import yaml
 
 from ..adapters import media
 from ..core.io import read_yaml, write_yaml
-from .base import Ctx, StepSpec, VPError
-from .s4_cut import fragment_record, picture_accept
+from ..verify_mp4 import verify_mp4
+from .base import Ctx, StepSpec, VPError, item_kind
+from .s4_cut import picture_accept
 from .s6a_design_texts import load_prompt, prompt_hash
 
 PROMPT = "s5v_visual.md"
@@ -59,6 +61,17 @@ def visual_sheet(job, item: str) -> Path:
 
 def visual_yaml(job, item: str) -> Path:
     return job.item_dir(item) / "visual.yaml"
+
+
+def planned_render_duration_s(manifest: Any) -> float | None:
+    """Use the planned clip and card lengths, independent of measured duration_ms."""
+    if not isinstance(manifest, dict):
+        return None
+    parts = [manifest.get(key) for key in ("clip_ms", "intro_ms", "outro_ms")]
+    if any(type(ms) is not int or ms < 0 for ms in parts):
+        return None
+    total_ms = sum(parts)
+    return total_ms / 1000 if total_ms else None
 
 
 def s5v_settings(config: dict[str, Any]) -> dict[str, int]:
@@ -147,7 +160,7 @@ def verdict(answers: dict[str, Any]) -> list[str]:
 
 
 class S5vVisual(StepSpec):
-    id, deps, scope, version, gate = "S5v", ("S5",), "item", "1", None
+    id, deps, scope, version, gate = "S5v", ("S5",), "item", "2", None
 
     def inputs(self, ctx: Ctx) -> list[Path]:
         return [ctx.job.render_mp4(ctx.item), ctx.job.render_manifest(ctx.item)]
@@ -161,14 +174,31 @@ class S5vVisual(StepSpec):
 
     def run(self, ctx: Ctx) -> dict:
         j, item = ctx.job, ctx.item
-        kind = fragment_record(ctx)["kind"]
+        kind = item_kind(ctx)
         man = read_yaml(j.render_manifest(item), default=None)
         if not isinstance(man, dict):
             raise VPError("data", f"{item}: render.manifest.yaml missing")
+        render = j.render_mp4(item)
+        # S5 requires audio for every current output, including the full video.
+        verification = verify_mp4(render, audio_policy="required",
+                                  expected_duration_s=planned_render_duration_s(man),
+                                  duration_tolerance_s=0.5)
+        mp4 = {"status": verification.status, "checks": [asdict(check) for check in verification.checks]}
+        report = {"item": item, "kind": kind, "mp4_verification": mp4}
+        if verification.status != "passed":
+            if verification.status == "blocked":
+                failure = "MP4 unmeasured (ffmpeg and ffprobe required)"
+            else:
+                names = ", ".join(check.name for check in verification.checks if check.status == "failed")
+                failure = f"MP4 verification failed ({names})"
+            write_yaml(visual_yaml(j, item), {
+                **report, "ok": False, "answers": {}, "failures": [failure], "waived": False})
+            raise VPError("data", f"{item}: {render.name}: {failure}", mp4_verification=mp4)
+
         start = int(man["intro_ms"])
         end = int(man["duration_ms"]) - int(man["outro_ms"])
         n = s5v_settings(ctx.config)["frames"]
-        sheet = build_sheet(j.render_mp4(item), start, end, n, visual_sheet(j, item))
+        sheet = build_sheet(render, start, end, n, visual_sheet(j, item))
         clip = (f"kind: {'vertical reel' if kind == 'reel' else 'horizontal video'}\n"
                 f"subtitles: {'burned into the picture' if kind == 'reel' else 'none in the picture'}\n"
                 f"frames: {n}\n")
@@ -180,7 +210,7 @@ class S5vVisual(StepSpec):
         waiver = visual_waiver(ctx)
         ok = not failures or waiver is not None
         write_yaml(visual_yaml(j, item), {
-            "item": item, "kind": kind, "ok": ok, "answers": answers, "failures": failures,
+            **report, "ok": ok, "answers": answers, "failures": failures,
             "waived": bool(failures and waiver), "waiver_reason": waiver if failures else None,
             "checked_by": "model (S5v) from the contact sheet visual.sheet.png"})
         if not ok:
@@ -188,7 +218,8 @@ class S5vVisual(StepSpec):
             raise VPError("data", f"{item}: visual check failed — " + "; ".join(failures)
                           + (f" (frames {frames} of {n})" if frames else "")
                           + (f". Model: {answers['note']}" if answers["note"] else ""))
-        return {"kind": kind, "ok": ok, "failures": failures, "waived": bool(failures and waiver)}
+        return {"kind": kind, "ok": ok, "failures": failures, "waived": bool(failures and waiver),
+                "mp4_verification": mp4}
 
 
 STEP = S5vVisual()

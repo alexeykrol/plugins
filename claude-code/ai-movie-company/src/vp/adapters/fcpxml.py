@@ -43,6 +43,7 @@ BASIC_TITLE_UID = ".../Titles.localized/Bumper:Opener.localized/Basic Title.loca
 WRAP = {"reel": 18, "long": 34, "full": 34}   # card title line length, characters
 CARD_FONT_FRAC = 0.075                        # as the renderer: fraction of min(width, height)
 DEFAULT_CARD_BG = "#14181F"
+ASSET_AUDIO_RATES = {44100, 48000, 88200, 96000, 176400, 192000}
 
 
 # ---- time ---------------------------------------------------------------------------------
@@ -136,14 +137,19 @@ def build_fcpxml(rc: RoughCut, name: str, cards: dict[str, Path], titles: bool =
                   width=str(tl.width), height=str(tl.height), colorSpace="1-1-1 (Rec. 709)")
     n_res = 2
 
-    def asset(label: str, path: Path, n: int, audio: bool) -> str:
+    def asset(role: str, path: Path, n: int) -> str:
         nonlocal n_res
         n_res += 1
         rid = f"r{n_res}"
+        is_cut = role == "clip"
+        label = f"{name} cut" if is_cut else f"{name} {role}"
         attrs: dict[str, str] = {"id": rid, "name": label, "start": "0s", "duration": rt(n, fd),
                                  "hasVideo": "1", "format": "r2", "videoSources": "1"}
-        if audio:
-            attrs.update(hasAudio="1", audioSources="1", audioChannels="2", audioRate="48000")
+        if not is_cut or tl.has_audio:
+            channels = tl.audio_channels if is_cut else None
+            rate = tl.audio_sample_rate if is_cut else None
+            attrs.update(hasAudio="1", audioSources="1", audioChannels=str(channels or 2),
+                         audioRate=str(rate if rate in ASSET_AUDIO_RATES else 48000))
         a = ET.SubElement(res, "asset", attrs)
         ET.SubElement(a, "media-rep", kind="original-media", src=Path(path).resolve().as_uri())
         return rid
@@ -156,8 +162,7 @@ def build_fcpxml(rc: RoughCut, name: str, cards: dict[str, Path], titles: bool =
         n = n_clip if role == "clip" else n_card[role]
         if n <= 0:
             continue
-        refs[role] = (asset(f"{name} {role}" if role != "clip" else f"{name} cut", path, n,
-                            True if role != "clip" else tl.has_audio), n)
+        refs[role] = (asset(role, path, n), n)
     want_titles = titles and any(text[r] for r in ("intro", "outro") if r in refs)
     if want_titles:
         n_res += 1

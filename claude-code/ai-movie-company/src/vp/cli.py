@@ -21,6 +21,8 @@
   projects list|add|scan|forget [--json]     jobs the person worked on: vp.projects:main
   text new|status|estimate|timeline|approve  text-only jobs: vp.text:main
   check picture <video> [--json]             black/frozen picture + frame sheet: vp.check:main
+  transcribe estimate|run|import|key ...     recording without subtitles -> _cut.srt + _cut.json
+                                             (ElevenLabs Scribe): vp.transcribe:main
   journal note|show                          dialog journal: vp.journal:main
   feedback pack [--reveal]                   journal + notes + doctor + versions -> one file in
                                              ~/Movies/AI Movie Company/Feedback
@@ -32,6 +34,39 @@
                                              vp.safety:guard_main (enforced by hooks/guard.py)
   mode status|offer|enable|decline|undo      "fewer questions" in Elsa's workspace only:
                                              vp.safety:mode_main
+  scenario list|detect|plan|matrix|services|check
+                                             scenario tree — route, steps, services, cost:
+                                             vp.scenarios:main
+  stock search <query> [--kind video|photo] [--orientation ...] [--min-duration S] [--json]
+  stock get <id> <job>                       stock (Pexels / Pixabay) -> <job>/library/stock + provenance:
+                                             vp.adapters.stock:main
+  images estimate --n K | generate <job> --prompt ... --aspect 9:16|16:9|1:1 --n K
+                                             image generation (Gemini / OpenAI) -> <job>/library/generated:
+                                             vp.adapters.images:main
+  keys status|set|check|forget               the person's own API keys (never printed): vp.keys:main
+  voice list|estimate|say|scenes ...         voice-over with the person's ElevenLabs key -> <job>/voice
+                                             (+ word timings): vp.adapters.elevenlabs:voice_main
+  music estimate|make ...                    music with the person's ElevenLabs key (paid plans) ->
+                                             <job>/music: vp.adapters.elevenlabs:music_main
+  telemetry status|flush|show-id|import-install  test-period telemetry: vp.telemetry:main
+  messages poll|ack                          messages from the authors: vp.messages:main
+  busy [--json]                              is a render/upload/generation running: vp.busy:main
+  app restart-claude|quit capcut|status      quit/restart Claude and CapCut for the person (never
+                                             Cmd+Q by hand): vp.app:main
+  update auto status|on|off | decline | reminder due|shown | check
+                                             plugin auto-update switch and reminders: vp.update:main
+
+  shots detect|list|describe-set <job> ...   shots of a folder of videos, keyframes, descriptions
+                                             (capability К): vp.analysis.scenes:main
+  beats <music-file> [--json] [--out F]      tempo, beats, bars of a music file: vp.analysis.beats:main
+  montage plan|render <job> ...              music montage cut on the beat (М, Б):
+                                             vp.analysis.montage:main
+  takes clean|set|apply <job> ...            cut pauses, fillers, restarts from raw takes (Ч):
+                                             vp.analysis.takes:main
+
+Every command records itself in the telemetry spool (vp.telemetry, AIMC_TELEMETRY=off disables),
+uncaught errors included, and starts a detached background flush (throttled) when it ends.
+Long commands (BUSY_COMMANDS) hold a busy marker (vp.busy) while they run.
 
 Global option: --home <dir> (anywhere on the line, also after `learn` / `knowledge`) sets VP_HOME
 for the command — the pipeline home with config.yaml, knowledge store, journals.
@@ -44,9 +79,11 @@ Exit codes: 0 done/gate/locked, 2 failed/abandoned, 3 internal / not implemented
 from __future__ import annotations
 
 import argparse
+import contextlib
 import importlib
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -81,7 +118,45 @@ SUBCOMMAND_MAINS = {
     "consent": "vp.safety:consent_main",
     "guard": "vp.safety:guard_main",
     "mode": "vp.safety:mode_main",
+    "telemetry": "vp.telemetry:main",
+    "messages": "vp.messages:main",
+    "busy": "vp.busy:main",
+    "app": "vp.app:main",
+    "update": "vp.update:main",
+    "transcribe": "vp.transcribe:main",
+    # scenario tree (route, steps, services, cost): vp.scenarios — keep this block together
+    "scenario": "vp.scenarios:main",
+    # material without speech, music, raw takes (SCENARIOS К, Б, М, Ч)
+    "shots": "vp.analysis.scenes:main",
+    "beats": "vp.analysis.beats:main",
+    "montage": "vp.analysis.montage:main",
+    "takes": "vp.analysis.takes:main",
 }
+
+# ---- stock, image generation, voice, music and their keys (capabilities С, Г, docs/SCENARIOS.md)
+MEDIA_COMMANDS = {
+    "stock": "vp.adapters.stock:main",
+    "images": "vp.adapters.images:main",
+    "keys": "vp.keys:main",
+    "voice": "vp.adapters.elevenlabs:voice_main",
+    "music": "vp.adapters.elevenlabs:music_main",
+}
+SUBCOMMAND_MAINS.update(MEDIA_COMMANDS)
+# ---------------------------------------------------------------------------------------------
+# commands that may run long (render, upload, export, install): a busy marker while they run,
+# except the quick sub-commands listed in QUICK_SUBCOMMANDS
+BUSY_COMMANDS = {"run", "stage", "resolve-upload", "approve-ingest", "capcut", "resolve", "fcpxml",
+                 "extras", "design", "check", "transcribe",
+                 "stock", "images", "shots", "montage", "takes", "voice", "music"}
+QUICK_SUBCOMMANDS = {("extras", "status"), ("extras", "check"), ("extras", "decide"),
+                     ("capcut", "check"), ("capcut", "version"), ("design", "show"),
+                     ("design", "set"), ("design", "layers"),
+                     ("transcribe", "estimate"), ("transcribe", "key"),
+                     ("stock", "search"), ("images", "estimate"),
+                     ("voice", "list"), ("voice", "estimate"), ("music", "estimate"),
+                     ("shots", "list"), ("shots", "describe-set"), ("takes", "set")}
+# the channel's own commands are neither recorded nor followed by a flush (the mod calls them)
+SILENT_COMMANDS = {"telemetry", "messages", "busy", "progress", None}
 
 
 def _lookup(path: str) -> Callable[..., Any] | None:
@@ -159,16 +234,57 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("item")
     for name in ("learn", "knowledge", "review", "approve", "doctor", "youtube", "results",
                  "progress", "capcut", "resolve", "fcpxml", "asks", "design", "projects", "text",
-                 "check", "journal", "feedback", "consent", "guard", "mode"):
+                 "check", "journal", "feedback", "consent", "guard", "mode", "telemetry",
+                 "messages", "busy", "update", "transcribe", "scenario",
+                 "shots", "beats", "montage", "takes") + tuple(MEDIA_COMMANDS):
         s = sub.add_parser(name, add_help=False)
         s.add_argument("rest", nargs=argparse.REMAINDER)
     return p
+
+
+def _command_of(raw: list[str]) -> tuple[str | None, str | None]:
+    """(command, sub-command) — the first two words that are not options; nothing else of argv
+    goes to telemetry (the rest may be the person's text)."""
+    words = [w for w in raw if not w.startswith("-")]
+    cmd = words[0] if words else None
+    sub = words[1] if len(words) > 1 and cmd in SUBCOMMAND_MAINS else None
+    if sub is not None and ("/" in sub or len(sub) > 40):
+        sub = None
+    return cmd, sub
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     raw, home = extract_home(list(argv) if argv is not None else sys.argv[1:])
     if home:
         os.environ["VP_HOME"] = str(Path(home).expanduser().resolve())
+    cmd, sub = _command_of(raw)
+    from . import telemetry
+    from .busy import marker
+    quiet = cmd in SILENT_COMMANDS
+    is_busy = cmd in BUSY_COMMANDS and (cmd, sub) not in QUICK_SUBCOMMANDS
+    t0 = time.monotonic()
+    rc: int | None = None
+    try:
+        with marker(f"{cmd} {sub}".strip() if sub else str(cmd)) if is_busy \
+                else contextlib.nullcontext():
+            rc = _dispatch(raw)
+        return rc
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else (0 if e.code is None else 2)
+        raise
+    except BaseException as e:
+        if not isinstance(e, KeyboardInterrupt):
+            telemetry.record_error("cli", e, command=cmd, sub=sub)
+        rc = 3
+        raise
+    finally:
+        if not quiet:
+            telemetry.record("command", command=cmd, sub=sub, rc=rc,
+                             duration_s=round(time.monotonic() - t0, 3))
+            telemetry.spawn_flush()
+
+
+def _dispatch(raw: list[str]) -> int:
     # learn / knowledge: everything after the subcommand goes to their own parser untouched
     # (argparse REMAINDER cannot start with an option such as `--force`)
     if raw and raw[0] in SUBCOMMAND_MAINS:

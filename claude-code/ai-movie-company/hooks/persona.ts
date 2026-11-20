@@ -76,7 +76,7 @@ export const ACCENT = '#b4532a'
  * The release on the band, after the name. A unit test holds both to
  * .claude-plugin/plugin.json and to the top heading of CHANGELOG.md.
  */
-export const VERSION = '0.8.4'
+export const VERSION = '0.8.5'
 export const RELEASED = '2026-11-20'
 
 /** The release date as the person reads it. */
@@ -417,8 +417,129 @@ export const DOC_EMPTY: Record<DirectorLang, string> = {
   en: 'A document to read will appear here.',
 }
 
+/**
+ * The action card: a hand step the person does outside the chat (quit and reopen Claude, close
+ * CapCut, open a site, copy a key). Plain chat text is not enough for those: a novice quit her
+ * browser when told to quit Claude with a key combination. The card frames the one action, names the look-alike not
+ * to touch, and asks whether it is clear before anything else happens.
+ */
+export const ACTION_MARK: Record<DirectorLang, string> = {
+  ru: '👉 ОДНО ДЕЙСТВИЕ',
+  en: '👉 ONE ACTION',
+}
+
+/** The check under every action card, before its buttons. */
+export const ACTION_CHECK: Record<DirectorLang, string> = {
+  ru: 'Вы поняли, что нужно сделать именно это?',
+  en: 'Is it clear that this, and only this, is what to do?',
+}
+
+/**
+ * The button the mod adds after the model's own (which name the action, e.g. «Понятно: копирую
+ * ключ»): the way to say the step is not clear is always there.
+ */
+export const ACTION_UNCLEAR: Record<DirectorLang, string> = {
+  ru: 'Не понял(а), покажите',
+  en: 'Not clear, show me',
+}
+
+/** The mark before the look-alike the person must not touch. */
+export const ACTION_NOT_MARK = '❌'
+
+/** The line a restart card adds: the person will be met when Claude opens again. */
+export const ACTION_RESTART_NOTE: Record<DirectorLang, string> = {
+  ru: 'Когда снова откроете Claude, я встречу вас здесь — нажмите «Продолжить».',
+  en: 'When you open Claude again I will meet you here: press "Continue".',
+}
+
+/** The welcome-back card after a restart the director asked for. */
+export const WELCOME_BACK: Record<DirectorLang, string> = {
+  ru: 'С возвращением! Мы остановились здесь:',
+  en: 'Welcome back! We stopped here:',
+}
+
+/** The welcome-back card's one button. */
+export const CONTINUE: Record<DirectorLang, string> = {
+  ru: 'Продолжить',
+  en: 'Continue',
+}
+
+/** What the welcome-back card's button sends as the person's message. */
+export function continueText(words: DirectorLang, title: string): string {
+  return words === 'ru' ? `Эльза, продолжаем: ${title}` : `Elsa, let's continue: ${title}`
+}
+
+/**
+ * Told to the model beside the first message after the welcome-back card (its button, or anything
+ * the person types instead): the person came back after the restart the director asked for.
+ */
+export function resumeNote(title: string, how: string): string {
+  return (
+    `The person has reopened Claude after the hand step you asked of them before the restart: «${title}» ` +
+    `(${how}). The welcome-back card met them, and this message is their first one since. Continue the ` +
+    'work from exactly that place, in the director\'s voice. If this conversation does not show the work in ' +
+    'progress (a new conversation), find the job\'s state first (the plugin\'s status skill) and do not make ' +
+    'the person repeat what they already did.'
+  )
+}
+
 /** The pane's small form (a desktop widget): where to look. */
 export const DOC_GLANCE: Record<DirectorLang, string> = {
   ru: 'Разверните панель, чтобы прочитать и ответить',
   en: 'Expand the pane to read and answer',
+}
+
+// ---- The channel to the person: messages from the authors, a newer version, auto-update ----
+
+/** The dismiss button of a notice above the prompt. */
+export const NOTICE_DISMISS: Record<DirectorLang, string> = {
+  ru: 'Понятно',
+  en: 'Got it',
+}
+
+/**
+ * A newer version was downloaded by an update: it loads when Claude starts again. Never a key
+ * combination: ⌘Q quits whatever app is in front (a tester quit her browser that way). Elsa restarts
+ * Claude herself (`vp app restart-claude`) when the person presses RESTART_NOW.
+ */
+export function updateReadyText(words: DirectorLang, version: string): string {
+  return words === 'ru'
+    ? `Вышла новая версия ${version}. Она заработает после перезапуска Claude — я перезапущу сама, нажмите кнопку ниже`
+    : `Version ${version} is out. It starts working once Claude restarts — I will restart it myself, press the button below`
+}
+
+/** The update notice's buttons: restart now (Elsa does it), or later. */
+export const RESTART_NOW: Record<DirectorLang, string> = {
+  ru: 'Перезапустить Claude',
+  en: 'Restart Claude',
+}
+export const RESTART_LATER: Record<DirectorLang, string> = {
+  ru: 'Позже',
+  en: 'Later',
+}
+
+/** Told to the model beside the person's «Перезапустить Claude» on the update notice. */
+export function restartAskNote(version: string): string {
+  return (
+    `The person pressed «Перезапустить Claude» on the notice that version ${version} of the plugin is ` +
+    'downloaded and loads when Claude restarts. Restart Claude for them now: run `vp app restart-claude ' +
+    '--reason update --json` through the plugin\'s scripts/vp. It refuses while a render, upload or ' +
+    'generation runs: then say so in one line and offer to restart once it is done. Never tell the person ' +
+    'to quit Claude by hand or with a key combination. Before it runs, say in one line that Claude will ' +
+    'close and open again by itself in a few seconds and that you will continue from this place.'
+  )
+}
+
+/** The auto-update reminder (after «Не сейчас»), with its two buttons. */
+export const REMINDER_TEXT: Record<DirectorLang, string> = {
+  ru: 'Новые возможности выходят часто — включите автообновление, и они будут приходить сами.',
+  en: 'New features come out often — turn on auto-update and they will arrive by themselves.',
+}
+export const REMINDER_ON: Record<DirectorLang, string> = {
+  ru: 'Включить автообновление',
+  en: 'Turn on auto-update',
+}
+export const REMINDER_LATER: Record<DirectorLang, string> = {
+  ru: 'Не сейчас',
+  en: 'Not now',
 }

@@ -34,13 +34,15 @@ from typing import Any
 
 from ..adapters.publisher import (PublisherError, UploadOutcomeUnknown, estimate_upload_units,
                                   make_vp_key, vp_tag)
-from ..core.io import MISSING, now_iso, sha256_file, sha256_obj
+from ..core.io import MISSING, now_iso, read_yaml, sha256_file, sha256_obj
 from ..core.status import Status
+from ..verify_mp4 import verify_mp4
 from ._package import (DEFAULT_CATEGORY, DEFAULT_LANGUAGE, final_snippet, fragment_info,
                        get_entry, item_meta, load_uploads, platform_video_url, playlist_title,
                        save_entry)
 from . import _quota
 from .base import Ctx, StepSpec, VPError
+from .s5v_visual import planned_render_duration_s
 
 PRIVACY = "private"
 
@@ -102,6 +104,21 @@ def _drive_upload(ctx: Ctx, item: str, entry: dict[str, Any], render: Path,
                   snippet: dict[str, Any]) -> dict[str, Any]:
     """Run the state machine until `uploaded` (or raise)."""
     pub = ctx.publisher
+
+    def verified_upload(upload, *args, **kwargs):
+        manifest = read_yaml(ctx.job.render_manifest(item))
+        result = verify_mp4(render, audio_policy="required",
+                            expected_duration_s=planned_render_duration_s(manifest),
+                            duration_tolerance_s=0.5)
+        if result.status == "blocked":
+            raise VPError("data", f"{item}: {render.name}: upload requires ffmpeg and ffprobe for MP4 verification")
+        if result.status != "passed":
+            names = ", ".join(check.name for check in result.checks if check.status == "failed")
+            raise VPError("data", f"{item}: {render.name}: MP4 verification failed ({names})")
+        if sha256_file(render) != entry["render_sha"]:
+            raise VPError("data", f"{item}: {render.name}: file changed during upload preparation")
+        return upload(*args, **kwargs)
+
     unknown_seen = 0
     for _ in range(12):
         state = entry["state"]
@@ -111,7 +128,7 @@ def _drive_upload(ctx: Ctx, item: str, entry: dict[str, Any], render: Path,
             raise VPError("data", f"{item}: upload outcome uncertain; new upload blocked — run "
                                   f"`resolve-upload` after checking the channel")
         if state == "intent":
-            uri = ctx.retry(lambda: pub.start_upload(render, snippet, privacy=PRIVACY))
+            uri = ctx.retry(lambda: verified_upload(pub.start_upload, render, snippet, privacy=PRIVACY))
             entry["state"] = "uploading"
             entry["session_uri"] = uri
             save_entry(ctx.job, item, entry)
@@ -128,7 +145,7 @@ def _drive_upload(ctx: Ctx, item: str, entry: dict[str, Any], render: Path,
                     raise VPError("transport", f"{item}: upload session still incomplete after "
                                                f"an unknown outcome; will re-check next run")
                 try:
-                    vid = ctx.retry(lambda: pub.resume_upload(uri, render))
+                    vid = ctx.retry(lambda: verified_upload(pub.resume_upload, uri, render))
                 except UploadOutcomeUnknown:
                     unknown_seen += 1
                     ctx.log.event("upload_outcome_unknown", step="S8", item=item)

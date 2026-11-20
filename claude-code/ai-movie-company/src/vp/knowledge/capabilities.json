@@ -1,0 +1,447 @@
+{
+  "_about": "Capability registry for the scenario tree (vp.scenarios). One entry per capability: what it is, who provides it, how its presence is detected, whether the engine has it today. Codes follow docs/SCENARIOS.md section 2 (letters kept as values; keys are ASCII). Detection never reads secret values: only whether an env var is set or a file exists. Status: built = works today; partial = works in a reduced form (counted as available); planned = not built yet (another adapter will flip it to built and set `command`).",
+  "groups": {
+    "claude": {
+      "name": {
+        "ru": "Claude (подписка)",
+        "en": "Claude (subscription)"
+      },
+      "free": true,
+      "assumed": true,
+      "always": true,
+      "note": "the model judgment of the session itself and local code; always present"
+    },
+    "extras": {
+      "name": {
+        "ru": "набор для анимации (Node, Chrome, Remotion)",
+        "en": "animation pack (Node, Chrome, Remotion)"
+      },
+      "free": true,
+      "assumed": true,
+      "detect": {
+        "extras": true
+      },
+      "note": "free local install (`vp extras install`); assumed present in `--services none` and in the matrix"
+    },
+    "youtube": {
+      "name": {
+        "ru": "YouTube (вход через Google)",
+        "en": "YouTube (Google login)"
+      },
+      "free": true,
+      "assumed": true,
+      "detect": {
+        "config_file": "youtube.token_path"
+      },
+      "note": "free connection (`vp youtube authorize`); assumed present in `--services none` and in the matrix"
+    },
+    "elevenlabs": {
+      "name": {
+        "ru": "ElevenLabs",
+        "en": "ElevenLabs"
+      },
+      "free": false,
+      "detect": {
+        "env": [
+          "ELEVENLABS_API_KEY",
+          "XI_API_KEY"
+        ],
+        "keys": [
+          "elevenlabs"
+        ]
+      },
+      "note": "the person's own ElevenLabs API key, saved once (`vp keys set elevenlabs --from-clipboard`) or env; one key serves recognition, voice and music (music: paid ElevenLabs plans only); no connector, no restart. The claude.ai connector is only a fallback when there is no key — the skill then adds `elevenlabs` itself"
+    },
+    "images": {
+      "name": {
+        "ru": "генерация картинок",
+        "en": "image generation"
+      },
+      "free": false,
+      "detect": {
+        "env": [
+          "OPENAI_API_KEY",
+          "GEMINI_API_KEY",
+          "GOOGLE_API_KEY"
+        ],
+        "keys": [
+          "gemini",
+          "openai"
+        ]
+      },
+      "note": "`vp keys set gemini|openai --from-clipboard`"
+    },
+    "video": {
+      "name": {
+        "ru": "генерация видеоклипов",
+        "en": "AI video clips"
+      },
+      "free": false,
+      "detect": {
+        "env": [
+          "RUNWAYML_API_SECRET",
+          "FAL_KEY",
+          "GEMINI_API_KEY",
+          "LUMAAI_API_KEY"
+        ]
+      },
+      "note": "provisional lookup: no video adapter yet"
+    },
+    "stock": {
+      "name": {
+        "ru": "сток (Pexels, Pixabay)",
+        "en": "stock (Pexels, Pixabay)"
+      },
+      "free": true,
+      "detect": {
+        "env": [
+          "PEXELS_API_KEY",
+          "PIXABAY_API_KEY"
+        ],
+        "keys": [
+          "pexels",
+          "pixabay"
+        ]
+      },
+      "note": "free keys, but the person has to get one; provisional lookup: the stock adapter (in progress) defines the final one"
+    },
+    "avatar": {
+      "name": {
+        "ru": "цифровой ведущий (HeyGen)",
+        "en": "digital presenter (HeyGen)"
+      },
+      "free": false,
+      "detect": {
+        "env": [
+          "HEYGEN_API_KEY"
+        ]
+      },
+      "note": "provisional lookup: no avatar adapter yet"
+    },
+    "platforms": {
+      "name": {
+        "ru": "площадки кроме YouTube",
+        "en": "platforms other than YouTube"
+      },
+      "free": true,
+      "detect": {
+        "env": []
+      },
+      "note": "Instagram, TikTok, Facebook, LinkedIn — no adapter yet"
+    }
+  },
+  "capabilities": {
+    "engine": {
+      "code": "—",
+      "name": {
+        "ru": "движок vp: вычитка, хронометраж, отбор, нарезка, рендер, проверка картинки, метаданные, обложки, CapCut/FCPXML",
+        "en": "vp engine: proofreading, retiming, selection, cutting, render, picture check, metadata, thumbnails, CapCut/FCPXML"
+      },
+      "group": "claude",
+      "providers": [
+        "vp",
+        "ffmpeg"
+      ],
+      "status": "built",
+      "command": "vp run <job>"
+    },
+    "intake": {
+      "code": "П",
+      "name": {
+        "ru": "приём задания",
+        "en": "job intake (brief)"
+      },
+      "group": "claude",
+      "providers": [
+        "Claude"
+      ],
+      "status": "partial",
+      "note": "a three-line brief today; the full intake checklist by kind of video is in scenarios.json intake_checklists"
+    },
+    "publish_youtube": {
+      "code": "—",
+      "name": {
+        "ru": "загрузка на YouTube черновиками и публикация по «ок»",
+        "en": "YouTube private drafts, publish on the person's ok"
+      },
+      "group": "youtube",
+      "providers": [
+        "YouTube Data API"
+      ],
+      "status": "built",
+      "command": "vp run <job>"
+    },
+    "remotion": {
+      "code": "—",
+      "name": {
+        "ru": "анимация и графика кодом",
+        "en": "animation and graphics by code"
+      },
+      "group": "extras",
+      "providers": [
+        "Remotion"
+      ],
+      "status": "built",
+      "command": "vp text status <job>"
+    },
+    "voice": {
+      "code": "—",
+      "name": {
+        "ru": "голос диктора",
+        "en": "voice-over"
+      },
+      "group": "elevenlabs",
+      "providers": [
+        "ElevenLabs API (your key)"
+      ],
+      "status": "built",
+      "command": "vp voice say <job>"
+    },
+    "music": {
+      "code": "—",
+      "name": {
+        "ru": "музыка",
+        "en": "music"
+      },
+      "group": "elevenlabs",
+      "providers": [
+        "ElevenLabs API (your key)"
+      ],
+      "status": "built",
+      "command": "vp music make <job>"
+    },
+    "transcription": {
+      "code": "Р",
+      "name": {
+        "ru": "распознавание речи с пословными метками",
+        "en": "speech-to-text with word timings"
+      },
+      "group": "elevenlabs",
+      "providers": [
+        "ElevenLabs Scribe",
+        "Parakeet (local, later)"
+      ],
+      "status": "built",
+      "command": "vp transcribe run <job>"
+    },
+    "take_cleanup": {
+      "code": "Ч",
+      "name": {
+        "ru": "чистка дублей: паузы, оговорки, повторы",
+        "en": "take cleanup: pauses, slips, repeats"
+      },
+      "group": "claude",
+      "providers": [
+        "vp (code) + Claude"
+      ],
+      "status": "built",
+      "command": "vp takes clean <job>"
+    },
+    "scene_analysis": {
+      "code": "К",
+      "name": {
+        "ru": "понимание видео без речи: сцены, описание кадра",
+        "en": "silent footage: scenes and shot descriptions"
+      },
+      "group": "claude",
+      "providers": [
+        "ffmpeg scene detection + Claude vision"
+      ],
+      "status": "built",
+      "command": "vp shots detect <job>"
+    },
+    "beat_analysis": {
+      "code": "Б",
+      "name": {
+        "ru": "доли и акценты музыки",
+        "en": "music beats and accents"
+      },
+      "group": "claude",
+      "providers": [
+        "vp (code, local)"
+      ],
+      "status": "built",
+      "command": "vp beats <music>"
+    },
+    "visual_plan": {
+      "code": "М",
+      "name": {
+        "ru": "монтажный план по описанию кадра",
+        "en": "edit plan from shot descriptions"
+      },
+      "group": "claude",
+      "providers": [
+        "vp (code)"
+      ],
+      "status": "built",
+      "command": "vp montage plan <job>"
+    },
+    "stock": {
+      "code": "С",
+      "name": {
+        "ru": "сток: видео, фото, музыка с лицензией",
+        "en": "stock footage, photos, music with license"
+      },
+      "group": "stock",
+      "providers": [
+        "Pexels",
+        "Pixabay"
+      ],
+      "status": "built",
+      "command": "vp stock search <query>"
+    },
+    "image_gen": {
+      "code": "Г",
+      "name": {
+        "ru": "генерация картинок",
+        "en": "image generation"
+      },
+      "group": "images",
+      "providers": [
+        "Gemini (Nano Banana)",
+        "OpenAI GPT-Image"
+      ],
+      "status": "built",
+      "command": "vp images generate <job> --prompt ..."
+    },
+    "video_gen": {
+      "code": "ГВ",
+      "name": {
+        "ru": "генерация видеоклипов",
+        "en": "AI video clip generation"
+      },
+      "group": "video",
+      "providers": [
+        "Veo",
+        "Kling",
+        "Runway",
+        "ElevenLabs video"
+      ],
+      "status": "planned"
+    },
+    "avatar": {
+      "code": "А",
+      "name": {
+        "ru": "цифровой ведущий",
+        "en": "digital presenter"
+      },
+      "group": "avatar",
+      "providers": [
+        "HeyGen"
+      ],
+      "status": "planned"
+    },
+    "translation": {
+      "code": "Д",
+      "name": {
+        "ru": "перевод титров с сохранением времени",
+        "en": "subtitle translation keeping the timings"
+      },
+      "group": "claude",
+      "providers": [
+        "Claude (text) + vp (timings)"
+      ],
+      "status": "planned"
+    },
+    "dubbing": {
+      "code": "Д",
+      "name": {
+        "ru": "дубляж",
+        "en": "dubbing"
+      },
+      "group": "elevenlabs",
+      "providers": [
+        "ElevenLabs Dubbing"
+      ],
+      "status": "planned"
+    },
+    "facts": {
+      "code": "Ф",
+      "name": {
+        "ru": "список фактов и сверка написания",
+        "en": "fact list and spelling check"
+      },
+      "group": "claude",
+      "providers": [
+        "Claude + web search"
+      ],
+      "status": "planned"
+    },
+    "platforms": {
+      "code": "Пл",
+      "name": {
+        "ru": "площадки кроме YouTube",
+        "en": "platforms other than YouTube"
+      },
+      "group": "platforms",
+      "providers": [
+        "Instagram",
+        "TikTok",
+        "Facebook",
+        "LinkedIn"
+      ],
+      "status": "planned"
+    },
+    "telemetry": {
+      "code": "Т",
+      "name": {
+        "ru": "телеметрия с машин тестеров",
+        "en": "telemetry from testers' machines"
+      },
+      "group": "claude",
+      "providers": [
+        "own receiver"
+      ],
+      "status": "built",
+      "command": "vp telemetry status"
+    },
+    "image_folder_input": {
+      "code": "—",
+      "name": {
+        "ru": "вход «папка картинок»",
+        "en": "input: a folder of pictures"
+      },
+      "group": "claude",
+      "providers": [
+        "vp (code)"
+      ],
+      "status": "planned"
+    },
+    "audio_picture": {
+      "code": "—",
+      "name": {
+        "ru": "картинка для звука: волна, титры, изображения",
+        "en": "picture for audio: waveform, captions, images"
+      },
+      "group": "extras",
+      "providers": [
+        "Remotion"
+      ],
+      "status": "planned"
+    },
+    "trailer": {
+      "code": "—",
+      "name": {
+        "ru": "трейлер и анонс из длинного видео",
+        "en": "trailer and teaser from a long video"
+      },
+      "group": "claude",
+      "providers": [
+        "vp (code) + Claude"
+      ],
+      "status": "planned"
+    },
+    "brand_kit": {
+      "code": "—",
+      "name": {
+        "ru": "бренд-кит рубрики",
+        "en": "series brand kit"
+      },
+      "group": "claude",
+      "providers": [
+        "vp (code)"
+      ],
+      "status": "planned"
+    }
+  }
+}
