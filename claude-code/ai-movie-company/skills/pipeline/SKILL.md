@@ -96,6 +96,29 @@ save a file, confirm in Google, install something Apple asks for) ends with a fo
 **«Не получается»** / **«Пришлю снимок экрана»**, plus one option of that step when there is a
 likely snag («CapCut не спросил про сохранение»). A typed answer is still accepted.
 
+The line right before every form says so explicitly, as a markdown heading so it is large and
+where the eye is: **«## Нажмите одну из кнопок ниже»**. A newcomer does not know the options are
+buttons until told.
+
+## Documents to approve — open beside the chat, buttons inside
+
+The person never approves what they cannot see. Whenever you ask them to approve or review a
+document (the brief, a screenplay, a plan, a description — any `.md` or `.txt` file you wrote),
+first call the tool `mcp__ai-movie-company__show_document` with the file's absolute path, a short
+title in their language («Бриф») and, if the default «Утверждаю» / «Хочу поправить» does not fit,
+your own labels (the approving one first). It opens the document in the pane to the right of the
+chat with a large instruction on top and the buttons at the bottom.
+
+- Result `isPlaced: true` → write ONE line in the chat, a markdown heading, that says where to look
+  and what to press: «## Бриф открыт справа → прочитайте и нажмите «Утверждаю» внизу панели».
+  Do not paste the document and do not add a form: the buttons are in the pane. Their press
+  reaches you as their own message («Утверждаю»), exactly as if typed.
+- Result `isPlaced: false`, an error, or no such tool in the session (a terminal, `claude -p`) →
+  paste the document into the chat yourself, then the line «## Нажмите одну из кнопок ниже» and
+  the form with the same labels.
+- On «Утверждаю» record it exactly as before (`vp text approve <job> brief`, `vp review set`, …);
+  on «Хочу поправить» ask what to change, in words, change the file and show it again.
+
 ## Show every picture at once
 
 Everything visual you make — a storyboard sketch, a frame, a preview, a thumbnail, a frame sheet,
@@ -457,8 +480,9 @@ Run `vp text status` whenever you are unsure what comes next — never guess a c
 3. **Brief — your proposal, one question.** In two or three plain lines: goal, format (9:16
    vertical unless she says otherwise), length, code-only graphics, voice plus music, tone, result
    (video plus a CapCut project, a new version on every change). Ask once whether the text is
-   hers; if not, the author's name goes into the end card and the description. Confirm, then
-   write `brief.md` in the job folder.
+   hers; if not, the author's name goes into the end card and the description. Write `brief.md`
+   in the job folder, show it with `show_document` ("Documents to approve") and wait for her
+   button; on «Утверждаю» record `vp text approve <job> brief`.
 4. **Two steps — offer the choice** (form): **«Два шага»** (recommended: first a whole video with
    voice and music baked in plus a CapCut project with editable subtitles; then, if she wants, a
    CapCut project with voice and music on their own tracks) / **«Сразу дорожки»** / **«Только
@@ -472,7 +496,8 @@ Run `vp text status` whenever you are unsure what comes next — never guess a c
    still per scene (a Remotion still composition; the Remotion plugin's skill has the API).
    Render them in the background ("Long work"), then send every sketch into the chat in scene
    order ("Show every picture at once"), each with a one-line caption (scene number and the words
-   it carries). Then the form: **«Утверждаю»** / **«Поправить сцены»** (she says which and how,
+   it carries). Then the line «## Нажмите одну из кнопок ниже» and the form: **«Утверждаю»** /
+   **«Поправить сцены»** (she says which and how,
    in words) / **«Другой подход»**. **Nothing goes to voice or animation before «Утверждаю».**
    On «Утверждаю» record it: `vp text approve <job> sketches` (until then `vp text status` stops
    at the sketches). The same for later approvals she gives (`brief`, `voice`, `music`, `render`).

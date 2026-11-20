@@ -37,6 +37,25 @@ export type TurnWork = {
   tasks: WorkTask[]
 }
 
+/**
+ * The document the pane beside the chat shows for the person to read and answer (a brief, a
+ * screenplay, a plan), with the buttons whose label goes to the chat as the person's message.
+ */
+export type DocPane = {
+  /** The file shown, as the model named it (absolute). */
+  path: string
+  /** The pane's title, short, in the person's language. */
+  title: string
+  /** The document's text as read when it was shown. */
+  text: string
+  /** The language of the pane's own words. */
+  lang: DirectorLang
+  /** The button labels, the approving one first. */
+  buttons: string[]
+  /** The label the person pressed, or null while the pane waits for an answer. */
+  sent: string | null
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'ai-movie-company': {
@@ -54,6 +73,8 @@ declare module 'claude-code' {
       beat: number
       /** The model's own work in the conversation (turns, tool calls, task list). */
       work: TurnWork
+      /** The document in the pane beside the chat, or null before the first one was shown. */
+      doc: DocPane | null
     }
   }
 }

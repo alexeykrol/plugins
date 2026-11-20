@@ -76,8 +76,8 @@ export const ACCENT = '#b4532a'
  * The release on the band, after the name. A unit test holds both to
  * .claude-plugin/plugin.json and to the top heading of CHANGELOG.md.
  */
-export const VERSION = '0.8.3'
-export const RELEASED = '2026-11-19'
+export const VERSION = '0.8.4'
+export const RELEASED = '2026-11-20'
 
 /** The release date as the person reads it. */
 export function releasedText(words: DirectorLang): string {
@@ -391,4 +391,34 @@ export function elapsedText(words: DirectorLang, ms: number): string {
   const seconds = String(total % 60).padStart(2, '0')
 
   return words === 'ru' ? `идёт ${minutes}:${seconds}` : `${minutes}:${seconds} so far`
+}
+
+/** The document pane: the buttons it shows when the model names none (approve first). */
+export const DOC_BUTTONS: Record<DirectorLang, readonly string[]> = {
+  ru: ['Утверждаю', 'Хочу поправить'],
+  en: ['I approve', 'I want changes'],
+}
+
+/** The one large line at the top of the document pane: what to do, and where the button is. */
+export function docInstructionText(words: DirectorLang, approve: string): string {
+  return words === 'ru'
+    ? `Прочитайте и нажмите «${approve}» внизу`
+    : `Read it and press "${approve}" at the bottom`
+}
+
+/** The line that takes the buttons' place once one was pressed. */
+export function docSentText(words: DirectorLang, label: string): string {
+  return words === 'ru' ? `Отправлено: «${label}»` : `Sent: "${label}"`
+}
+
+/** The pane's body before any document was shown (a pane reopened by the person). */
+export const DOC_EMPTY: Record<DirectorLang, string> = {
+  ru: 'Здесь появится документ, который нужно прочитать.',
+  en: 'A document to read will appear here.',
+}
+
+/** The pane's small form (a desktop widget): where to look. */
+export const DOC_GLANCE: Record<DirectorLang, string> = {
+  ru: 'Разверните панель, чтобы прочитать и ответить',
+  en: 'Expand the pane to read and answer',
 }

@@ -2,6 +2,33 @@
 
 # AI Movie Company
 
+**How to install:** copy the text in the grey block below (the copy icon is at the block's top
+right) and paste it into the Claude app on your Mac. Claude explains the rest by itself.
+
+```
+Install the AI Movie Company plugin for me. I am not a technical person; I have a Mac.
+It can only be installed from the Code mode of the Claude app: there you run commands right on my Mac.
+If you are in Chat or Cowork now and cannot run commands right on my Mac (your own sandbox does
+not count), run nothing; explain to me simply, step by step: at the top left of the Claude window
+there are tabs Chat, Cowork and Code — press Code (it needs a paid Claude plan, Pro or higher);
+press "+ New"; paste this same text again (⌘V) and send it (Enter).
+If you are in Code, first warn me in one sentence: you will ask permission to run commands — name
+the button that allows it for good, and say not to press "Deny"; and the Mac may offer Apple's free
+"developer tools" — press "Install", it is safe, and you carry on by yourself.
+Then run (allow up to 10 minutes; running it again is safe, finished steps are kept), and while we
+wait, write briefly that all is going well, so the window is not closed:
+curl -fsSL https://raw.githubusercontent.com/alexeykrol/plugins/main/claude-code/ai-movie-company/install.sh | bash
+The last line says what comes next:
+- STATUS: OK — tell me to quit Claude completely (Cmd+Q), open it again, in the Code tab press
+  "+ New" and write "Elsa". A line ADDONS: PARTIAL is not an error.
+- STATUS: NEED_DEVTOOLS — Apple is still installing: tell me all is well and run the same command
+  again yourself at once, without asking me; up to 5 times (about half an hour).
+- STATUS: FAILED — explain in plain words and ask me with buttons; if it was the internet or a
+  closed Apple window, run the command again. Never ask me to type or run anything.
+```
+
+Everything else on this page is for those who are curious.
+
 **A video production team inside Claude Code.** Give it a recorded lecture or interview with
 subtitles — it returns a reviewed series for YouTube: reels and long fragments with burned-in
 captions, intro and outro cards, thumbnails, titles, descriptions with chapters and cross-links.
@@ -12,13 +39,15 @@ You do not operate a tool: you talk to **Elsa, the editing director** — a prof
 view who finds the recording, agrees the task with you, proposes fragments and says where her own
 proposal is weak. The decisions and the channel stay yours.
 
-## Quick start (first time)
+## Quick start (after the install)
 
-1. Install the plugin once (see Installation — one prompt, below), then open **Claude Desktop → Code** and start a
-   local session in any folder. Restart the app if it was open during the install.
-2. Put your recording in a folder together with its subtitles: a video (`.mp4`, `.mov`, `.mkv`) and
-   an `.srt` file. The plugin does not transcribe: no `.srt` — no run.
-3. Type `/ai-movie-company:start`.
+Whatever did not work, Elsa writes down and puts together a report — one file you can forward to the author.
+
+1. Open the Claude app → **Code**, start a new conversation.
+2. For a video from a recording, put the recording in a folder together with its subtitles: a video
+   (`.mp4`, `.mov`, `.mkv`) and an `.srt` file (the plugin does not transcribe: no `.srt` — no run).
+   For a video from a text, the text is enough.
+3. Write **"Elsa"** (or `/elsa`).
 4. The editing director looks for your recordings herself and asks which one to take. She reads
    the beginning of the subtitles, proposes a name for the series, and asks **one open question:
    what you want from this recording** — who the videos are for, what to look for, what to avoid.
@@ -153,41 +182,10 @@ selection of fragments; changing it re-runs the selection only.
 
 Run `/ai-movie-company:doctor` after installing: it shows what is missing.
 
-## Installation — one prompt
+## Installation — details
 
-You need: a Mac with an Apple processor (M1 or newer) and a Claude subscription with the **Claude
-desktop app**. No Terminal, no passwords, no GitHub or Google Cloud accounts.
-
-1. Open the **Claude** app, the **Code** tab, and start a new session in any folder (for example,
-   Movies — the Mac does not ask permission for that folder). If the Mac offers to install
-   Apple's "developer tools" right away, press "Install": that is expected (see step 3).
-2. Paste this text and send it:
-
-```
-Install the AI Movie Company plugin for me. I am not a technical person; I have a Mac.
-First warn me in one sentence: Claude will ask permission to run a command — name the button that
-allows it for good (then reruns do not ask); and the Mac may offer Apple's free "developer tools" —
-press "Install", it is safe and normal, and you carry on by yourself.
-Then run (allow up to 10 minutes; running it again is safe, finished steps are kept):
-curl -fsSL https://raw.githubusercontent.com/alexeykrol/plugins/main/claude-code/ai-movie-company/install.sh | bash
-The last line says what comes next:
-- STATUS: OK — tell me to quit Claude completely (Cmd+Q), open it again, start a new session in
-  the Code tab and write "Elsa". A line ADDONS: PARTIAL is not an error.
-- STATUS: NEED_DEVTOOLS — Apple is still installing: tell me all is well and run the same command
-  again yourself at once, without asking me; up to 5 times (about half an hour).
-- STATUS: FAILED — explain in plain words and ask me with buttons; if it was the internet or a
-  closed Apple window, run the command again. Never ask me to type or run anything.
-```
-
-3. From here Claude does everything and tells you where to click. About five minutes; if the Mac
-   asks to install Apple's "developer tools", press "Install" and just wait: Claude waits for it
-   by itself (usually 5–15 minutes, up to half an hour on a slow connection) and carries on.
-4. After the restart write **"Elsa"** — from then on ask her, and tell her when something does
-   not work. **Whatever did not work, Elsa writes down; at the end she puts together a report for
-   Alexey** — one file you simply forward to him.
-
-Screenshot on a Mac: Cmd+Shift+4, drag over the part you need — the picture lands on the desktop;
-drag it into the chat.
+How to install is at the top of this page ("How to install"). No Terminal, no passwords, no GitHub or
+Google Cloud accounts.
 
 **Update** — the same text again (or tell Elsa "update the plugin"): the installer skips what is
 done and updates the plugin.

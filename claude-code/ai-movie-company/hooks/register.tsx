@@ -16,11 +16,24 @@
 // start too. It is left by the Leave button or /director-off. The technical commands (doctor,
 // learn) neither enter nor leave it. Other sessions stay plain.
 //
+// A document the person is asked to approve (a brief, a screenplay, a plan) is shown in a pane
+// beside the chat: the model calls the mod's tool `show_document` before it asks, the pane draws
+// one large line saying what to do, the document, and the answer buttons; a press goes to the
+// chat as the person's own message, so the skills receive «Утверждаю» exactly as if typed.
+//
 // The mod never touches the engine's rules: gates, refusals and the human-answer guard live in
 // the skills, the commands and src/vp.
 
 import { atom, read, update } from 'claude-code'
-import type { CommandRunResult, EngineInterface, Register, ThemeSetArgs, Timer, ToolCallResult } from 'claude-code'
+import type {
+  CommandRunResult,
+  EngineInterface,
+  Register,
+  ThemeSetArgs,
+  Timer,
+  ToolCallResult,
+  UiOpenResult,
+} from 'claude-code'
 
 import type { DirectorLang, DirectorMood, LiveProgress, TurnWork, WorkTask } from '../types'
 
@@ -36,6 +49,11 @@ import {
   bandColor,
   CALLED_NOTE,
   CONTRACT_LEAD,
+  DOC_BUTTONS,
+  DOC_EMPTY,
+  DOC_GLANCE,
+  docInstructionText,
+  docSentText,
   elapsedText,
   ELSA_TEXT,
   etaText,
@@ -75,6 +93,7 @@ const progress = atom({ plugin: 'ai-movie-company', key: 'progress' } as const, 
 const mood = atom({ plugin: 'ai-movie-company', key: 'mood' } as const, 'idle')
 const beat = atom({ plugin: 'ai-movie-company', key: 'beat' } as const, 0)
 const work = atom({ plugin: 'ai-movie-company', key: 'work' } as const, IDLE_WORK)
+const doc = atom({ plugin: 'ai-movie-company', key: 'doc' } as const, null)
 
 /** `$.store` keys: what outlives the session's process. */
 const STORE_SESSIONS = 'on-stage-sessions'
@@ -115,6 +134,51 @@ const TICK_MS = 2000
 const LIVE_FILE = 'progress-live.json'
 /** A mirror older than this belongs to a run that died: nothing is running. */
 const STALE_MS = 120_000
+
+/** The pane beside the chat that shows a document to read and answer. */
+const DOC_PANE = 'doc'
+/** The model's tool that fills that pane: `mcp__<plugin>__show_document`. */
+const DOC_TOOL = 'show_document'
+/** The width the pane asks for when docked beside the transcript (the surface caps it). */
+const DOC_COLUMNS = 80
+/** How much of a document the pane draws (one drawing holds 100000 characters in all). */
+const MAX_DOC_CHARS = 90_000
+const MAX_DOC_BUTTONS = 4
+const MAX_BUTTON_LABEL = 40
+const MAX_DOC_TITLE = 60
+
+const DOC_TOOL_DESCRIPTION = [
+  'Shows a document the person must read (a brief, a screenplay, a storyboard plan, any .md or .txt file)',
+  'in a pane beside the chat, with answer buttons inside the pane. A press arrives in the chat as the',
+  "person's own message carrying the button's label, exactly as if they typed it.",
+  'Call it EVERY time before you ask the person to approve or review a document; never ask "approve?"',
+  'about a document they cannot see. When the result says the pane is shown, write ONE line in the chat',
+  'as a markdown heading that says where to look and what to press, e.g.',
+  '«## Бриф открыт справа → прочитайте и нажмите «Утверждаю» внизу панели», and do not paste the document.',
+  'When the result says the pane is NOT shown, paste the document into the chat yourself.',
+].join(' ')
+
+const DOC_TOOL_SCHEMA = {
+  type: 'object',
+  properties: {
+    file_path: { type: 'string', description: 'Absolute path of the .md or .txt document to show.' },
+    title: {
+      type: 'string',
+      description: "Short pane title in the person's language, e.g. «Бриф» or «Сценарий».",
+    },
+    buttons: {
+      type: 'array',
+      items: { type: 'string' },
+      minItems: 1,
+      maxItems: MAX_DOC_BUTTONS,
+      description:
+        'Answer button labels, the approving one first. Default: «Утверждаю», «Хочу поправить» ' +
+        '(English conversation: "I approve", "I want changes").',
+    },
+  },
+  required: ['file_path', 'title'],
+  additionalProperties: false,
+} as const
 
 /** The time now, or null on a host that keeps no clock. */
 async function nowOf($: EngineInterface): Promise<number | null> {
@@ -481,6 +545,10 @@ async function setMood($: EngineInterface, next: DirectorMood): Promise<void> {
 
 /** A tool call as the bar names it: its own description, else the tool and what it works on. */
 function toolLabel(tool: string, input: Record<string, unknown>): string {
+  if (tool.endsWith(`__${DOC_TOOL}`) && typeof input.title === 'string' && input.title.trim() !== '') {
+    return clip(input.title)
+  }
+
   for (const key of ['description', 'activeForm', 'subject', 'prompt']) {
     const value = input[key]
 
@@ -640,6 +708,147 @@ function workBar(
   return { label: held.label ?? THINKING[words], valueText: elapsed === '' ? '…' : elapsed }
 }
 
+/** The full name the model calls the document tool by. */
+function docToolName(plugin: string): string {
+  return `mcp__${plugin}__${DOC_TOOL}`
+}
+
+/** Declares the document tool; without it the skills paste documents into the chat. */
+async function registerDocTool($: EngineInterface): Promise<void> {
+  try {
+    await $.tool.register({
+      name: DOC_TOOL,
+      description: DOC_TOOL_DESCRIPTION,
+      inputSchema: DOC_TOOL_SCHEMA,
+      isDeferred: false,
+    })
+  } catch {
+    // A host without model tools: the document goes into the chat, as the skills say.
+  }
+}
+
+/** The button labels the model asked for, else the defaults; a reason when they are unusable. */
+function docButtonsOf(value: unknown, words: DirectorLang): string[] | { error: string } {
+  if (value === undefined) {
+    return [...DOC_BUTTONS[words]]
+  }
+
+  if (!Array.isArray(value)) {
+    return { error: 'buttons must be a list of labels' }
+  }
+  const labels = value.map(one => (typeof one === 'string' ? one.replace(/\s+/g, ' ').trim() : ''))
+
+  if (labels.length === 0 || labels.length > MAX_DOC_BUTTONS || labels.some(one => one === '')) {
+    return { error: `buttons must be 1 to ${MAX_DOC_BUTTONS} non-empty labels` }
+  }
+
+  if (labels.some(one => one.length > MAX_BUTTON_LABEL)) {
+    return { error: `a button label must be at most ${MAX_BUTTON_LABEL} characters` }
+  }
+
+  if (new Set(labels).size !== labels.length) {
+    return { error: 'button labels must differ' }
+  }
+
+  return labels
+}
+
+function quoted(labels: readonly string[]): string {
+  return labels.map(one => `«${one}»`).join(', ')
+}
+
+/**
+ * The document tool: reads the file, puts it in the pane beside the chat and opens the pane.
+ * The result tells the model whether the person can see it; a refusal says why, for the model.
+ */
+async function showDocument($: EngineInterface, input: Record<string, unknown>): Promise<ToolCallResult> {
+  const path = typeof input.file_path === 'string' ? input.file_path.trim() : ''
+
+  if (!path.startsWith('/')) {
+    return { deny: `${DOC_TOOL}: file_path must be an absolute path. Nothing was shown.` }
+  }
+
+  if (!/\.(md|markdown|txt)$/i.test(path)) {
+    return { deny: `${DOC_TOOL}: only .md or .txt documents can be shown (${path}). Nothing was shown.` }
+  }
+  let text: string
+
+  try {
+    text = await $.fs.read(path)
+  } catch (error) {
+    const why = error instanceof Error ? error.message : String(error)
+
+    return {
+      deny:
+        `${DOC_TOOL}: cannot read ${path} (${why}). Nothing was shown: check the path, or paste ` +
+        'the document into the chat yourself.',
+    }
+  }
+  const named = typeof input.title === 'string' ? input.title.replace(/\s+/g, ' ').trim() : ''
+  const title = (named === '' ? path.split('/').pop() ?? path : named).slice(0, MAX_DOC_TITLE)
+  const words = langOf(named) ?? (await read($, lang))
+  const buttons = docButtonsOf(input.buttons, words)
+
+  if (!Array.isArray(buttons)) {
+    return { deny: `${DOC_TOOL}: ${buttons.error}. Nothing was shown.` }
+  }
+  const body = text.length > MAX_DOC_CHARS ? `${text.slice(0, MAX_DOC_CHARS)}\n\n…` : text
+  await update($, doc, () => ({ path, title, text: body, lang: words, buttons, sent: null }))
+  let opened: UiOpenResult
+
+  try {
+    opened = await $.ui.open({ id: DOC_PANE, title, columns: DOC_COLUMNS })
+  } catch (error) {
+    opened = { isPlaced: false, reason: error instanceof Error ? error.message : String(error) }
+  }
+
+  if (!opened.isPlaced) {
+    return {
+      result:
+        `isPlaced: false. The pane beside the chat is NOT shown (${opened.reason}): the person cannot ` +
+        `see "${title}". Paste the document into the chat yourself, then ask them to answer with one ` +
+        `of: ${quoted(buttons)}.`,
+    }
+  }
+  const cut = body === text ? '' : ' Only the beginning of a very long document is drawn.'
+
+  return {
+    result:
+      `isPlaced: true. "${title}" is open in the pane to the right of the chat, with the buttons ` +
+      `${quoted(buttons)} at its bottom.${cut} Now write ONE line in the chat as a markdown heading ` +
+      `that says where to look and what to press, e.g. ` +
+      `"## ${title} открыт справа → прочитайте и нажмите «${buttons[0]}» внизу панели". Do not paste ` +
+      "the document. The person's press reaches you as their own message carrying the button's label.",
+  }
+}
+
+/** A button of the document pane: its label goes to the chat as the person's own message. */
+async function sendDocChoice($: EngineInterface, label: string): Promise<void> {
+  const held = await read($, doc)
+
+  if (held === null || held.sent !== null) {
+    return
+  }
+  await update($, doc, now => (now === null ? now : { ...now, sent: label }))
+
+  try {
+    await $.prompt.submit({ text: label, asUser: true })
+  } catch {
+    // Not delivered: the buttons come back, so the person can press again or type.
+    await update($, doc, now => (now === null || now.sent !== label ? now : { ...now, sent: null }))
+  }
+}
+
+/** A typed answer that is one of the pane's labels settles the pane as a press would. */
+async function noteTypedChoice($: EngineInterface, text: string): Promise<void> {
+  const held = await read($, doc)
+  const typed = text.replace(/\s+/g, ' ').trim()
+
+  if (held !== null && held.sent === null && held.buttons.includes(typed)) {
+    await update($, doc, now => (now === null ? now : { ...now, sent: typed }))
+  }
+}
+
 function isFinished(tasks: readonly WorkTask[]): boolean {
   return tasks.length > 0 && tasks.every(one => one.status === 'completed')
 }
@@ -659,6 +868,7 @@ export const register: Register = on => {
       description: 'Elsa, the editing director of AI Movie Company: call her and start working together',
       argumentHint: '[folder-or-video-path]',
     })
+    await registerDocTool($)
     const storedLang = await $.store.get(STORE_LANG)
 
     if (isLang(storedLang)) {
@@ -682,6 +892,10 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     if (e.isMeta !== true) {
       await noteLang($, e.command === undefined ? e.text : e.command.args, false)
+
+      if (e.command === undefined && e.origin.kind !== 'plugin') {
+        await noteTypedChoice($, e.text)
+      }
     }
 
     if (e.command !== undefined && isStageName(ownShortName(e.command.name, $.plugin.name))) {
@@ -740,7 +954,8 @@ export const register: Register = on => {
     } catch {
       // Bookkeeping only.
     }
-    const result = await next(e)
+    // The mod's own tool is answered here; every other call goes on to the engine.
+    const result = e.tool === docToolName($.plugin.name) ? await showDocument($, input) : await next(e)
 
     try {
       await noteToolEnd($, e.tool, input, result, isMain)
@@ -973,6 +1188,51 @@ export const register: Register = on => {
         </Box>
         {engineBar}
         {turnBar}
+      </Box>
+    )
+  })
+
+  // The document pane: one large line saying what to do, the document, the answer buttons. Once a
+  // button was pressed (or its label typed) the buttons give way to what was sent.
+  on('ui.render', { component: 'Pane', requestId: DOC_PANE }, async ($, e) => {
+    const { Box, Button, Markdown, Text } = $.ui.resolve(e)
+    const held = await read($, doc)
+
+    if (held === null) {
+      return <Text dimColor>{DOC_EMPTY[await read($, lang)]}</Text>
+    }
+    const words = held.lang
+    const status = held.sent === null ? null : <Text bold>{docSentText(words, held.sent)}</Text>
+
+    if (e.props.placement === 'widget') {
+      return (
+        <Box flexDirection="column">
+          <Text bold>{held.title}</Text>
+          {status ?? <Text>{DOC_GLANCE[words]}</Text>}
+        </Box>
+      )
+    }
+    const answer =
+      status ??
+      (
+        <Box flexDirection="row" gap={1}>
+          {held.buttons.map((label, i) => (
+            <Button
+              key={`doc-answer-${i}`}
+              label={label}
+              variant={i === 0 ? 'primary' : 'secondary'}
+              onPress={() => sendDocChoice($, label)}
+            />
+          ))}
+        </Box>
+      )
+
+    return (
+      <Box flexDirection="column" gap={1}>
+        <Text bold>{held.title}</Text>
+        {held.sent === null ? <Markdown text={`## ${docInstructionText(words, held.buttons[0] ?? '')}`} /> : null}
+        <Markdown text={held.text} />
+        {answer}
       </Box>
     )
   })

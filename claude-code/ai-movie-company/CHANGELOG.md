@@ -2,6 +2,17 @@
 
 All notable changes to ai-movie-company. Versions follow [semver](https://semver.org/).
 
+## 0.8.4 — 2026-11-20
+
+- **Documents to approve open beside the chat.** When Elsa asks you to approve a brief or another
+  document, it opens in a panel to the right of the chat, with «Утверждаю» / «Хочу поправить»
+  buttons right under the text; pressing one answers Elsa. Where no panel can be shown, the document
+  is pasted into the chat instead.
+- **Every set of buttons says to press one.** A large line «Нажмите одну из кнопок ниже» comes right
+  before any choice.
+- **Install from the top of the README.** One sentence and one block to paste into Claude; the block
+  itself guides a person from Chat or Cowork to Code.
+
 ## 0.8.3 — 2026-11-19
 
 - **The guard fails closed.** If the guard itself breaks or runs too long, install-shaped commands
