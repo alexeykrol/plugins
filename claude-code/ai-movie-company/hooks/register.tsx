@@ -52,6 +52,7 @@ import type {
 
 import type {
   ActionCard,
+  BackgroundTask,
   ChannelNotice,
   DirectorLang,
   DirectorMood,
@@ -87,7 +88,8 @@ import {
   DOC_GLANCE,
   docInstructionText,
   docSentText,
-  elapsedText,
+  backgroundText,
+  clockText,
   ELSA_TEXT,
   etaText,
   HERE_TEXT,
@@ -118,7 +120,7 @@ import {
   stepOfText,
   SWITCHED_OFF_NOTE,
   SWITCHED_OFF_TEXT,
-  THINKING,
+  THINKING_LIVE,
   updateReadyText,
   VERSION,
   warmHue,
@@ -136,6 +138,7 @@ const progress = atom({ plugin: 'ai-movie-company', key: 'progress' } as const, 
 const mood = atom({ plugin: 'ai-movie-company', key: 'mood' } as const, 'idle')
 const beat = atom({ plugin: 'ai-movie-company', key: 'beat' } as const, 0)
 const work = atom({ plugin: 'ai-movie-company', key: 'work' } as const, IDLE_WORK)
+const background = atom({ plugin: 'ai-movie-company', key: 'background' } as const, [] as BackgroundTask[])
 const doc = atom({ plugin: 'ai-movie-company', key: 'doc' } as const, null)
 const notice = atom({ plugin: 'ai-movie-company', key: 'notice' } as const, null)
 const action = atom({ plugin: 'ai-movie-company', key: 'action' } as const, null)
@@ -474,6 +477,11 @@ async function tick($: EngineInterface): Promise<void> {
 
   if (hue !== (await read($, tint))) {
     await update($, tint, () => hue)
+  }
+  try {
+    await pruneBackground($)
+  } catch {
+    // Bookkeeping only: the engine's bar is looked at all the same.
   }
   const next = await readProgress($)
   const now = await read($, progress)
@@ -832,7 +840,7 @@ function workBar(
   if (!held.isRunning && !isWorking) {
     return null
   }
-  const elapsed = held.startedAt === null || now === null ? '' : elapsedText(words, now - held.startedAt)
+  const elapsed = held.startedAt === null || now === null ? '' : clockText(now - held.startedAt)
   const open = held.tasks.filter(one => one.status !== 'completed')
 
   if (held.tasks.length > 0 && open.length > 0) {
@@ -848,7 +856,309 @@ function workBar(
     }
   }
 
-  return { label: held.label ?? THINKING[words], valueText: elapsed === '' ? '…' : elapsed }
+  return { label: held.label ?? THINKING_LIVE[words], valueText: elapsed === '' ? '…' : elapsed }
+}
+
+// Background work: what Elsa left running after her turn (a subagent launched with
+// run_in_background, a background Bash command, a Monitor). A turn's bar goes with the turn, so
+// without this the person saw nothing for minutes and asked «ты не заснул?» (test signals m5).
+//
+// Seen start: the Agent call's `async_launched` record (agentId), a subagent's `turn.start`, a
+// Bash record's `backgroundTaskId`, a Monitor record's `taskId`.
+// Seen end: the subagent's `turn.complete` and `classic.SubagentStop`, the task notification
+// (`<task-id>` with an ended `<status>`), TaskStop, the main loop's `classic.Stop` listing every
+// task still in flight (the engine's own word: what it does not list has ended), `$.agent.list()`
+// on the band's clock, and the age limit, for an end missed while the mod reloaded.
+
+/** A background entry older than this is a run whose end was missed (a reload): it is dropped. */
+const BACKGROUND_STALE_MS = 3 * 60 * 60_000
+/** An agent `$.agent.list()` has not listed for this long has ended and been dropped by the engine. */
+const AGENT_UNLISTED_MS = 30_000
+/** `$.store` key: this session's background work, so a reloaded mod still shows it. */
+const STORE_BACKGROUND = 'background-work'
+/** How many sessions' background lists the store keeps. */
+const MAX_BACKGROUND_SESSIONS = 20
+/** The words a task notification ends a task with. */
+const ENDED_STATUSES = new Set(['completed', 'failed', 'killed', 'stopped', 'cancelled', 'canceled', 'error'])
+/** Width of the moving bar the terminal draws while she thinks or works in the background. */
+const SWEEP_WIDTH = 18
+const SWEEP_SPAN = 4
+
+function isBackgroundTask(value: unknown): value is BackgroundTask {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+  const one = value as Record<string, unknown>
+
+  return (
+    typeof one.id === 'string' &&
+    one.id !== '' &&
+    typeof one.kind === 'string' &&
+    typeof one.label === 'string' &&
+    typeof one.startedAt === 'number' &&
+    Number.isFinite(one.startedAt)
+  )
+}
+
+/** The kind a BackgroundTaskSummary's `type` names. */
+function kindOf(type: unknown): BackgroundTask['kind'] {
+  const word = typeof type === 'string' ? type.toLowerCase() : ''
+
+  if (word.includes('agent')) {
+    return 'agent'
+  }
+
+  if (word.includes('shell') || word.includes('bash')) {
+    return 'shell'
+  }
+
+  if (word.includes('monitor')) {
+    return 'monitor'
+  }
+
+  return word.includes('workflow') ? 'workflow' : 'other'
+}
+
+/** The store's background lists, by session id. */
+async function storedBackground($: EngineInterface): Promise<Record<string, BackgroundTask[]>> {
+  const held = await $.store.get(STORE_BACKGROUND)
+
+  if (typeof held !== 'object' || held === null || Array.isArray(held)) {
+    return {}
+  }
+  const out: Record<string, BackgroundTask[]> = {}
+
+  for (const [id, list] of Object.entries(held as Record<string, unknown>)) {
+    if (Array.isArray(list)) {
+      out[id] = list.filter(isBackgroundTask)
+    }
+  }
+
+  return out
+}
+
+/** Sets the background list, and keeps it in the store under this session for a reloaded mod. */
+async function setBackground($: EngineInterface, next: BackgroundTask[]): Promise<void> {
+  const now = await read($, background)
+
+  if (JSON.stringify(now) === JSON.stringify(next)) {
+    return
+  }
+  await update($, background, () => next)
+
+  try {
+    const id = await $.session.id()
+    const all = await storedBackground($)
+    delete all[id]
+
+    if (next.length > 0) {
+      all[id] = next
+    }
+    const kept = Object.entries(all).slice(-MAX_BACKGROUND_SESSIONS)
+    await $.store.set(STORE_BACKGROUND, Object.fromEntries(kept))
+  } catch {
+    // A host without a store: the list lives in this process only.
+  }
+}
+
+/** Notes a background task as started; one already known keeps its start. */
+async function addBackground(
+  $: EngineInterface,
+  id: string,
+  kind: BackgroundTask['kind'],
+  label: string,
+): Promise<void> {
+  if (id === '') {
+    return
+  }
+  const held = await read($, background)
+  const known = held.find(one => one.id === id)
+
+  if (known !== undefined) {
+    if (known.label === '' && label !== '') {
+      await setBackground($, held.map(one => (one.id === id ? { ...one, label: clip(label) } : one)))
+    }
+
+    return
+  }
+  const startedAt = (await nowOf($)) ?? 0
+  await setBackground($, [...held, { id, kind, label: clip(label), startedAt }])
+}
+
+async function dropBackground($: EngineInterface, id: string): Promise<void> {
+  const held = await read($, background)
+
+  if (held.some(one => one.id === id)) {
+    await setBackground($, held.filter(one => one.id !== id))
+  }
+}
+
+/** After a tool ran: a background launch starts an entry, a TaskStop ends one. */
+async function noteBackgroundTool(
+  $: EngineInterface,
+  tool: string,
+  input: Record<string, unknown>,
+  result: ToolCallResult,
+): Promise<void> {
+  if (result.deny !== undefined || result.isError === true) {
+    return
+  }
+  const record = (typeof result.result === 'object' && result.result !== null ? result.result : {}) as Record<
+    string,
+    unknown
+  >
+  const described = typeof input.description === 'string' ? input.description : ''
+
+  if (tool === 'Agent' || tool === 'Task') {
+    if (record.status === 'async_launched' && typeof record.agentId === 'string') {
+      await addBackground($, record.agentId, 'agent', typeof record.description === 'string' ? record.description : described)
+    } else if (record.status === 'remote_launched' && typeof record.taskId === 'string') {
+      await addBackground($, record.taskId, 'agent', typeof record.description === 'string' ? record.description : described)
+    }
+
+    return
+  }
+
+  if (tool === 'Bash' && typeof record.backgroundTaskId === 'string') {
+    await addBackground($, record.backgroundTaskId, 'shell', described)
+
+    return
+  }
+
+  if (tool === 'Monitor' && typeof record.taskId === 'string') {
+    await addBackground($, record.taskId, 'monitor', described)
+
+    return
+  }
+
+  if (tool === 'TaskStop' || tool === 'KillShell') {
+    const id = typeof input.task_id === 'string' ? input.task_id : typeof input.shell_id === 'string' ? input.shell_id : ''
+    await dropBackground($, id)
+  }
+}
+
+/** A task notification ends the task it names, when its status is an end. */
+async function noteTaskNotification($: EngineInterface, text: string): Promise<void> {
+  const pattern = /<task-notification>([\s\S]*?)<\/task-notification>/g
+
+  for (const match of text.matchAll(pattern)) {
+    const body = match[1] ?? ''
+    const id = /<task-id>\s*([^<\s]+)\s*<\/task-id>/.exec(body)?.[1]
+    const status = /<status>\s*([^<]+?)\s*<\/status>/.exec(body)?.[1]?.toLowerCase()
+
+    if (id !== undefined && status !== undefined && ENDED_STATUSES.has(status)) {
+      await dropBackground($, id)
+    }
+  }
+}
+
+/** The main loop stopped: the engine lists every task still in flight; the rest have ended. */
+async function reconcileBackground($: EngineInterface, listed: unknown): Promise<void> {
+  if (!Array.isArray(listed)) {
+    return
+  }
+  const held = await read($, background)
+  const now = (await nowOf($)) ?? 0
+  const next: BackgroundTask[] = []
+
+  for (const one of listed) {
+    if (typeof one !== 'object' || one === null) {
+      continue
+    }
+    const task = one as Record<string, unknown>
+
+    if (typeof task.id !== 'string' || task.id === '') {
+      continue
+    }
+    const status = typeof task.status === 'string' ? task.status.toLowerCase() : ''
+
+    if (ENDED_STATUSES.has(status)) {
+      continue
+    }
+    const known = held.find(mine => mine.id === task.id)
+    const label = typeof task.description === 'string' ? clip(task.description) : ''
+    next.push(known ?? { id: task.id, kind: kindOf(task.type), label, startedAt: now })
+  }
+  await setBackground($, next)
+}
+
+/** On the band's clock: old entries go, and agents the engine says ended (or no longer lists). */
+async function pruneBackground($: EngineInterface): Promise<void> {
+  const held = await read($, background)
+
+  if (held.length === 0) {
+    return
+  }
+  const now = await nowOf($)
+
+  if (now === null) {
+    return
+  }
+  let next = held.filter(one => now - one.startedAt <= BACKGROUND_STALE_MS)
+
+  if (next.some(one => one.kind === 'agent')) {
+    try {
+      const agents = await $.agent.list()
+      const status = new Map(agents.map(one => [one.id, one.status]))
+      next = next.filter(one => {
+        if (one.kind !== 'agent') {
+          return true
+        }
+        const stands = status.get(one.id)
+
+        if (stands === undefined) {
+          return now - one.startedAt <= AGENT_UNLISTED_MS
+        }
+
+        return stands === 'pending' || stands === 'running' || stands === 'waiting'
+      })
+    } catch {
+      // A host without the agent list: the end events and the age limit decide.
+    }
+  }
+
+  if (next.length !== held.length) {
+    await setBackground($, next)
+  }
+}
+
+/** A session starts or the mod reloads: this session's background work comes back, the stale left out. */
+async function restoreBackground($: EngineInterface): Promise<void> {
+  try {
+    const id = await $.session.id()
+    const kept = (await storedBackground($))[id] ?? []
+    const now = await nowOf($)
+    const fresh = kept.filter(one => now === null || now - one.startedAt <= BACKGROUND_STALE_MS)
+    const held = await read($, background)
+    const merged = [...held, ...fresh.filter(one => !held.some(mine => mine.id === one.id))]
+    await setBackground($, merged)
+  } catch {
+    // A host without a store: nothing to bring back.
+  }
+}
+
+/** The background row, or null while nothing runs after her turn. */
+function backgroundBar(
+  words: DirectorLang,
+  held: readonly BackgroundTask[],
+  now: number | null,
+): { label: string; valueText: string } | null {
+  if (held.length === 0) {
+    return null
+  }
+  const first = Math.min(...held.map(one => one.startedAt))
+
+  return { label: backgroundText(words, held.length), valueText: now === null ? '…' : clockText(now - first) }
+}
+
+/** A bar that moves: a lit span sweeping back and forth across a dim track, one cell a beat. */
+function sweepParts(beat: number): [string, string, string] {
+  const travel = SWEEP_WIDTH - SWEEP_SPAN
+  const cycle = travel * 2
+  const step = ((beat % cycle) + cycle) % cycle
+  const at = step <= travel ? step : cycle - step
+
+  return ['━'.repeat(at), '█'.repeat(SWEEP_SPAN), '━'.repeat(travel - at)]
 }
 
 /** The full name the model calls the document tool by. */
@@ -1633,6 +1943,9 @@ export const register: Register = on => {
       await paint($)
     }
 
+    // Work left running in the background before a reload is shown again until it ends.
+    await restoreBackground($)
+
     // Claude opened again after a restart the director asked for: the person is met where they left.
     try {
       await welcomeBack($)
@@ -1648,6 +1961,14 @@ export const register: Register = on => {
   // guided start: the model is told beside it, the person's words stay as typed.
   on('prompt.submit', async ($, e, next) => {
     let resumed: string[] = []
+
+    if (e.origin.kind === 'task-notification') {
+      try {
+        await noteTaskNotification($, e.text)
+      } catch {
+        // Bookkeeping only.
+      }
+    }
 
     if (e.isMeta !== true) {
       await noteLang($, e.command === undefined ? e.text : e.command.args, false)
@@ -1706,6 +2027,9 @@ export const register: Register = on => {
       const startedAt = await nowOf($)
       await update($, work, held => ({ ...held, isRunning: true, startedAt, label: null }))
       await setMood($, 'working')
+    } else {
+      // A subagent's run: work in her name until its turn ends (it outlives hers when backgrounded).
+      await addBackground($, e.agentId, 'agent', '')
     }
 
     return next(e)
@@ -1739,12 +2063,22 @@ export const register: Register = on => {
       // Bookkeeping only.
     }
 
+    try {
+      await noteBackgroundTool($, e.tool, input, result)
+    } catch {
+      // Bookkeeping only.
+    }
+
     return result
   })
 
   // The director answers in the person's language: her answer says which words the band and
   // the work indicator use from now on. The turn's end settles her mood and stops the bar.
   on('turn.complete', async ($, e, next) => {
+    if (e.agentId !== undefined) {
+      await dropBackground($, e.agentId)
+    }
+
     if (e.agentId === undefined) {
       await update($, work, held => ({
         ...held,
@@ -1764,6 +2098,22 @@ export const register: Register = on => {
       } catch {
         // The channel never stands in the way of a turn.
       }
+    }
+
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // A subagent stopped: its background entry ends.
+  on('classic.SubagentStop', async ($, e, next) => {
+    await dropBackground($, e.agent_id)
+
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // The main loop stopped: the engine lists every task still in flight, so what it leaves out ended.
+  on('classic.Stop', async ($, e, next) => {
+    if (e.agent_id === undefined) {
+      await reconcileBackground($, e.background_tasks)
     }
 
     return next(e)
@@ -1955,9 +2305,12 @@ export const register: Register = on => {
     const words = await read($, lang)
     const paper = bandColor(await read($, tint))
     const running = await read($, progress)
-    const turn = workBar(words, await read($, work), e.props.isWorking, await nowOf($))
+    const clockNow = await nowOf($)
+    const turn = workBar(words, await read($, work), e.props.isWorking, clockNow)
+    // The engine's bar leads; a turn's bar next; work left running after the turn only when neither shows.
+    const behind = running === null && turn === null ? backgroundBar(words, await read($, background), clockNow) : null
     const release = `· v${VERSION} · ${releasedText(words)}`
-    const { Progress } = $.ui.resolve(e)
+    const { Progress, Text: LiveText } = $.ui.resolve(e)
     const engineBar =
       running === null ? null : (
         <Progress
@@ -1968,10 +2321,30 @@ export const register: Register = on => {
           color={BAND_EDGE}
         />
       )
+    // A bar with no known end. The desktop draws Progress with no value as running; the terminal
+    // gets a row that moves on the face's clock (reading the beat redraws it every frame), so the
+    // clock beside it is seen ticking too.
+    const openBar = async (label: string, valueText: string) => {
+      if (e.surface !== 'terminal') {
+        return <Progress label={label} valueText={valueText} color={BAND_EDGE} />
+      }
+      const [before, lit, after] = sweepParts(await read($, beat))
+
+      return (
+        <LiveText color={BAND_INK_SOFT}>
+          {before}
+          <LiveText color={BAND_EDGE}>{lit}</LiveText>
+          {after} <LiveText color={BAND_INK}>{`${label} · ${valueText}`}</LiveText>
+        </LiveText>
+      )
+    }
     const turnBar =
-      turn === null ? null : (
+      turn === null ? null : turn.value === undefined ? (
+        await openBar(turn.label, turn.valueText)
+      ) : (
         <Progress label={turn.label} value={turn.value} max={turn.max} valueText={turn.valueText} color={BAND_EDGE} />
       )
+    const behindBar = behind === null ? null : await openBar(behind.label, behind.valueText)
 
     if (e.surface === 'terminal') {
       const { Box, Button, Text } = $.ui.resolve(e)
@@ -1991,11 +2364,14 @@ export const register: Register = on => {
           {noticeRow}
           {engineBar}
           {turnBar}
+          {behindBar}
         </Box>
       )
     }
     const { Box, Button, Text, Svg } = $.ui.resolve(e)
-    const feeling = await read($, mood)
+    const held = await read($, mood)
+    // Work runs in the background after her turn: her face keeps working too.
+    const feeling = behind !== null && held === 'idle' ? 'working' : held
 
     return (
       <Box
@@ -2027,6 +2403,7 @@ export const register: Register = on => {
         {noticeRow}
         {engineBar}
         {turnBar}
+        {behindBar}
       </Box>
     )
   })

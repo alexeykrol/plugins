@@ -251,7 +251,7 @@ export flush forget generate get import install install-seed key layers list mak
 observe off offer on pack picture plan poll preview quit reminder render replay restart-claude
 rollback say scan scenes search services set setup show show-id snapshot splits stage status
 studio undo version accept later withdraw run activate verify export-eval import-eval timeline
-due shown request confirm
+due shown request confirm master samples
 """.split())
 
 

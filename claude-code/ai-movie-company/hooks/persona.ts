@@ -76,7 +76,7 @@ export const ACCENT = '#b4532a'
  * The release on the band, after the name. A unit test holds both to
  * .claude-plugin/plugin.json and to the top heading of CHANGELOG.md.
  */
-export const VERSION = '0.8.6'
+export const VERSION = '0.8.7'
 export const RELEASED = '2026-11-21'
 
 /** The release date as the person reads it. */
@@ -391,6 +391,35 @@ export function elapsedText(words: DirectorLang, ms: number): string {
   const seconds = String(total % 60).padStart(2, '0')
 
   return words === 'ru' ? `идёт ${minutes}:${seconds}` : `${minutes}:${seconds} so far`
+}
+
+/** "1:42" — a running clock, minutes and seconds, as the live bar shows it. */
+export function clockText(ms: number): string {
+  const total = Math.max(Math.floor(ms / 1000), 0)
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const seconds = String(total % 60).padStart(2, '0')
+
+  return hours > 0 ? `${hours}:${String(minutes).padStart(2, '0')}:${seconds}` : `${minutes}:${seconds}`
+}
+
+/** «Эльза думает» — a turn runs and no tool or task says more. */
+export const THINKING_LIVE: Record<DirectorLang, string> = {
+  ru: 'Эльза думает',
+  en: 'Elsa is thinking',
+}
+
+/** «Эльза работает в фоне: 2 задачи» — her turn ended, work she started still runs. */
+export function backgroundText(words: DirectorLang, count: number): string {
+  if (words === 'en') {
+    return `Elsa is working in the background: ${count} ${count === 1 ? 'task' : 'tasks'}`
+  }
+  const tens = count % 100
+  const ones = count % 10
+  const noun =
+    tens >= 11 && tens <= 14 ? 'задач' : ones === 1 ? 'задача' : ones >= 2 && ones <= 4 ? 'задачи' : 'задач'
+
+  return `Эльза работает в фоне: ${count} ${noun}`
 }
 
 /** The document pane: the buttons it shows when the model names none (approve first). */

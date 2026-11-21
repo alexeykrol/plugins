@@ -23,8 +23,12 @@ Job folder of a text job (the contract the dialog writes against):
                       voice/samples/ (voice trials) and voice/flow.txt are ignored
   music/*.mp3|wav     stage "music" (`vp music make`, or the person's own track)
   timeline.json       stage "animation": built by `vp text timeline` from the voice files; the
-                      Remotion composition is laid out on it
-  renders/vN*.mp4     stage "render" (vN.mp4 = sound baked in; vN-picture.mp4 = picture only)
+                      Remotion composition is laid out on it (`vp text render` passes it as props)
+  remotion-video/     the job's own Remotion project (src/index.ts registers the compositions);
+                      its node_modules is a link to the engine's Remotion workspace — no install
+  renders/vN*.mp4     stage "render" by `vp text render` (vN.mp4 = sound baked in, loudness
+                      mastered; vN-picture.mp4 = picture only; vN-chat.mp4 = the copy small
+                      enough for the chat, only when vN.mp4 is too big)
   capcut/vN/          stage "capcut": one folder per exported CapCut version (vp capcut)
 
 scenes.json (written in the dialog; texts only — no times, the times come from the voice):
@@ -37,22 +41,32 @@ scenes.json (written in the dialog; texts only — no times, the times come from
 
 Estimate (measured in the probe, eleven_v4, voice «Алина»): ≈ 14.8 characters per second of voice;
 pauses: a lead-in, a gap between scenes, a hold at the end (frame counts of the probe), plus any
-ElevenLabs <break time="Xs"/> tags. Credits: voice 1 per character (v4); voice trials ≈ 4 voices
-× one line of up to 200 characters (probe ≈ 800); music ≈ 900 per 80 s (probe).
+ElevenLabs <break time="Xs"/> tags. Credits: voice 1 per character (v4); voice trials = 3 voices
+× one line of up to 200 characters (the choice form holds 3 voices + «other voices»); music 900
+per minute = 15 per second (elevenlabs.io/pricing; measured 2026-11-19: 945 credits for 63 s).
 
 CLI:  vp text new <job> --file <text.md> [--title T] [--json]
       vp text status <job> [--json]          stages, the next step and its exact command
       vp text approve <job> sketches|… [--note T]
       vp text estimate <job> [--json]
       vp text timeline <job> [--json]
+      vp text render <job> --composition <Id> [--version vN] [--project DIR] [--entry F]
+                     [--no-props] [--force] [--json]
+                     Remotion render of the job's own project with the engine's Node and Chrome
+                     (never `npx`), then `master`
+      vp text master <job> [--version vN] [--json]
+                     loudness −14 LUFS (two-pass loudnorm, video copied), vN-picture.mp4 and,
+                     when vN.mp4 is too big for the chat, vN-chat.mp4
 """
 from __future__ import annotations
 
 import argparse
 import json
 import math
+import os
 import re
 import shutil
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
@@ -73,9 +87,20 @@ GAP_FRAMES = 10             # after a line (probe: 10..24)
 END_HOLD_FRAMES = 80        # after the last line
 EST_GAP_S = 0.4             # average pause between scenes for the estimate (probe: 204 frames
                             # of gaps over 10 scenes, last hold excluded -> ~0.4 s)
-SAMPLE_VOICES = 4           # voice trials: 4 different voices, one take each (K9)
+SAMPLE_VOICES = 3           # voice trials: 3 different voices, one take each (K9); the choice
+                            # form = these 3 + «other voices» (4 = the most a form holds)
 SAMPLE_CHARS = 200          # length of the trial line
-MUSIC_CREDITS_PER_S = 900 / 80
+MUSIC_CREDITS_PER_S = 900 / 60   # = elevenlabs.MUSIC_CREDITS_PER_MIN / 60 (was 900/80: 25 % low)
+
+# mastering of a text-path render (the same targets as the recording path, vp.adapters.render)
+MASTER_LUFS = -14.0
+MASTER_TP = -1.0
+MASTER_LRA = 11.0
+MASTER_TOLERANCE = 0.5      # already within ±0.5 LU and under the peak -> left as it is
+CHAT_MAX_BYTES = 14_000_000  # the same cap as `vp review preview` (phone and web uploads)
+CHAT_SHORT_SIDE = 720       # the chat copy: short side 720 px, then 480 if it still does not fit
+REMOTION_PROJECT = "remotion-video"
+REMOTION_ENTRY = "src/index.ts"
 
 _BREAK = re.compile(r"<break\s+time\s*=\s*[\"']?([\d.]+)\s*(ms|s)?[\"']?\s*/?>", re.I)
 
@@ -323,12 +348,15 @@ def next_step(folder: Path, nxt: str | None) -> dict[str, str]:
                   f"--seconds <video length> --out {_q(folder / 'music')}/music.mp3"),
         "animation": ("measure the voice files and lay out the scenes (subtitle timing by code)",
                       f"vp text timeline {j}"),
-        "render": ("animate the scenes in Remotion on timeline.json and render: "
-                   f"{nv}-picture.mp4 (no sound) and {nv}.mp4 (voice+music); check before showing",
-                   f"npx remotion render <composition> {_q(folder / 'renders')}/{nv}.mp4 ; "
+        "render": ("animate the scenes in the job's Remotion project "
+                   f"({REMOTION_PROJECT}/{REMOTION_ENTRY}, scenes from the timeline.json props) "
+                   f"and render with the engine: {nv}.mp4 (voice+music, loudness mastered), "
+                   f"{nv}-picture.mp4 and, if needed, {nv}-chat.mp4; check before showing, then "
+                   "send the chat-sized file into the chat",
+                   f"vp text render {j} --composition <Id> --version {nv} ; "
                    f"vp check picture {_q(folder / 'renders')}/{nv}.mp4"),
-        "capcut": ("export the CapCut project with separate tracks (picture, subtitles, voice, "
-                   "music)", f"vp capcut {j} --version {nv}"),
+        "capcut": ("export the CapCut project: picture, subtitles, voice and music on their own "
+                   "tracks in one step", f"vp capcut {j} --version {nv}"),
     }
     if nxt is None:
         return {"what": "all stages done: on a change, render a new version and export it",
@@ -519,7 +547,7 @@ MUSIC_LIFT = 1.6       # the baked mix raised the music x1.6 in the pauses (prob
 def pick_render(folder: Path, version: str) -> Path:
     """The picture for a CapCut version: renders/<v>-picture.*, renders/<v>.*, else the newest
     picture-only render, else the newest render."""
-    files = renders(folder)
+    files = [f for f in renders(folder) if not f.stem.endswith("-chat")]   # chat copies: never
     if not files:
         raise VPError("data", f"no render in {folder / 'renders'}")
     for want in (f"{version}-picture", version):
@@ -555,8 +583,43 @@ def capcut_parts(folder: str | Path, version: str, work_dir: Path, *, video: str
 
     Picture + subtitles from timeline.json, every scene's voice at its place on track «Голос»,
     the music bed (cut to length, faded) on track «Музыка» lifted in the voice pauses."""
-    from .adapters import capcut, media
+    from .adapters import media
     from .adapters.edit_timeline import ClipTimeline
+    folder = Path(folder).expanduser().resolve()
+    probe = probe or media.probe
+    tl_json = load_timeline(folder)
+    fps = float(tl_json.get("fps") or FPS)
+    vpath = Path(video).expanduser().resolve() if video else pick_render(folder, version)
+    vinfo = probe(vpath)
+    if not vinfo.get("width") or not vinfo.get("height"):
+        raise VPError("data", f"{vpath.name} has no picture")
+    total = int(round(tl_json["durationInFrames"] * 1000 / fps))
+    dur = min(int(vinfo["duration_ms"]), total) if vinfo.get("duration_ms") else total
+    cues, audio, inputs = capcut_audio_cues(folder, work_dir, music=music, probe=probe,
+                                            make_bed=make_bed, voice_volume=voice_volume,
+                                            music_volume=music_volume, music_lift=music_lift,
+                                            total_ms=dur)
+    w, h = int(vinfo["width"]), int(vinfo["height"])
+    kind = "reel" if h > w else "long"
+    req = read_yaml(folder / "request.yaml", default={}) or {}
+    tl = ClipTimeline(item=version, kind=kind, title=str(req.get("title") or folder.name),
+                      video_path=vpath, duration_ms=dur, width=w, height=h,
+                      fps=float(vinfo.get("fps") or fps), has_audio=bool(vinfo.get("has_audio")),
+                      canvas_w=w, canvas_h=h, cues=cues)
+    return tl, audio, dict(inputs, video=str(vpath))
+
+
+def capcut_audio_cues(folder: str | Path, work_dir: Path, *, music: str | Path | None = None,
+                      voice_volume: float = VOICE_VOLUME, music_volume: float = MUSIC_VOLUME,
+                      music_lift: float = MUSIC_LIFT, total_ms: int | None = None,
+                      probe: Callable[[Path], dict] | None = None,
+                      make_bed: Callable[[Path, int, Path], Path] | None = None):
+    """(subtitle cues, [AudioClip], inputs) of a text job, all timed from timeline.json by code.
+
+    Every scene's voice at its place on track «Голос»; the music bed (cut to length, faded) on
+    track «Музыка», lifted in the voice pauses. `total_ms` = the length to cover (default the
+    timeline's)."""
+    from .adapters import capcut, media
     from .core.srt import Cue
     folder = Path(folder).expanduser().resolve()
     probe = probe or media.probe
@@ -566,12 +629,7 @@ def capcut_parts(folder: str | Path, version: str, work_dir: Path, *, video: str
     def ms(fr: float) -> int:
         return int(round(fr * 1000 / fps))
 
-    vpath = Path(video).expanduser().resolve() if video else pick_render(folder, version)
-    vinfo = probe(vpath)
-    if not vinfo.get("width") or not vinfo.get("height"):
-        raise VPError("data", f"{vpath.name} has no picture")
-    total = ms(tl_json["durationInFrames"])
-    dur = min(int(vinfo["duration_ms"]), total) if vinfo.get("duration_ms") else total
+    dur = total_ms if total_ms is not None else ms(tl_json["durationInFrames"])
     cues, voice, windows = [], [], []
     for s in tl_json["scenes"]:
         if s.get("showSubtitles", True):
@@ -589,13 +647,6 @@ def capcut_parts(folder: str | Path, version: str, work_dir: Path, *, video: str
         voice.append(capcut.AudioClip(path=vf, at_ms=at, duration_ms=vlen, volume=voice_volume,
                                       track="Голос"))
         windows.append((at, at + ms(s["voiceFrames"])))
-    w, h = int(vinfo["width"]), int(vinfo["height"])
-    kind = "reel" if h > w else "long"
-    req = read_yaml(folder / "request.yaml", default={}) or {}
-    tl = ClipTimeline(item=version, kind=kind, title=str(req.get("title") or folder.name),
-                      video_path=vpath, duration_ms=dur, width=w, height=h,
-                      fps=float(vinfo.get("fps") or fps), has_audio=bool(vinfo.get("has_audio")),
-                      canvas_w=w, canvas_h=h, cues=cues)
     audio = list(voice)
     msrc = Path(music).expanduser().resolve() if music else pick_music(folder)
     bed = None
@@ -607,15 +658,196 @@ def capcut_parts(folder: str | Path, version: str, work_dir: Path, *, video: str
         keys = capcut.music_keyframes(windows, dur, music_volume, music_lift)
         audio.append(capcut.AudioClip(path=bed, at_ms=0, duration_ms=dur, volume=music_volume,
                                       track="Музыка", keyframes=keys))
-    inputs = {"video": str(vpath), "voice": [str(c.path) for c in voice],
+    inputs = {"voice": [str(c.path) for c in voice],
               "music": str(msrc) if msrc else None, "music_bed": str(bed) if bed else None,
               "volumes": {"voice": voice_volume, "music": music_volume, "music_lift": music_lift}}
-    return tl, audio, inputs
+    return cues, audio, inputs
 
 
 def _make_bed(src: Path, total_ms: int, out: Path) -> Path:
     from .adapters import media
     return media._render_to(out, music_bed_args(src, total_ms), timeout_s=600)
+
+
+# ---- render, loudness and the chat copy (test signals 2026-11-21: M7, M9, M11) ---------------
+# The render used to be `npx remotion render`, which the install guard blocks, and nothing
+# mastered its loudness (−19.9 LUFS measured) or made a copy small enough for the chat. Now the
+# engine renders with its own Node, Chrome and Remotion workspace, then masters and copies.
+
+_RENDER_STEM = re.compile(r"(v\d+)(-picture|-chat)?")
+_COMPOSITION = re.compile(r"[A-Za-z0-9_-]{1,80}")
+
+
+def _text_folder(folder: str | Path) -> Path:
+    folder = Path(folder).expanduser().resolve()
+    if not is_text_job(folder):
+        raise VPError("data", f"{folder} is not a text job (request.yaml kind is not 'text')")
+    return folder
+
+
+def render_versions(folder: Path) -> list[str]:
+    """Versions that have a sound render renders/vN.mp4, oldest first."""
+    vs = {p.stem for p in renders(folder) if p.suffix.lower() == ".mp4"
+          and re.fullmatch(r"v\d+", p.stem)}
+    return sorted(vs, key=lambda v: int(v[1:]))
+
+
+def next_render_version(folder: Path) -> str:
+    nums = [int(m.group(1)[1:]) for p in renders(folder) if (m := _RENDER_STEM.fullmatch(p.stem))]
+    return f"v{max(nums, default=0) + 1}"
+
+
+def chat_copy(src: Path, out: Path, max_bytes: int = CHAT_MAX_BYTES,
+              info: dict[str, Any] | None = None) -> tuple[Path, bool]:
+    """A copy small enough to send into the chat: H.264 at a bitrate that fits `max_bytes`, short
+    side 720 px (then 480 px with a smaller budget). Returns (path, fits)."""
+    from .adapters import media
+    info = info or media.probe(src)
+    dur = max(0.5, int(info.get("duration_ms") or 0) / 1000)
+    w, h = int(info.get("width") or 0), int(info.get("height") or 0)
+    total = int(0.90 * max_bytes * 8 / dur)
+    audio = min(128_000, max(32_000, total // 8))
+    video = max(100_000, total - audio)
+    for short, share in ((CHAT_SHORT_SIDE, 1.0), (480, 0.75)):
+        vb = int(video * share)
+        if w and h and min(w, h) <= short:
+            scale = "scale=trunc(iw/2)*2:trunc(ih/2)*2"
+        else:
+            scale = f"scale={short}:-2" if w <= h else f"scale=-2:{short}"
+        media._render_to(out, ["-i", str(src), "-map", "0:v:0", "-map", "0:a:0?", "-vf", scale,
+                               "-c:v", "libx264", "-preset", "veryfast", "-b:v", str(vb),
+                               "-maxrate", str(int(vb * 1.2)), "-bufsize", str(vb * 2),
+                               "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", str(audio),
+                               "-movflags", "+faststart"])
+        if out.stat().st_size <= max_bytes:
+            return out, True
+    return out, False
+
+
+def master(folder: str | Path, version: str | None = None,
+           chat_max_bytes: int = CHAT_MAX_BYTES) -> dict[str, Any]:
+    """Finish a text-path render renders/<v>.mp4: loudness to −14 LUFS (two-pass loudnorm, the
+    picture is copied, nothing re-rendered), the picture-only file <v>-picture.mp4 for CapCut when
+    missing, and the chat copy <v>-chat.mp4 when <v>.mp4 is bigger than the chat takes.
+    Returns the measured loudness and the file to send into the chat (`chat`)."""
+    from .adapters import media
+    folder = _text_folder(folder)
+    have = render_versions(folder)
+    version = version or (have[-1] if have else None)
+    if not version:
+        raise VPError("data", f"no render with sound in {folder / 'renders'} (renders/vN.mp4)")
+    if not re.fullmatch(r"v\d+", version):
+        raise VPError("data", f"version must look like v1, v2 …, got {version!r}")
+    src = folder / "renders" / f"{version}.mp4"
+    if not src.is_file():
+        raise VPError("data", f"no renders/{version}.mp4 (the render with voice and music)")
+    info = media.probe(src)
+    if not info.get("has_audio"):
+        raise VPError("data", f"renders/{version}.mp4 has no sound: render voice and music into it")
+    m = media.loudnorm_measure(src, MASTER_LUFS, MASTER_TP, MASTER_LRA)
+    before, peak = float(m["input_i"]), float(m["input_tp"])
+    if not math.isfinite(before) or before < -70:
+        raise VPError("data", f"renders/{version}.mp4 is silent: the voice and music did not get "
+                              f"into the render")
+    after, mastered = before, False
+    if abs(before - MASTER_LUFS) > MASTER_TOLERANCE or peak > MASTER_TP:
+        tmp = src.with_name(f".{src.stem}.master{src.suffix}")
+        try:
+            media.loudnorm_apply(src, tmp, m, MASTER_LUFS, MASTER_TP, MASTER_LRA)
+            os.replace(tmp, src)
+        finally:
+            tmp.unlink(missing_ok=True)
+        after = float(media.loudnorm_measure(src, MASTER_LUFS, MASTER_TP, MASTER_LRA)["input_i"])
+        mastered = True
+    picture = folder / "renders" / f"{version}-picture.mp4"
+    if not picture.is_file():
+        media._render_to(picture, ["-i", str(src), "-map", "0:v:0", "-c:v", "copy", "-an",
+                                   "-movflags", "+faststart"])
+    chat_file = folder / "renders" / f"{version}-chat.mp4"
+    size = src.stat().st_size
+    if size <= chat_max_bytes:
+        chat_file.unlink(missing_ok=True)       # a copy of an earlier take of this version
+        chat, fits = src, True
+    else:
+        chat, fits = chat_copy(src, chat_file, chat_max_bytes, info)
+    return {"version": version, "render": str(src), "picture": str(picture),
+            "lufs_before": round(before, 1), "lufs": round(after, 1), "target_lufs": MASTER_LUFS,
+            "mastered": mastered, "chat": str(chat), "chat_mb": round(chat.stat().st_size / 1e6, 1),
+            "fits_chat": fits}
+
+
+def link_node_modules(project: Path, target: Path) -> str:
+    """The job's Remotion project uses the engine's installed packages: node_modules -> the
+    workspace's (no npm install in the job). A project with its own real node_modules is left."""
+    nm = project / "node_modules"
+    if nm.is_symlink():
+        if nm.resolve() == target.resolve():
+            return "linked"
+        nm.unlink()
+    elif nm.exists():
+        return "own"
+    nm.symlink_to(target, target_is_directory=True)
+    return "linked"
+
+
+def render(folder: str | Path, composition: str, version: str | None = None,
+           project: str | Path | None = None, entry: str = REMOTION_ENTRY, props: bool = True,
+           force: bool = False, workspace: Any = None,
+           master_fn: Callable[..., dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Render a composition of the job's own Remotion project into renders/<v>.mp4 with the
+    engine's Node, Chrome and Remotion (the permitted way: never `npx`), with timeline.json as
+    the props, then `master`. A version is never overwritten without `force`."""
+    folder = _text_folder(folder)
+    if not _COMPOSITION.fullmatch(composition or ""):
+        raise VPError("data", f"composition id must be letters, digits, - or _: {composition!r}")
+    version = version or next_render_version(folder)
+    if not re.fullmatch(r"v\d+", version):
+        raise VPError("data", f"version must look like v1, v2 …, got {version!r}")
+    out = folder / "renders" / f"{version}.mp4"
+    if out.exists() and not force:
+        raise VPError("data", f"renders/{version}.mp4 already exists: a version is never "
+                              f"overwritten — render {next_render_version(folder)} "
+                              f"(or --force to replace {version})")
+    proj = Path(project).expanduser() if project else folder / REMOTION_PROJECT
+    proj = (proj if proj.is_absolute() else folder / proj).resolve()
+    if not (proj / entry).is_file():
+        raise VPError("data", f"no Remotion project: {proj / entry} is missing (write the "
+                              f"compositions there; src/index.ts calls registerRoot)")
+    if workspace is None:
+        from .adapters.render_remotion import RemotionWorkspace
+        from .core.config import load_config
+        workspace = RemotionWorkspace(load_config())
+    workspace.ensure(log=lambda s: print(s, file=sys.stderr))      # stdout stays the result
+    link_node_modules(proj, Path(workspace.dir) / "node_modules")
+    tmp = folder / "renders" / f".{version}.rendering.mp4"
+    settings = getattr(workspace, "settings", {}) or {}
+    args = ["render", entry, composition, str(tmp), "--log=info",
+            f"--crf={int(settings.get('crf') or 16)}", "--enforce-audio-track"]
+    frames = None
+    tl = folder / "timeline.json"
+    if props and tl.is_file():
+        args.append(f"--props={tl}")
+        frames = (read_json(tl) or {}).get("durationInFrames")
+    if settings.get("concurrency"):
+        args.append(f"--concurrency={settings['concurrency']}")
+    if settings.get("gl"):
+        args.append(f"--gl={settings['gl']}")
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    from .core import progress
+    try:
+        with progress.tracking(folder, "render", version, total=float(frames or 1),
+                               unit="frames"):
+            workspace.run(args, frames=int(frames) if frames else None, cwd=proj)
+        if not tmp.is_file():
+            raise VPError("data", f"remotion wrote no {out.name}")
+        os.replace(tmp, out)
+    finally:
+        tmp.unlink(missing_ok=True)
+    for stale in (f"{version}-picture.mp4", f"{version}-chat.mp4"):   # of an earlier take
+        (folder / "renders" / stale).unlink(missing_ok=True)
+    with progress.tracking(folder, "master", version, total=1, unit="files"):
+        res = (master_fn or master)(folder, version)
+    return {"composition": composition, "project": str(proj), **res}
 
 
 # ---- CLI ------------------------------------------------------------------------------------
@@ -639,7 +871,38 @@ def main(argv: list[str]) -> int:
     ap_.add_argument("what", choices=APPROVABLE)
     ap_.add_argument("--note")
     ap_.add_argument("--json", action="store_true")
+    r = sub.add_parser("render", help="render the job's Remotion composition with the engine "
+                                      "(never npx), then master it")
+    r.add_argument("job")
+    r.add_argument("--composition", required=True, help="the composition id in src/index.ts")
+    r.add_argument("--version", help="vN (default: the next free version)")
+    r.add_argument("--project", help=f"the Remotion project folder (default <job>/{REMOTION_PROJECT})")
+    r.add_argument("--entry", default=REMOTION_ENTRY)
+    r.add_argument("--no-props", action="store_true", help="do not pass timeline.json as props")
+    r.add_argument("--force", action="store_true", help="replace an existing renders/<vN>.mp4")
+    r.add_argument("--json", action="store_true")
+    m = sub.add_parser("master", help="loudness −14 LUFS, the picture-only file and the chat copy")
+    m.add_argument("job")
+    m.add_argument("--version", help="vN (default: the newest render)")
+    m.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
+    if a.cmd in ("render", "master"):
+        if a.cmd == "render":
+            res = render(a.job, a.composition, a.version, a.project, a.entry,
+                         props=not a.no_props, force=a.force)
+        else:
+            res = master(a.job, a.version)
+        if a.json:
+            print(json.dumps(res, ensure_ascii=False, indent=1))
+        else:
+            print(f"{'RENDERED' if a.cmd == 'render' else 'MASTERED'} {res['render']}")
+            print(f"loudness: {res['lufs_before']:g} -> {res['lufs']:g} LUFS "
+                  f"(target {res['target_lufs']:g})")
+            print(f"picture only: {res['picture']}")
+            print(f"send into the chat: {res['chat']} ({res['chat_mb']:g} MB"
+                  + ("" if res["fits_chat"] else ", STILL TOO BIG for the chat: open it instead")
+                  + ")")
+        return 0
     if a.cmd == "approve":
         res = approve(a.job, a.what, a.note)
         print(json.dumps(res, ensure_ascii=False) if a.json else f"APPROVED {a.what}")

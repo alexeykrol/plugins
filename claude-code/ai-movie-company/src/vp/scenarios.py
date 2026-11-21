@@ -39,7 +39,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from .core.errors import VPError
+from .core.errors import VPError, note_failure
 
 KNOWLEDGE = Path(__file__).resolve().parent / "knowledge"
 SCENARIOS_FILE = KNOWLEDGE / "scenarios.json"
@@ -895,8 +895,11 @@ def main(argv: list[str]) -> int:
             probs = validate()
             _print({"ok": not probs, "problems": probs}, args.json,
                    lambda r: "OK scenario data" if r["ok"] else "\n".join("FAIL " + x for x in r["problems"]))
+            if probs:
+                note_failure(None, "validation")
             return 0 if not probs else 2
     except VPError as e:
+        note_failure(e)
         print(f"ERROR {e}")
         return 2
     return 3  # pragma: no cover

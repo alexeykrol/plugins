@@ -18,7 +18,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from .core.errors import VPError
+from .core.errors import VPError, note_failure
 
 FRAMES = 12
 MAX_FREEZE_S = 3.0
@@ -85,6 +85,7 @@ def main(argv: list[str]) -> int:
     try:
         res = check_picture(a.video, a.sheet, a.frames, a.max_freeze, a.tail)
     except VPError as e:
+        note_failure(e)
         if a.json:
             print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
         else:

@@ -16,8 +16,10 @@
   results <job> [--json]                     what came out (links, files, states): vp.watch:results_main
   progress <job> [--json] [--wait N]         current long step, one line: vp.watch:progress_main
   capcut export <job> [item ...] | check     new CapCut desktop project per clip: vp.adapters.capcut:main
-  capcut <job> [--version vN]                new VERSION as a CapCut project (text job: separate
-                                             voice/music tracks); <job>/capcut/vN, never overwritten
+  capcut <job> [--version vN] [--label T]    new VERSION = new timeline in the job's ONE CapCut
+                                             project, a track per layer (capcut/layers.json);
+                                             <job>/capcut/vN, never overwritten
+  capcut library [--json]                    library items layers.json can name
   projects list|add|scan|forget [--json]     jobs the person worked on: vp.projects:main
   text new|status|estimate|timeline|approve  text-only jobs: vp.text:main
   check picture <video> [--json]             black/frozen picture + frame sheet: vp.check:main
@@ -89,7 +91,8 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from .core import runner
-from .core.errors import EXIT_CONSENT_REQUIRED, ConsentRequired, VPError
+from .core.errors import (EXIT_CONSENT_REQUIRED, ConsentRequired, VPError, failure_noted,
+                          note_failure, take_failure)
 from .core.lock import job_lock
 from .core.paths import Job
 
@@ -148,9 +151,11 @@ SUBCOMMAND_MAINS.update(MEDIA_COMMANDS)
 # except the quick sub-commands listed in QUICK_SUBCOMMANDS
 BUSY_COMMANDS = {"run", "stage", "resolve-upload", "approve-ingest", "capcut", "resolve", "fcpxml",
                  "extras", "design", "check", "transcribe",
-                 "stock", "images", "shots", "montage", "takes", "voice", "music"}
+                 "stock", "images", "shots", "montage", "takes", "voice", "music", "text"}
 QUICK_SUBCOMMANDS = {("extras", "status"), ("extras", "check"), ("extras", "decide"),
-                     ("capcut", "check"), ("capcut", "version"), ("design", "show"),
+                     ("text", "new"), ("text", "status"), ("text", "approve"),
+                     ("text", "estimate"), ("text", "timeline"), ("voice", "samples"),
+                     ("capcut", "check"), ("capcut", "version"), ("capcut", "library"), ("design", "show"),
                      ("design", "set"), ("design", "layers"),
                      ("transcribe", "estimate"), ("transcribe", "key"),
                      ("stock", "search"), ("images", "estimate"),
@@ -178,6 +183,7 @@ def _lookup(path: str) -> Callable[..., Any] | None:
 
 def _not_implemented(what: str) -> int:
     print(f"{what}: not implemented yet")
+    note_failure(None, "not_implemented")
     return EXIT_NOT_IMPLEMENTED
 
 
@@ -192,9 +198,11 @@ def _with_ctx(job: Job, fn: Callable[..., int], *args: Any) -> int:
             ctx = runner.make_ctx(job, cfg)
             rc = fn(ctx, *args)
         except ConsentRequired as c:
+            note_failure(c, "consent")
             print(f"REFUSED consent-required: {c.msg}")
             return EXIT_CONSENT_REQUIRED
         except VPError as e:
+            note_failure(e)
             print(f"ERROR {e}")
             return 3 if e.kind == "internal" else 2
         return int(rc or 0)
@@ -268,6 +276,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     is_busy = cmd in BUSY_COMMANDS and (cmd, sub) not in QUICK_SUBCOMMANDS
     t0 = time.monotonic()
     rc: int | None = None
+    take_failure()                      # a stale note of an earlier in-process call never counts
     if cmd not in NOT_ELSA_COMMANDS and os.environ.get("CLAUDE_CODE_SESSION_ID"):
         from .journal import mark_session
         mark_session(os.environ["CLAUDE_CODE_SESSION_ID"])
@@ -278,16 +287,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         return rc
     except SystemExit as e:
         rc = e.code if isinstance(e.code, int) else (0 if e.code is None else 2)
+        if rc and not failure_noted():
+            note_failure(e, "usage")    # argparse: a missing or unknown argument / sub-command
         raise
     except BaseException as e:
         if not isinstance(e, KeyboardInterrupt):
             telemetry.record_error("cli", e, command=cmd, sub=sub)
+        note_failure(e, "interrupted" if isinstance(e, KeyboardInterrupt) else "crash")
         rc = 3
         raise
     finally:
+        failure = take_failure()
         if not quiet:
+            why: dict[str, str] = {}
+            if rc not in (0, None):
+                why = failure or {"error": "none", "error_kind": "unclassified"}
             telemetry.record("command", command=cmd, sub=sub, rc=rc,
-                             duration_s=round(time.monotonic() - t0, 3))
+                             duration_s=round(time.monotonic() - t0, 3), **why)
             telemetry.spawn_flush()
 
 
@@ -300,6 +316,7 @@ def _dispatch(raw: list[str]) -> int:
         try:
             return int(fn(raw[1:]) or 0) if fn else _not_implemented(raw[0])
         except VPError as e:
+            note_failure(e)
             print(f"ERROR {e}")
             return 3 if e.kind == "internal" else 2
     args = build_parser().parse_args(raw)
@@ -339,6 +356,7 @@ def _dispatch(raw: list[str]) -> int:
             fn = _lookup("vp.knowledge.store:main")
             return int(fn(args.rest) or 0) if fn else _not_implemented(cmd)
     except VPError as e:
+        note_failure(e)
         print(f"ERROR {e}")
         return 3 if e.kind == "internal" else 2
     return 3  # pragma: no cover

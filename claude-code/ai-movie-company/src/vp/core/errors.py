@@ -122,3 +122,33 @@ def with_retries(fn: Callable[[], Any], n: int = 3, backoff: Iterable[float] = (
                 on_retry(attempt + 1, e)
             sleep(delays[min(attempt, len(delays) - 1)])
             attempt += 1
+
+
+# ---- why the current command failed (telemetry, test signals 2026-11-21 m6) ------------------
+# A command that catches an error and returns a non-zero exit code notes the error's CLASS here;
+# vp.cli.main reads it once and adds `error` (class name) and `error_kind` (a short word) to its
+# telemetry `command` event. Never the message: it can carry paths and the person's text.
+
+_failure: dict[str, str] | None = None
+
+
+def note_failure(exc: BaseException | None = None, kind: str | None = None) -> None:
+    """Remember why the current command fails: `error` = the exception's class name,
+    `error_kind` = `kind`, else the error's own `.kind` (VPError: auth/transport/data/…), else
+    "unclassified". The last note wins."""
+    global _failure
+    own = getattr(exc, "kind", None) if exc is not None else None
+    _failure = {"error": type(exc).__name__ if exc is not None else "none",
+                "error_kind": str(kind or (own if isinstance(own, str) else None)
+                                  or "unclassified")}
+
+
+def failure_noted() -> bool:
+    return _failure is not None
+
+
+def take_failure() -> dict[str, str] | None:
+    """The noted failure (and forget it), or None."""
+    global _failure
+    f, _failure = _failure, None
+    return f

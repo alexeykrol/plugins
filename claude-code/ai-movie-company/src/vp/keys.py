@@ -32,7 +32,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from .core.errors import VPError
+from .core.errors import VPError, note_failure
 from .core.paths import vp_home
 
 SERVICES: dict[str, dict[str, Any]] = {
@@ -296,6 +296,7 @@ def main(argv: list[str] | None = None, *, opener: Callable | None = None,
         try:
             res = save_key(a.service, raw)
         except VPError as e:
+            note_failure(e)
             print(f"NOT SAVED: {e.msg}")
             return 2
         cleared = False

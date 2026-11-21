@@ -2,6 +2,26 @@
 
 All notable changes to ai-movie-company. Versions follow [semver](https://semver.org/).
 
+## 0.8.7 — 2026-11-21
+
+- **You always see that Elsa is working.** While she thinks: a live bar and «Эльза думает · 1:42»
+  with the time running. While work she handed off runs in the background after her reply:
+  «Эльза работает в фоне: 2 задачи · 4:10» until it ends. Engine steps keep their percent bar.
+- **One CapCut project per job.** Every new version is a new timeline in the same project; earlier
+  timelines and your edits in them stay untouched. Every layer on its own track (picture, editable
+  subtitles, voice phrase by phrase, music). Cards keep their shape; transitions, filters and
+  animations load from CapCut's library. A backup before every write; nothing is written while
+  CapCut is open.
+- **Text to video, honest guidance.** `vp text render` renders the job's own animation with the
+  engine's tools (no blocked commands); loudness is evened to −14 LUFS; a smaller copy is made when
+  the video is too big for the chat; the music estimate is correct (about 15 credits per second);
+  stock is allowed when you have a stock key.
+- **Results always in the chat.** Elsa sends the video unasked, never only a path, and never says
+  something "is open on the right" unless it really opened.
+- **Voice choice matches.** Elsa lets you hear three voices and shows exactly those three as
+  buttons, plus «Другие варианты».
+- **Failures are diagnosable.** A failed command reports its error class (never its text).
+
 ## 0.8.6 — 2026-11-21
 
 - **Alpha terms and privacy (version `2026-11-21-alpha1`).** Short in-plugin terms now match the

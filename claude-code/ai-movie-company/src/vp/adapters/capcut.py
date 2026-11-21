@@ -33,14 +33,20 @@ optional volume keyframes (the music lifted in the voice pauses). The audio prot
 not from a reference yet — see its `source.note`). Clip length is rounded UP to a whole frame, as
 CapCut does. When separate audio is added the picture's own sound is muted (volume 0).
 
-Versions (K17): `vp capcut <job> [--version vN]` exports one VERSION of a job: a new CapCut project
-"<title> vN" (never replacing an older one) and a record `<job>/capcut/vN/export.json`. An existing
-version folder is never overwritten; the default is the next free number. A text job (request.yaml
-`kind: text`, see vp.text) gets picture + subtitles + voice phrases + music; any other job gets one
-project per finished clip, as `export` does.
+Versions (K17, owner 2026-11-20): `vp capcut <job> [--version vN]` exports one VERSION of a job as
+a new TIMELINE inside the job's ONE CapCut project (created on the first export; earlier timelines
+— and the person's hand edits in them — are never touched) and a record
+`<job>/capcut/vN/export.json`. An existing version folder is never overwritten; the default is the
+next free number. A text job (request.yaml `kind: text`, see vp.text) gets a LAYERED timeline:
+every layer of `<job>/capcut/layers.json` on its own track (else the storyboard sketches, else the
+render), library transitions / filters / animations by id, subtitles, voice phrases, music — see
+vp.adapters.capcut_project and vp.adapters.capcut_library. Any other job gets one timeline per
+finished clip. `vp capcut export` (one new project per clip) stays as it was.
 
 CLI:  vp capcut export <job> [item ...] [--opener VIDEO] [--dissolve SEC] [--drafts DIR]
-      vp capcut <job> [--version vN] [--video FILE] [--music FILE] [--drafts DIR] [--json]
+      vp capcut <job> [--version vN] [--label T] [--video FILE] [--music FILE] [--drafts DIR]
+                [--json]
+      vp capcut library [--json]              (library items layers.json can name)
       vp capcut check                         (is CapCut running, where are the drafts)
 """
 from __future__ import annotations
@@ -182,8 +188,12 @@ def _volume_keyframes(atpl: dict, uid: Callable[[], str],
 
 
 def audio_tracks(audio: list[AudioClip], fps: float, mats: dict, uid: Callable[[], str],
-                 atpl: dict) -> list[dict[str, Any]]:
-    """CapCut audio tracks for `audio` (pure apart from appending to `mats`)."""
+                 atpl: dict, start_us: Callable[[int], int] | None = None) -> list[dict[str, Any]]:
+    """CapCut audio tracks for `audio` (pure apart from appending to `mats`).
+
+    `start_us(at_ms)` places a clip on the timeline (default ms * 1000; the layered export snaps
+    to a whole frame floored, CapCut's own rule K2)."""
+    start_us = start_us or _us
     labels: list[str] = []
     for c in audio:
         if c.track not in labels:
@@ -202,7 +212,7 @@ def audio_tracks(audio: list[AudioClip], fps: float, mats: dict, uid: Callable[[
             seg.update(id=uid(), material_id=m["id"], volume=float(c.volume),
                        last_nonzero_volume=float(c.volume) or 1.0,
                        source_timerange={"start": 0, "duration": d},
-                       target_timerange={"start": _us(c.at_ms), "duration": d},
+                       target_timerange={"start": start_us(c.at_ms), "duration": d},
                        render_index=0, track_render_index=1 + ti,
                        common_keyframes=_volume_keyframes(atpl, uid, c.keyframes),
                        extra_material_refs=_extras(atpl["audio_extra"], mats, uid))
@@ -792,16 +802,64 @@ def parse_version(v: str) -> str:
     return f"v{int(m.group(1))}"
 
 
+def _clip_build(tl: ClipTimeline, name: str, audio: list[AudioClip] | None = None):
+    """A TimelineBuild of one finished picture (a recording's cut, or a text job's picture when a
+    caller supplies it) + subtitles (+ separate audio)."""
+    from .capcut_project import TimelineBuild
+    audio = list(audio or [])
+    for c in audio:
+        if not Path(c.path).is_file():
+            raise VPError("data", f"audio file not found: {c.path}")
+    media_list = [(tl.video_path, f"{safe_name(tl.item)}_{tl.video_path.name}")] + \
+        [(Path(c.path), f"audio_{n + 1:02d}_{Path(c.path).name}") for n, c in enumerate(audio)]
+
+    def build(final: Path, rels: list[Path]) -> dict[str, Any]:
+        t = dataclasses.replace(tl, video_path=final / rels[0])
+        aud = [dataclasses.replace(c, path=final / r) for c, r in zip(audio, rels[1:])]
+        info = build_draft_info(t, load_template(), _uid(), audio=aud or None)
+        for n, track in enumerate(info["tracks"]):          # rule K2/L3: the track's position
+            for s in track["segments"]:
+                s["track_render_index"] = n
+        return info
+
+    return TimelineBuild(name=name, media=media_list, build=build, cover_from=tl.video_path)
+
+
+def _cover_file(src: Path, out: Path) -> None:
+    """draft_cover.jpg from the middle of a video; a missing cover is not fatal for CapCut."""
+    try:
+        ms = media.probe(src).get("duration_ms") or 0
+    except VPError:
+        ms = 0
+    at = max(0, ms // 2)
+    try:
+        media.run_ffmpeg(["-ss", f"{at / 1000:.3f}", "-i", str(src), "-frames:v", "1",
+                          "-vf", "scale=-2:480", "-q:v", "4", str(out)], timeout_s=120)
+    except VPError:
+        pass
+
+
 def export_version(job_root: str | Path, version: str | None = None, *,
                    video: str | Path | None = None, music: str | Path | None = None,
                    root: Path | None = None, running: Callable[[], bool] = capcut_running,
                    backup_dir: Path | None = None, parts: Callable[..., Any] | None = None,
+                   label: str | None = None, probe: Callable[[Path], dict] | None = None,
+                   make_still: Callable[..., Any] | None = None,
+                   make_bed: Callable[..., Any] | None = None,
+                   cover: Callable[[Path, Path], None] | None = _cover_file,
                    **volumes: float) -> dict[str, Any]:
-    """Export one version of a job as new CapCut project(s) (K17).
+    """Export one version of a job as a new TIMELINE in the job's one CapCut project (K17, M3).
+
+    The project is created on the first export and found again by <job>/capcut/project.json (or
+    its marker); later versions add a timeline and never touch the earlier ones. A text job's
+    timeline is layered (vp.adapters.capcut_project): <job>/capcut/layers.json, else the sketches,
+    else the render; `parts` (legacy hook) or `video` put one finished picture instead. A
+    recording job gets one timeline per finished clip.
 
     <job>/capcut/vN/ is reserved first (an existing version is never overwritten), then the
-    project is written, then <job>/capcut/vN/export.json records what went in. On any failure the
-    reserved folder is removed and nothing is registered in the version list."""
+    timeline is written, then <job>/capcut/vN/export.json records what went in. On any failure the
+    reserved folder is removed and the project is left as it was."""
+    from . import capcut_project
     job_root = Path(job_root).expanduser().resolve()
     if not (job_root / "request.yaml").is_file():
         raise VPError("data", f"no job in {job_root} (request.yaml missing)")
@@ -812,33 +870,57 @@ def export_version(job_root: str | Path, version: str | None = None, *,
                               f"overwritten — the next free one is {next_version(job_root)}")
     if running():
         raise VPError("data", "CapCut is running. Quit CapCut (Cmd+Q) and run the export again: "
-                              "CapCut rewrites its project list on exit and would drop the new draft.")
+                              "CapCut rewrites its project files on exit and would drop the new timeline.")
     from .. import text as textjob
+    is_text = textjob.is_text_job(job_root)
     vdir.mkdir(parents=True, exist_ok=False)
     try:
         title = (read_yaml(job_root / "request.yaml", default={}) or {}).get("title") \
             or job_root.name
         warning = version_warning(capcut_version(), load_template())
-        if textjob.is_text_job(job_root):
-            tl, audio, inputs = (parts or textjob.capcut_parts)(job_root, v, vdir, video=video,
-                                                                music=music, **volumes)
-            res = write_draft(tl, f"{title} {v}", root=root, running=running,
-                              backup_dir=backup_dir, audio=audio, job_id=Job(job_root).job_id,
-                              version=v)
-            drafts = [res]
+        if is_text:
+            if parts:
+                tl, audio, inputs = parts(job_root, v, vdir, video=video, music=music, **volumes)
+                builds = [_clip_build(tl, v + (f" — {label}" if label else ""), audio)]
+                inputs = dict(inputs, layers="picture")
+            else:
+                b, inputs = capcut_project.text_version(
+                    job_root, v, vdir, video=Path(video) if video else None,
+                    music=Path(music) if music else None, probe=probe, make_bed=make_bed,
+                    make_still=make_still, label=label, **volumes)
+                builds = [b]
         else:
             if video or music:
                 raise VPError("data", "--video/--music apply to text jobs only")
-            drafts = export_job(job_root, root=root, running=running, backup_dir=backup_dir,
-                                name_suffix=f" {v}", version=v)
-            inputs = {"clips": [d["item"] for d in drafts]}
+            items = clip_items(job_root)
+            if not items:
+                raise VPError("data", "no finished clip (clips/<id>/cut.mp4) to export")
+            builds = [_clip_build(build_clip_timeline(job_root, i), f"{v} — {i}") for i in items]
+            inputs = {"clips": items}
+        res = capcut_project.write_version(
+            builds, job_root=job_root, job_id=Job(job_root).job_id, title=str(title),
+            root=Path(root) if root else drafts_root(), running=running, backup_dir=backup_dir,
+            cover=cover)
+        warnings = [w for w in [warning, res.get("note")] + list(inputs.get("plan_warnings") or [])
+                    if w]
         record = {"version": v, "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                  "kind": "text" if textjob.is_text_job(job_root) else "recording",
-                  "drafts": [{"name": d["name"], "folder": d["folder"],
-                              "duration_ms": d["duration_ms"], "subtitles": d["cues"],
-                              "audio_tracks": d.get("audio_tracks") or [],
-                              "audio_clips": d.get("audio_clips", 0)} for d in drafts],
-                  "inputs": inputs, "warning": warning}
+                  "kind": "text" if is_text else "recording",
+                  "project": {"folder": res["folder"], "name": res["name"],
+                              "created": res["created"],
+                              "main_timeline_id": res["main_timeline_id"]},
+                  "timelines": res["timelines"],
+                  # one row per timeline, same keys as before (older readers)
+                  "drafts": [{"name": f"{res['name']} / {t['name']}", "folder": res["folder"],
+                              "timeline_id": t["id"], "duration_ms": t["duration_us"] // 1000,
+                              "subtitles": next((x["segments"] for x in t["tracks"]
+                                                 if x["name"] == "Субтитры"
+                                                 or (x["type"] == "text" and x["name"] in ("", None))),
+                                                0),
+                              "audio_tracks": [x["name"] for x in t["tracks"] if x["type"] == "audio"],
+                              "audio_clips": sum(x["segments"] for x in t["tracks"]
+                                                 if x["type"] == "audio")}
+                             for t in res["timelines"]],
+                  "inputs": inputs, "warning": warning, "warnings": warnings}
         atomic_write(vdir / "export.json", json.dumps(record, ensure_ascii=False, indent=1) + "\n")
     except BaseException:
         shutil.rmtree(vdir, ignore_errors=True)
@@ -878,12 +960,16 @@ def export_job(job_root: str | Path, items: list[str] | None = None, root: Path 
 
 
 def version_main(argv: list[str]) -> int:
-    """vp capcut <job> [--version vN] ...: one new version of the job as CapCut project(s)."""
+    """vp capcut <job> [--version vN] ...: one new version = a new timeline in the job's project."""
     ap = argparse.ArgumentParser(prog="vp capcut <job>",
-                                 description="export a new VERSION of a job as a CapCut project")
+                                 description="export a new VERSION of a job as a new timeline in "
+                                             "the job's one CapCut project (separate tracks per "
+                                             "layer; earlier timelines are never touched)")
     ap.add_argument("job")
     ap.add_argument("--version", help="vN (default: the next free version); never overwrites")
-    ap.add_argument("--video", help="text job: the picture to use (default renders/<vN>-picture.mp4)")
+    ap.add_argument("--label", help="timeline name after the version, e.g. «сток по слоям»")
+    ap.add_argument("--video", help="text job: put this one finished picture on the picture track "
+                                    "instead of the layers (capcut/layers.json, else sketches)")
     ap.add_argument("--music", help="text job: the music file (default the newest in music/)")
     ap.add_argument("--voice-volume", type=float)
     ap.add_argument("--music-volume", type=float)
@@ -893,40 +979,64 @@ def version_main(argv: list[str]) -> int:
     a = ap.parse_args(argv)
     vols = {k: getattr(a, k) for k in ("voice_volume", "music_volume", "music_lift")
             if getattr(a, k) is not None}
-    res = export_version(a.job, a.version, video=a.video, music=a.music,
+    res = export_version(a.job, a.version, video=a.video, music=a.music, label=a.label,
                          root=Path(a.drafts).expanduser() if a.drafts else None, **vols)
     if a.json:
         print(json.dumps(res, ensure_ascii=False, indent=1))
         return 0
-    for d in res["drafts"]:
-        tracks = ", ".join(d["audio_tracks"]) or "sound in the video"
-        print(f"CREATED {res['version']}\t{d['name']}\t{d['folder']}\t{d['subtitles']} subtitles\t"
-              f"audio: {tracks}")
-    if res.get("warning"):
-        print(f"  WARNING: {res['warning']}")
+    pr = res["project"]
+    print(f"{'CREATED PROJECT' if pr['created'] else 'PROJECT'}\t{pr['name']}\t{pr['folder']}")
+    for t in res["timelines"]:
+        tracks = "; ".join(f"{x['name'] or x['type']} ({x['segments']})" for x in t["tracks"])
+        print(f"ADDED TIMELINE {res['version']}\t{t['name']}\ttracks: {tracks}")
+    for w in res.get("warnings") or []:
+        print(f"  WARNING: {w}")
     print(f"version record: {res['folder']}/export.json")
-    print("Open CapCut: the new project is at the top of the project list.")
+    print("Open CapCut: the project's timeline list shows the new version next to the earlier ones.")
+    return 0
+
+
+def library_main(argv: list[str]) -> int:
+    """vp capcut library [--json]: library items the exporter can reference by name."""
+    from . import capcut_library
+    ap = argparse.ArgumentParser(prog="vp capcut library",
+                                 description="CapCut library items usable in capcut/layers.json")
+    ap.add_argument("--json", action="store_true")
+    a = ap.parse_args(argv)
+    rows = capcut_library.library_listing()
+    if a.json:
+        print(json.dumps(rows, ensure_ascii=False, indent=1))
+        return 0
+    for r in rows:
+        d = f"\t{r['default_s']:g} s" if r.get("default_s") else ""
+        print(f"{r['kind']}\t{r['name']}\t{r['status']}{d}")
     return 0
 
 
 def main(argv: list[str]) -> int:
     if argv and argv[0] == "version":
         return version_main(argv[1:])
+    if argv and argv[0] == "library":
+        return library_main(argv[1:])
     if argv and argv[0] not in ("export", "check") and not argv[0].startswith("-"):
         return version_main(argv)
     ap = argparse.ArgumentParser(
         prog="vp capcut", description="CapCut desktop draft export",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="versions with separate tracks (text jobs: picture, subtitles, voice phrases on "
-               "their places, music lifted in the pauses):\n"
-               "  vp capcut <job> [--version vN] [--video FILE] [--music FILE] [--voice-volume X]\n"
-               "                  [--music-volume X] [--music-lift X] [--drafts DIR] [--json]\n"
+        epilog="versions with separate tracks, ONE CapCut project per job, each version a new "
+               "timeline in it (text jobs: every layer of capcut/layers.json on its own track, "
+               "subtitles, voice phrases on their places, music lifted in the pauses):\n"
+               "  vp capcut <job> [--version vN] [--label T] [--video FILE] [--music FILE]\n"
+               "                  [--voice-volume X] [--music-volume X] [--music-lift X]\n"
+               "                  [--drafts DIR] [--json]\n"
                "  (same as: vp capcut version <job> ...; each version -> <job>/capcut/vN/, "
-               "never overwritten)")
+               "never overwritten)\n"
+               "  vp capcut library [--json]   library items layers.json can name")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("version", add_help=False,
-                   help="new version of a job, separate tracks (voice, music): vp capcut <job> "
-                        "[--version vN] — see `vp capcut version --help`")
+                   help="new version of a job = new timeline in its project, separate tracks: "
+                        "vp capcut <job> [--version vN] — see `vp capcut version --help`")
+    sub.add_parser("library", add_help=False, help="library items usable in capcut/layers.json")
     e = sub.add_parser("export", help="make a new CapCut project per finished clip")
     e.add_argument("job")
     e.add_argument("items", nargs="*", help="clip ids (default: all finished clips)")

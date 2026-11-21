@@ -63,7 +63,7 @@ from typing import Any, Iterable
 
 import yaml
 
-from ..core.errors import VPError
+from ..core.errors import VPError, note_failure
 from ..core.io import (append_line, atomic_write, now_iso, read_yaml, sha256_bytes, sha256_obj,
                        write_yaml)
 from ..core.paths import vp_home
@@ -547,6 +547,7 @@ def main(argv: list[str] | None = None, out=None) -> int:
             parent = store.rollback(by="cli", reason=args.reason)
             out(f"active {parent} (rolled back)")
     except VPError as e:
+        note_failure(e)
         print(f"error: {e}", file=sys.stderr)
         return 2
     return 0

@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 from ..core import runner
 from ..core.ctx import Ctx
-from ..core.errors import EXIT_CONSENT_REQUIRED, ConsentRequired, VPError
+from ..core.errors import EXIT_CONSENT_REQUIRED, ConsentRequired, VPError, note_failure
 from ..core.lock import job_lock
 from ..core.paths import Job
 
@@ -48,17 +48,21 @@ def guarded(fn: Callable[[], int]) -> int:
     try:
         return fn()
     except ConsentRequired as e:
+        note_failure(e, "consent")
         print(f"REFUSED consent-required: {e.msg}")
         return EXIT_CONSENT_REQUIRED
     except UserInputRequired as e:
+        note_failure(e, "user_input")
         print(f"REFUSED {e.message}")
         return RC_USER_INPUT
     except Refused as e:
+        note_failure(e, "refused")
         print(f"REFUSED {e.message}")
         for err in e.errors:
             print(f"  - {err['where']}: {err['message']}")
         return RC_REFUSED
     except VPError as e:
+        note_failure(e)
         print(f"ERROR {e}")
         return RC_INTERNAL if e.kind == "internal" else RC_REFUSED
 

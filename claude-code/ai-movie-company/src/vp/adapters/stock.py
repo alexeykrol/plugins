@@ -44,7 +44,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from ..core.errors import VPError
+from ..core.errors import VPError, note_failure
 from ..core.io import now_iso, write_json
 from .. import keys as keystore
 from . import webapi
@@ -452,6 +452,7 @@ def main(argv: list[str] | None = None, *, opener: Any = None) -> int:
                   f"{res['provenance']['attribution']} — {res['provenance']['license_url']}")
         return 0
     except keystore.NeedKey as e:
+        note_failure(e, "need_key")
         print(e.code + " — " + e.msg.split(" — ", 1)[-1])
         return 2
 

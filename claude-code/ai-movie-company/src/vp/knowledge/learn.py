@@ -35,7 +35,7 @@ from typing import Any, Callable, Iterable
 import yaml
 
 from ..core.config import deep_merge, load_config
-from ..core.errors import VPError
+from ..core.errors import VPError, note_failure
 from ..core.io import (append_line, atomic_write, now_iso, parse_iso, read_json, read_yaml,
                        write_json, write_yaml)
 from ..core.paths import Job
@@ -733,6 +733,7 @@ def main(argv: list[str] | None = None, out: Callable[[str], None] | None = None
             else:
                 dump(lr.splits_set(_csv(args.fix_set), _csv(args.holdout)))
     except VPError as e:
+        note_failure(e)
         print(f"error: {e}", file=sys.stderr)
         return 3 if e.kind == "internal" else 2
     return 0

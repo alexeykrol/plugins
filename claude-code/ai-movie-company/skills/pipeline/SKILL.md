@@ -49,8 +49,9 @@ folded into the first); no file names, step codes or config keys unless the user
   propose one concrete reading and ask to confirm it in the same question («Понимаю так: принимаем
   этот фрагмент. Верно?»). Never turn a vague answer into a decision silently — this holds for
   EVERY question, including "did you look through the whole recording?" before the long render.
-- **Before a long step** (proofreading, render, upload) say in one line roughly how long it takes
-  and that progress lines will follow; then post a progress line at least every minute.
+- **Before a long step** (proofreading, render, upload, a long piece of your own work) say in one
+  line roughly how long it takes and that progress lines will follow; then post a progress line at
+  least every minute until the result is shown — also when the work is yours, not the engine's.
 - **A path that does not exist** → never substitute a similar folder on your own: «Папки
   `v051-confsed` нет. Может быть, `v051-confused`?» and wait for the answer.
 - **Never assume the user is the speaker** in the recording: say "the speaker", "в записи", not
@@ -156,6 +157,14 @@ chat with a large instruction on top and the buttons at the bottom.
 - Result `isPlaced: false`, an error, or no such tool in the session (a terminal, `claude -p`) →
   paste the document into the chat yourself, then the line «## Нажмите одну из кнопок ниже» and
   the form with the same labels.
+- **Never say a pane, panel, checklist or document «открыт справа» (or anywhere) unless you
+  called `show_document` for it in this very turn and it returned `isPlaced: true`.** A document
+  opened earlier may be gone; a file you only wrote is not on screen. Not called, failed, or
+  unsure → paste it into the chat instead. The same for any other window: name only what a tool
+  just opened and reported as open.
+- The person asks «где?» about a pane you announced → it is not visible to them: paste the
+  document into the chat at once (no second `show_document`), with the form, and write a
+  `deadend` note ("Dead ends").
 - On «Утверждаю» record it exactly as before (`vp text approve <job> brief`, `vp review set`, …);
   on «Хочу поправить» ask what to change, in words, change the file and show it again.
 
@@ -167,6 +176,11 @@ a design poster, a finished render — is sent into the chat right away with `Se
 describe it. Several sketches → several files in one go, in scene order. Only when `SendUserFile`
 does not exist in the session (a terminal), fall back to `open <file>` and say it opened.
 
+Never wait to be asked («а где посмотреть?» means you already missed). A video goes as the file
+small enough for the chat: the `chat` file of `vp text render` / `vp text master`, the preview of
+`vp review preview`; never a full-size render the phone or web cannot take. Say that something is
+on screen only after the tool that shows it returned success.
+
 ## Long work runs in the background
 
 Rendering, drawing sketches, voicing all scenes, exporting to CapCut and installing the extras
@@ -176,8 +190,11 @@ engine command, or a background subagent (Agent tool, `run_in_background: true`)
 result; never questions to the person). The main conversation shows only:
 
 - one line when it starts («Рисую эскизы всех сцен, пара минут»);
-- a progress line about once a minute for long engine work (see Progress);
-- the result, shown at once (pictures via `SendUserFile`).
+- a progress line about once a minute for long work (see Progress) — engine commands AND your own
+  long work: a background subagent, a hand-built export, a long chain of your own commands. With
+  no engine progress to read, say what is done so far in plain words («Собрала 6 сцен из 10»);
+  never more than two minutes of silence while something runs («ты не заснул?» means you missed);
+- the result, shown at once (pictures and videos via `SendUserFile`).
 
 Meanwhile you stay in the conversation and answer whatever the person asks. Questions to the person
 are asked only by you, in this conversation; a background job that needs a decision stops and
@@ -210,6 +227,9 @@ Silently, the moment it happens, record a note with
 
 - the same step failed twice, or any error the person saw;
 - the person says «не понимаю», «не получается», «где это?», shows irritation, or gives up;
+- the person corrects or rejects your result or your way of working («хватит плодить…», «всё
+  вытянуто», «не работает», «зачем ты рендеришь?», «я же просил…») — one note per correction,
+  with their words verbatim;
 - you could not solve their problem (the `help` skill's last resort).
 
 A request the plugin has no scenario for («а можно из текста сделать?», «сделай мне обложку для
@@ -282,8 +302,9 @@ lean: an opinion is welcome, a decision is not yours.
   «Закройте CapCut», `not_this` «Claude не закрывайте», the framed block; the way: top of the
   screen → CapCut → Quit CapCut), then the export again. Never mention ⌘Q / Cmd+Q.
   Then tell them to open CapCut — the projects are at the top of the list, named `<job> <clip>`.
-  A text job's projects are versions (`vp capcut <job> --version vN`, see "Text path"): every
-  version is a new project next to the earlier ones, so the person's hand edits are never touched.
+  A text job has ONE CapCut project; each version (`vp capcut <job> --version vN`, see "Text
+  path") is a new timeline inside it, named «vN — …», and the project opens on the newest. Earlier
+  timelines are never touched, so the person's hand edits stay as they were.
   With an opener / title clip ("с заставкой <file>"): add `--opener <video>` (one clip per run is
   enough); relay the printed notes (letterbox, silence added, dissolve) in plain words. The project
   is named `<job> <clip> opener`.
@@ -548,8 +569,22 @@ them on its own. `vp design studio <job> <id>` opens the composition in Remotion
 The person brings only a text (a post, an article, a script) — «я хочу дать тебе текст, а ты уже
 сама с этим разбираешься». You do the rest: brief → screenplay → **storyboard sketches she
 approves** → voice → music → animation by code (Remotion) → render → CapCut project; then a new
-version on every change she asks for. Graphics are drawn by code only (kinetic type, simple
-infographics, symbols) — no stock footage, no generated video. Needs the extras pack ("Extras").
+version on every change she asks for. Graphics are drawn by code (kinetic type, simple
+infographics, symbols); no generated video. Needs the extras pack ("Extras").
+
+**Stock + graphics.** Licensed stock footage is allowed when she asks for it («со стока», «живые
+кадры», «как у кинокомпании») or agrees when you offer it in the brief. It needs a stock key:
+`vp keys status --json` — `pexels` or `pixabay` present → go on; none → the `connect` skill, "Pexels"
+(free, about three minutes), then back here. Per scene: `vp stock search <words in English>
+--kind video --orientation portrait|landscape --min-duration <scene length in s> --json` (the
+scene length comes from `timeline.json` or the estimate, never by eye; the minimum duration keeps
+clips from being slowed or frozen), pick by the result fields, then `vp stock get <id> <job>
+--query "<the search>" --json` — the file lands in `<job>/library/stock/` with its license and
+author next to it. Look at a frame of every clip before it goes in: no text or logos on screen, no
+CGI where a real place is meant; otherwise pick another. Graphics are drawn on top by code. The
+end card credits the stock sources (`attribution` from the provenance). Only own material or
+licensed stock — never a clip downloaded from YouTube or another site; questions about rights and
+law are not yours to answer: say so in one line.
 
 Engine side (bookkeeping is code, never you): `vp text new <job> --file <text>` makes the job,
 `vp text status <job>` says what is done, which versions exist and the next step with its exact
@@ -570,11 +605,10 @@ Run `vp text status` whenever you are unsure what comes next — never guess a c
    hers; if not, the author's name goes into the end card and the description. Write `brief.md`
    in the job folder, show it with `show_document` ("Documents to approve") and wait for her
    button; on «Утверждаю» record `vp text approve <job> brief`.
-4. **Two steps — offer the choice** (form): **«Два шага»** (recommended: first a whole video with
-   voice and music baked in plus a CapCut project with editable subtitles; then, if she wants, a
-   CapCut project with voice and music on their own tracks) / **«Сразу дорожки»** / **«Только
-   видео»**. Say why in half a sentence: a working result first, the version an editor can take
-   apart second.
+4. **What she gets — in the brief, not a separate question.** The video (voice and music baked in)
+   and one CapCut project per version in which picture, subtitles, voice (phrase by phrase at its
+   place) and music are already on their own tracks — the engine makes it in one step. Only if she
+   says she needs no CapCut project, skip step 9's export.
 5. **Screenplay.** Split the text into scenes S1…Sn (each: the exact words from the text, what is on
    screen); every word of the text is in exactly one scene. Write `script.md`; say the count in one
    line («10 сцен»). A screenplay is not a storyboard: do not ask her to approve text — go on to
@@ -596,25 +630,32 @@ Run `vp text status` whenever you are unsure what comes next — never guess a c
      the chat). Back here when it says set. Only if she has no key **and** the ElevenLabs connector
      tools (`creative_*`) are in this session may you use the connector instead (fallback below).
    - *Price first.* `vp text estimate <job>` → say the credits in one message, sold per the
-     contract: what she gets («живой голос диктора и музыка под вашу интонацию»), then the cost
-     («около 2 700 кредитов ElevenLabs: пробы голосов ≈ 800, голос целиком ≈ 1 000, музыка ≈
-     900»). Form: **«Пробуем голоса»** / **«Подождать»**.
-   - *Different voices, one take each.* `vp voice list --lang <text language> --json` (free).
-     Pick **four voices that clearly differ** from that list — e.g. a calm female, a young male, a
-     confident narrator and a warm female (the estimate counts four) — by `name`, `gender`,
-     `age`, `accent`, `description`. The `voice_id` is data you copy from that output into the
-     next command; never a voice or an id from memory, never one typed by hand. The same sample
-     line for all three (the first sentence or two, about 10 s): `vp voice say <job> --voice
-     <voice_id> --text "<line>" --out "<job>/voice/samples/<name>.mp3" --json`, one per voice. One
-     call = one take, charged: never repeat a call to retry — on `ERROR [transport]` say it did not
-     go through and offer to try again (a form).
-   - *Show and choose.* Send the three files with `SendUserFile` (audio does not play inside chat
-     widgets). One line, then the form «Какой голос берём?»: three options named «<Имя> —
-     <характер>» («Алина — спокойный женский», «Иван — молодой мужской», «Борис — уверенный
-     рассказчик») and **«Другие варианты»** — four buttons, the most the form holds; she clicks,
-     never types a number. «Другие варианты» → three new voices from the same list that differ
-     from the ones heard (say the credits first), same form. Her pick is recorded with the full
-     take (below).
+     contract: what she gets («живой голос диктора и музыка под вашу интонацию»), then the cost,
+     quoting the estimate's own numbers (for about a minute of text: «около 2 800 кредитов
+     ElevenLabs: пробы голосов ≈ 600, голос целиком ≈ 1 000, музыка ≈ 1 150»). Form: **«Пробуем
+     голоса»** / **«Подождать»**.
+   - **One rule for the voice choice: sample exactly THREE voices, then the form shows exactly
+     those three as buttons plus «Другие варианты»** — four buttons, the most a form holds. Never
+     a voice on the form that was not sampled, never a sampled voice missing from it.
+   - *Three different voices, one take each.* `vp voice list --lang <text language> --json`
+     (free). Pick **three voices that clearly differ** from that list — e.g. a calm female, a young
+     male, a confident narrator — by `name`, `gender`, `age`, `accent`, `description`; three
+     different names (never two voices with the same first name in one round). The `voice_id` is
+     data you copy from that output into the next command; never a voice or an id from memory,
+     never one typed by hand. The same sample line for all three (the first sentence or two, about
+     10 s): `vp voice say <job> --voice <voice_id> --text "<line>" --out
+     "<job>/voice/samples/<Имя — характер>.mp3" --json`, one per voice — the file name IS the
+     button label («Алина — спокойный женский.mp3»). One call = one take, charged: never repeat a
+     call to retry — on `ERROR [transport]` say it did not go through and offer to try again (a
+     form).
+   - *Show and choose.* `vp voice samples <job> --json` (free) → `options`: the three newest
+     samples in the order made, each with `label`, `file` and `voice_id`. Send exactly those files
+     with `SendUserFile`, in that order (audio does not play inside chat widgets). One line, then
+     the form «Какой голос берём?»: the `label`s as the options, word for word and in the same
+     order, plus **«Другие варианты»** (`other_option: true`); she clicks, never types a number.
+     Her pick → its `voice_id` from the same output. «Другие варианты» → three new voices from the
+     same list that differ from the ones heard (say the credits first: 3 × the sample line), the
+     same two commands, the same form — `vp voice samples` then lists only the new round.
    - *Voice all scenes.* `vp voice estimate --job <job>` → one line with the credits; then
      `vp voice scenes <job> --voice <the chosen voice_id> [--language <lang>] --json` **in the
      background** ("Long work"): one file per scene (`voice/S01.mp3` …) with its neighbours as
@@ -648,32 +689,46 @@ Run `vp text status` whenever you are unsure what comes next — never guess a c
      charged: say so in one line and offer **«Без музыки»** / **«Пришлю свою музыку»** (her file
      → `<job>/music/`). Levels are measured by the engine (the voice stays on top, the music rises
      in the pauses) — never set by ear.
-   - *Animation:* animate each scene from its approved sketch; scene lengths and subtitle times
-     come from the engine's timeline of the voice files, never from you. Subtitles in the bottom
-     zone, large and bold.
-   - *Render* in the background (the command `vp text status` names); the engine masters the
-     loudness.
+   - *Animation:* animate each scene from its approved sketch in the job's Remotion project
+     `<job>/remotion-video/` (`src/index.ts` calls `registerRoot`; the Remotion plugin's skill has
+     the API). Scene lengths, gaps and subtitle times come from the engine's `timeline.json`, which
+     the render passes in as the composition's props (`getInputProps()`) — never from you and
+     never copied into your own constants, so the render and the CapCut export cannot drift.
+     Subtitles in the bottom zone, large and bold. No `npm install`/`npx` in the job: the engine
+     links the project to its own installed Remotion.
+   - *Render* in the background ("Long work"): `vp text render <job> --composition <Id> --version
+     vN --json` — the engine's Node, Chrome and Remotion, progress through `vp progress <job>
+     --wait 50`. It then masters the loudness itself (−14 LUFS, two-pass; `lufs_before` →
+     `lufs` in the output) and writes `vN-picture.mp4` for CapCut and, when `vN.mp4` is too big
+     for the chat, `vN-chat.mp4`. `chat` in the output is the file to send. A render made any
+     other way → `vp text master <job> --version vN --json` before showing it.
    - *Self-check before showing — after every Remotion render, sketches and design previews
      included:* the engine's picture check (black or near-empty stretches, frozen frames, silence)
      and the frame sheet, which you open and look at. A blank or broken stretch → fix it and
      render again **before** she sees anything; then say in one line what the check caught. Never
      show a render whose check failed or did not run as if it were fine.
-9. **Result, step 1.** Send the video into the chat. Then the CapCut project:
-   `vp capcut <job> --version v1` (CapCut must be closed — the hand-step form). Say where it is (top
-   of CapCut's list, «<название> v1») and what is inside (video and editable subtitles). Form:
-   **«Шаг 2: дорожки»** / **«Хочу поправить»** / **«Так хорошо»**.
-10. **Step 2 — separate tracks.** The same command for this version with separate tracks (the
-    option as `vp capcut --help` names it): picture, subtitles, voice phrase by phrase at their
-    places, music on its own track with its own level. If the engine notes that something of the
-    baked mix is not on the tracks (the music rise in the pauses), say it in one plain line. Ask
-    her to open it and check (hand-step form, with «Всё на месте» instead of «Готово»).
-11. **Versions by her word.** «Поменяй…», «сделай медленнее», «другая музыка» → `vp asks add` (her
+9. **Result — always in the chat first.** Send the `chat` file of the render output into the chat
+   with `SendUserFile` at once, unasked, before any question about it — never only a path, never
+   «откройте папку». Only if `fits_chat` is false say in one line that it is too big for the chat
+   and open it (`open <file>`). Then the CapCut project in ONE step: `vp capcut <job> --version vN`
+   (CapCut must be closed — the hand-step form). Say where it is (top of CapCut's list, project
+   «<название>», timeline «vN — …»), what is inside in one line (every layer on its own track:
+   picture, editable subtitles, voice phrase by phrase at their places, music with its own level),
+   and where the files of the job lie (the job folder). Layers come from `<job>/capcut/layers.json`
+   when it exists (written in the dialog: tracks of items anchored to `scene` / `scenes` / `cue`,
+   never times; library names from `vp capcut library`), else from the sketches, else the flattened
+   render — relay the engine's warning in that case. If the engine notes that something of the
+   baked mix is not on the tracks (the music rise in the pauses), say it in one plain line. Ask her
+   to open it and check (hand-step form, with «Всё на месте» instead of «Готово», plus «Хочу
+   поправить»).
+10. **Versions by her word.** «Поменяй…», «сделай медленнее», «другая музыка» → `vp asks add` (her
     words), redo only what the change touches (a changed line → only that scene re-voiced, credits
-    said first; a picture change → re-render), then a **new** render and a **new** CapCut project
-    `vN+1` next to the earlier ones (`vp capcut <job> --version vN+1`). Never overwrite a version:
-    her hand edits in CapCut stay untouched. Show the new render in the chat and say which version
-    it is.
-12. **Coming back** to a text job: `vp text status <job>` → one line of where we are («эскизы
+    said first; a picture change → re-render), then a **new** render (`vp text render <job>
+    --composition <Id> --version vN+1`) and a **new** CapCut timeline `vN+1` in the same project
+    (`vp capcut <job> --version vN+1 [--label "<what changed>"]`). Never overwrite a version: her
+    hand edits in earlier timelines stay untouched. Send the new render's `chat` file into the chat
+    (`SendUserFile`) and say which version it is.
+11. **Coming back** to a text job: `vp text status <job>` → one line of where we are («эскизы
     утверждены, голос — Алина, есть v1 и v2 в CapCut»), then the next question. Never claim more
     than it shows.
 

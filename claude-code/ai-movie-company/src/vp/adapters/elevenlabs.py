@@ -8,6 +8,8 @@ claude.ai connector, no Claude restart. Files land straight in the job folder.
                [--model eleven_v4] [--language ru] [--previous-text T] [--next-text T] [--force]
   vp voice scenes <job> --voice <id> [--only S1,S3] [--model M] [--language ru] [--force]
                                                            one file per scene: voice/S01.mp3 …
+  vp voice samples <job> [--last 3] [--json]               the choice form's options: exactly the
+                                                           newest sampled voices (free, no network)
   vp music estimate --seconds N [--json]
   vp music make <job> (--prompt-file F | --prompt T) --seconds N --out <job>/music/<name>.mp3
                [--model music_v2_5] [--vocals] [--force]
@@ -68,7 +70,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.costs import CostJournal
-from ..core.errors import VPError
+from ..core.errors import VPError, note_failure
 from ..core.io import now_iso, write_json
 from ..core.paths import Job, vp_home
 from .. import keys as keystore
@@ -468,6 +470,44 @@ def make_music(job_dir: Any, prompt: str, seconds: float, out: Any, model: str =
             "credits_estimate": cost["credits"], "cost_estimate_usd": cost["usd"]}
 
 
+# ---- the voice choice form (test signals 2026-11-21 M1) ------------------------------------
+# The form once listed names that were never sampled and dropped one that was. Now its buttons
+# come from the sample files themselves: label = file name, voice_id = the take's sidecar.
+
+FORM_MAX_OPTIONS = 4        # AskUserQuestion holds at most 4 options
+SAMPLE_ROUND = 3            # voices per round: 3 buttons + «other voices»
+
+
+def samples(job_dir: Any, last: int = SAMPLE_ROUND) -> dict[str, Any]:
+    """The newest `last` voice samples of a job (voice/samples/*.mp3, in the order they were
+    made) as the options of the choice form: {label (the file name without .mp3), file,
+    voice_id (from <stem>.alignment.json)}. `other_option` = the form has room for «other
+    voices»; `earlier` = samples of earlier rounds (not on this form)."""
+    job = _job_dir(job_dir)
+    if not 1 <= last <= FORM_MAX_OPTIONS:
+        raise VPError("data", f"--last must be 1..{FORM_MAX_OPTIONS} (a form holds "
+                              f"{FORM_MAX_OPTIONS} options)")
+    d = job / "voice" / "samples"
+    files = sorted((p for p in d.iterdir() if p.is_file() and p.suffix.lower() == ".mp3"
+                    and not p.name.startswith(".")),
+                   key=lambda p: (p.stat().st_mtime, p.name)) if d.is_dir() else []
+    if not files:
+        raise VPError("data", f"no voice samples in {d}: make them with `vp voice say` first")
+    pick = files[-last:]
+    options = []
+    for p in pick:
+        side = p.with_name(p.stem + ".alignment.json")
+        try:
+            meta = json.loads(side.read_text(encoding="utf-8")) if side.is_file() else {}
+        except ValueError:
+            meta = {}
+        options.append({"label": p.stem, "file": str(p),
+                        "voice_id": meta.get("voice_id") if isinstance(meta, dict) else None})
+    return {"options": options, "count": len(options),
+            "other_option": len(options) < FORM_MAX_OPTIONS,
+            "earlier": len(files) - len(pick)}
+
+
 # ---- CLI ------------------------------------------------------------------------------------
 
 def _read_text_arg(a: argparse.Namespace, file_attr: str, text_attr: str) -> str | None:
@@ -484,6 +524,7 @@ def _coded(fn) -> int:
     try:
         return fn()
     except (keystore.NeedKey, NeedPlan, NeedCredits) as e:
+        note_failure(e, e.code.split(":", 1)[0].lower())
         print(e.code + " — " + e.msg.split(" — ", 1)[-1])
         return 2
 
@@ -532,9 +573,20 @@ def voice_main(argv: list[str] | None = None, *, opener: Any = None) -> int:
     sc.add_argument("--language")
     sc.add_argument("--force", action="store_true", help="re-voice scenes that have a file")
     sc.add_argument("--json", action="store_true")
+    sm = sub.add_parser("samples", help="the choice form: exactly the sampled voices (free)")
+    sm.add_argument("job")
+    sm.add_argument("--last", type=int, default=SAMPLE_ROUND,
+                    help="how many of the newest samples go on the form (default 3)")
+    sm.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
 
     def run() -> int:
+        if a.cmd == "samples":
+            res = samples(a.job, a.last)
+            _emit(res, a.json, [f"{o['label']}\t{o['voice_id'] or '-'}\t{o['file']}"
+                                for o in res["options"]]
+                  + (["+ the «other voices» option"] if res["other_option"] else []))
+            return 0
         if a.cmd == "list":
             res = list_voices(a.lang, a.limit, opener=opener)
             lines = [f"{v['voice_id']}  {v['name']} — " + ", ".join(

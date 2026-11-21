@@ -1,0 +1,55 @@
+{
+ "source": {
+  "capcut_app_version": "9.8.0",
+  "note": "Library items the exporter may reference by id. Shapes and defaults come from projects CapCut itself saved (reference project «Эталон элементов CapCut», snapshot s03-owner-fixed) and from CapCut's panel cache (library-defaults.json); prototype: ~/Movies/AI Movie Company/_capcut-kb (README «Эталон s00→s01», «Эталон s02→s03»). status verified = CapCut resolved the item by id on open (rule L1); recipe = written by the corrected s03 rule (resource_id = effect_id, source_platform 1) but not yet round-tripped. default_s = the panel's default length; is_overlap from the package or the CapCut-saved transition.",
+  "rules": [
+   "resource_id = effect_id on every catalogue kind; the legacy id goes only to third_resource_id ('0' when there is none)",
+   "source_platform 1 on every library item",
+   "no path: CapCut downloads the package by id on open (L1, online)",
+   "transition duration = the whole frame just below the wanted length, capped at half the shorter neighbouring clip",
+   "filters on a clip or on a filter track: apply_target_type 0; video effects on their own track: 2",
+   "track_render_index = the track's position in tracks[]; target_timerange = floor(frame * 1e6 / fps)"
+  ]
+ },
+ "items": {
+  "transition": {
+   "Black Fade":   {"effect_id": "6724239388189921806", "third_resource_id": "6724239388189921806", "category_id": "27186", "default_s": 0.5, "is_overlap": false, "status": "verified"},
+   "White Flash":  {"effect_id": "6724845376098013708", "third_resource_id": "6724845376098013708", "category_id": "27186", "default_s": 0.5, "is_overlap": false, "status": "verified"},
+   "Cross Fade":   {"effect_id": "7655002527276076308", "third_resource_id": "0", "category_id": "27188", "default_s": 2.0, "is_overlap": true, "status": "verified"},
+   "Whirl":        {"effect_id": "7395479726980076033", "third_resource_id": "7395479726980076033", "category_id": "27186", "default_s": 0.9, "is_overlap": true, "status": "verified"},
+   "Pulse":        {"effect_id": "7233996535921381890", "third_resource_id": "7233996535921381890", "category_id": "27186", "default_s": 0.67, "is_overlap": true, "status": "verified"},
+   "Comparison":   {"effect_id": "7205856409794122242", "third_resource_id": "7205856409794122242", "category_id": "27186", "default_s": 1.2, "is_overlap": true, "status": "verified"},
+   "Fire Circle":  {"effect_id": "7647004085459225857", "third_resource_id": "0", "category_id": "25839", "default_s": 1.53, "is_overlap": true, "status": "verified"},
+   "Shards Fusion": {"effect_id": "7689008464256896257", "third_resource_id": "0", "category_id": "2037710490", "default_s": 2.0, "is_overlap": true, "status": "verified"},
+   "Radiant Wipe": {"effect_id": "7564623701220527377", "third_resource_id": "0", "category_id": "27191", "default_s": 1.5, "is_overlap": true, "status": "verified"},
+   "Drop Zoom":    {"effect_id": "7626798593776667924", "third_resource_id": "0", "category_id": "25836", "default_s": 2.0, "is_overlap": true, "status": "verified"},
+   "Radial Blur":  {"effect_id": "7699791449344265493", "third_resource_id": "0", "category_id": "27189", "default_s": 2.0, "is_overlap": true, "status": "verified"},
+   "Shake Shift":  {"effect_id": "7612877559063186695", "third_resource_id": "0", "category_id": "25840", "default_s": 2.0, "is_overlap": true, "status": "verified"},
+   "Mix":          {"effect_id": "6724845717472416269", "third_resource_id": "6724845717472416269", "category_id": "", "default_s": 0.5, "is_overlap": true, "status": "verified"},
+   "Wipe Left":    {"effect_id": "6724849999336706573", "third_resource_id": "6724849999336706573", "category_id": "", "default_s": 0.5, "is_overlap": true, "status": "verified"}
+  },
+  "filter": {
+   "Dim Light":  {"effect_id": "7664933248170069269", "third_resource_id": "0", "category_id": "24496", "status": "verified"},
+   "BW 3":       {"effect_id": "6857709401382326792", "third_resource_id": "6857709401382326792", "category_id": "", "status": "verified"},
+   "Kodak Gold": {"effect_id": "7655578018382908692", "third_resource_id": "0", "category_id": "", "status": "verified"}
+  },
+  "video_effect": {
+   "Sparkle Flare": {"effect_id": "7612643189463321861", "third_resource_id": "0", "category_id": "26938", "adjust": [["effects_adjust_speed", 0.33333333333333]], "status": "verified"}
+  },
+  "text_animation": {
+   "Fade In":  {"effect_id": "7646371244257955092", "type": "in", "default_s": 0.5, "status": "verified"},
+   "Fade Out": {"effect_id": "6724919382104871427", "type": "out", "default_s": 0.5, "status": "verified"},
+   "Pop In":   {"effect_id": "7648936420534537492", "type": "loop", "default_s": 0.5, "status": "verified"}
+  },
+  "clip_animation": {
+   "Fade In":    {"effect_id": "6798320778182922760", "type": "in", "default_s": 0.5, "status": "verified"},
+   "Fade Out":   {"effect_id": "6798320902548230669", "type": "out", "default_s": 0.5, "status": "verified"},
+   "Slide Left": {"effect_id": "6798332871267324423", "type": "in", "default_s": 0.5, "status": "verified"},
+   "Zoom 1":     {"effect_id": "6759078592740594184", "type": "group", "default_s": 0.5, "status": "verified"}
+  },
+  "sticker": {
+   "Clapper":          {"effect_id": "7403677015687154949", "third_resource_id": "7405513919097213441", "status": "recipe"},
+   "Free Style Arrow": {"effect_id": "7227816070659181829", "third_resource_id": "7228084261255909889", "status": "recipe"}
+  }
+ }
+}

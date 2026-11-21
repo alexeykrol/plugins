@@ -436,8 +436,11 @@ class RemotionWorkspace:
         raise VPError("internal", "no Chrome to draw the video in: install the extra pack "
                                   "(`vp extras install`) or Google Chrome, then try again.")
 
-    def run(self, args: list[str], *, timeout_s: float | None = None, frames: int | None = None) -> str:
-        """Run the Remotion CLI in the workspace; reports frame progress when a tracker is active."""
+    def run(self, args: list[str], *, timeout_s: float | None = None, frames: int | None = None,
+            cwd: Path | None = None) -> str:
+        """Run the Remotion CLI in the workspace (or in `cwd`: a job's own Remotion project whose
+        node_modules is linked to the workspace's, see vp.text.render); reports frame progress
+        when a tracker is active."""
         self.ensure()
         extra = self.browser_args() if args and args[0] in ("render", "still", "studio") else []
         cmd = [self.node, str(self.cli_js()), *[str(a) for a in args], *extra]
@@ -446,7 +449,7 @@ class RemotionWorkspace:
             if not self.current():      # changed between ensure() and the shared lock
                 raise VPError("transport", "the design tools were being updated by another job; "
                                            "run again")
-            rc, lines = self._watch(cmd, timeout_s, frames)
+            rc, lines = self._watch(cmd, timeout_s, frames, cwd)
         text = "".join(lines)
         if rc != 0:
             # Stack frames say nothing to anyone; keep the lines that name the error.
@@ -455,11 +458,12 @@ class RemotionWorkspace:
         return text
 
 
-    def _watch(self, cmd: list[str], timeout_s: float, frames: int | None) -> tuple[int, list[str]]:
+    def _watch(self, cmd: list[str], timeout_s: float, frames: int | None,
+               cwd: Path | None = None) -> tuple[int, list[str]]:
         """Run with a watchdog: a process that hangs silently (Chrome stuck, no output) is killed
         at the deadline too, not only when it next prints."""
         since = progress.clock()
-        proc = subprocess.Popen(cmd, cwd=self.dir, env=self.env(), stdout=subprocess.PIPE,
+        proc = subprocess.Popen(cmd, cwd=cwd or self.dir, env=self.env(), stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT, text=True, bufsize=1, start_new_session=True)
         timed_out = threading.Event()
 

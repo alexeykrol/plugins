@@ -38,6 +38,21 @@ export type TurnWork = {
 }
 
 /**
+ * One piece of work Elsa left running after her turn: a background subagent, a background shell
+ * command, a monitor, a workflow. Kept until its end is heard, and dropped once it is older than
+ * any sane run (a reload can miss the end).
+ */
+export type BackgroundTask = {
+  /** The engine's id: the subagent's agentId, the shell's or the monitor's taskId. */
+  id: string
+  kind: 'agent' | 'shell' | 'monitor' | 'workflow' | 'other'
+  /** What it does, as the call described it; '' when nothing was said. */
+  label: string
+  /** When it was first seen (ms, the mod's clock). */
+  startedAt: number
+}
+
+/**
  * The document the pane beside the chat shows for the person to read and answer (a brief, a
  * screenplay, a plan), with the buttons whose label goes to the chat as the person's message.
  */
@@ -131,6 +146,8 @@ declare module 'claude-code' {
       beat: number
       /** The model's own work in the conversation (turns, tool calls, task list). */
       work: TurnWork
+      /** The work still running after her turn ended (background agents, shells, monitors). */
+      background: BackgroundTask[]
       /** The document in the pane beside the chat, or null before the first one was shown. */
       doc: DocPane | null
       /** The notice above the prompt, or null when there is none. */
