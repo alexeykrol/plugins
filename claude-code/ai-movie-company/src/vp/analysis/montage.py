@@ -37,13 +37,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import time
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from ..adapters import media, picture
 from ..core.errors import VPError
 from ..core.io import read_json, write_json, write_yaml
+from ..core.paths import Job
 from . import beats as beats_mod
 from . import render_plan
 from .scenes import analysis_dir, job_root, load_shots
@@ -132,9 +135,9 @@ def _order_key(shot: dict[str, Any], order: dict[str, int]) -> tuple:
 
 
 def layout(picks: list[tuple[dict[str, Any], int]], bms: list[int], s0: int, e: int, meter: int,
-           pace: int, bonus: dict[str, int] | None = None) -> list[dict[str, Any]]:
+           pace: int, bonus: dict[str, int] | None = None, *, pack: bool = False) -> list[dict[str, Any]]:
     """Segments for `picks` [(shot, round)] in the given order; round 0 = first use, round k = k-th
-    reuse. `bonus` = extra bars per shot id (lengthening before reusing)."""
+    reuse. `bonus` = extra bars per shot id. `pack` fills as many whole beats as each shot can hold."""
     bonus = bonus or {}
     segs: list[dict[str, Any]] = []
     i = s0
@@ -142,8 +145,8 @@ def layout(picks: list[tuple[dict[str, Any], int]], bms: list[int], s0: int, e: 
         left = e - i
         if left <= 0:
             break
-        bars = min(MAX_BARS, pref_bars(shot, pace) + bonus.get(shot["id"], 0))
-        n = _fit(bms, i, usable_ms(shot), bars * meter, meter, left)
+        bars = MAX_BARS if pack else min(MAX_BARS, pref_bars(shot, pace) + bonus.get(shot["id"], 0))
+        n = _fit(bms, i, usable_ms(shot), bars * meter, 1 if pack else meter, left)
         if n == 0:
             continue
         d = bms[i + n] - bms[i]
@@ -164,12 +167,15 @@ def layout(picks: list[tuple[dict[str, Any], int]], bms: list[int], s0: int, e: 
 
 def plan(shots_data: dict[str, Any], beats: dict[str, Any], target_ms: int, aspect: str = "9:16",
          pace: int | None = None, music_path: str | None = None) -> dict[str, Any]:
+    if not math.isfinite(target_ms) or target_ms <= 0:
+        raise VPError("data", "montage target must be finite and positive")
     if aspect not in ASPECTS:
         raise VPError("data", f"aspect must be one of {', '.join(ASPECTS)}")
     cw, ch, kind = ASPECTS[aspect]
-    pace = int(pace or (1 if kind == "reel" else 2))
-    if not 1 <= pace <= MAX_BARS:
+    pace = (1 if kind == "reel" else 2) if pace is None else pace
+    if pace not in range(1, MAX_BARS + 1):
         raise VPError("data", f"pace must be 1..{MAX_BARS} bars")
+    pace = int(pace)
     bms, s0, meter = grid(beats)
     e = end_index(bms, s0, meter, int(target_ms))
     need = e - s0
@@ -179,14 +185,14 @@ def plan(shots_data: dict[str, Any], beats: dict[str, Any], target_ms: int, aspe
     if not shots:
         raise VPError("data", "no usable shots")
     ranked = sorted(shots, key=lambda s: (-score(s, bar_ms), _order_key(s, order)))
-    first = [s for s in ranked if (s.get("rating") or 3) > 1]       # rating 1 = only if short
-    queue = [(s, 0) for s in first + [s for s in ranked if s not in first]]
+    queue = [(s, 0) for s in ranked if s.get("rating") != 1]
+    fallback = [(s, 0) for s in ranked if s.get("rating") == 1]
     picks: list[tuple[dict[str, Any], int]] = []
     bonus: dict[str, int] = {}
 
-    def run() -> list[dict[str, Any]]:
+    def run(*, pack: bool = False) -> list[dict[str, Any]]:
         return layout(sorted(picks, key=lambda p: (p[1], _order_key(p[0], order))), bms, s0, e,
-                      meter, pace, bonus)
+                      meter, pace, bonus, pack=pack)
 
     def filled(segs: list[dict[str, Any]]) -> bool:
         return sum(x["beats"] for x in segs) >= need
@@ -213,6 +219,15 @@ def plan(shots_data: dict[str, Any], beats: dict[str, Any], target_ms: int, aspe
                             bonus[shot["id"]] -= 1
                 if filled(segs):
                     break
+            continue
+        elif fallback:
+            # Whole bars can leave gaps even when the preferred footage fits in whole beats.
+            packed = run(pack=True)
+            if filled(packed):
+                segs = packed
+                break
+            queue, fallback = fallback, []
+            lengthened = False
             continue
         else:
             rnd += 1
@@ -257,9 +272,14 @@ def beats_for(job: str | Path, music: str | Path) -> dict[str, Any]:
 
 def make_plan(job: str | Path, music: str | Path, duration_s: float, aspect: str = "9:16",
               pace: int | None = None) -> dict[str, Any]:
+    target_ms = duration_s * 1000
+    if not math.isfinite(target_ms) or target_ms <= 0:
+        raise VPError("data", "--duration must be finite and positive")
+    if pace is not None and pace not in range(1, MAX_BARS + 1):
+        raise VPError("data", f"pace must be 1..{MAX_BARS} bars")
     shots = load_shots(job)
     b = beats_for(job, music)
-    p = plan(shots, b, int(round(duration_s * 1000)), aspect, pace, music_path=b["source"])
+    p = plan(shots, b, max(1, round(target_ms)), aspect, pace, music_path=b["source"])
     p["provenance"] = {"shots": "analysis/shots.json", "beats": "analysis/beats.json"}
     write_json(plan_path(job), p, indent=1)
     return p
@@ -278,25 +298,44 @@ def render(job: str | Path, item: str | None = None, canvas: tuple[int, int] | N
     p = read_json(plan_path(root), None)
     if not isinstance(p, dict) or not p.get("segments"):
         raise VPError("data", f"no montage plan in {plan_path(root)}: run `vp montage plan` first")
-    item = item or _next_item(root)
+    item = _next_item(root) if item is None else item
+    try:
+        Job(root).item_dir(item)
+    except ValueError as exc:
+        raise VPError("data", str(exc)) from exc
     cdir = root / "clips" / item
-    if (cdir / "cut.mp4").exists():
-        raise VPError("data", f"clip {item} already exists ({cdir}); clips are never overwritten")
+    exists_msg = f"clip {item} already exists ({cdir}); clips are never overwritten"
+    if cdir.exists() or cdir.is_symlink():
+        raise VPError("data", exists_msg)
     c = p["canvas"]
     w, h = canvas or (int(c["w"]), int(c["h"]))
+    if w < 2 or h < 2:
+        raise VPError("data", "canvas width and height must each be at least 2 pixels")
     kind = c.get("kind") or ("reel" if h > w else "long")
-    render_plan.render(p["segments"], cdir / "cut.mp4", (w, h, float(c.get("fps") or FPS)),
-                       music=p.get("music"))
-    (cdir / "clip.srt").write_text("", encoding="utf-8")
-    write_yaml(cdir / "meta.yaml", {"kind": kind, "title": title or f"{root.name} {item}",
-                                    "source": "montage", "plan": "montage/plan.json"})
-    report = picture.inspect(cdir / "cut.mp4", kind, expect_size=(w - w % 2, h - h % 2))
-    write_yaml(cdir / "cut.qa.yaml", report)
-    write_json(cdir / "plan.json", p, indent=1)       # the plan this clip was rendered from
-    info = media.probe(cdir / "cut.mp4")
-    return {"item": item, "folder": str(cdir), "duration_ms": info["duration_ms"],
-            "planned_ms": p["duration_ms"], "picture_ok": report["ok"],
-            "failures": report["failures"]}
+    cdir.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=".montage-", dir=cdir.parent) as tmp:
+        stage = Path(tmp) / "clip"
+        stage.mkdir()
+        out = stage / "cut.mp4"
+        render_plan.render(p["segments"], out, (w, h, float(c.get("fps") or FPS)),
+                           music=p.get("music"))
+        (stage / "clip.srt").write_text("", encoding="utf-8")
+        write_yaml(stage / "meta.yaml", {"kind": kind, "title": title or f"{root.name} {item}",
+                                         "source": "montage", "plan": "montage/plan.json"})
+        report = picture.inspect(out, kind, expect_size=(w - w % 2, h - h % 2))
+        write_yaml(stage / "cut.qa.yaml", report)
+        write_json(stage / "plan.json", p, indent=1)
+        info = media.probe(out)
+        result = {"item": item, "folder": str(cdir), "duration_ms": info["duration_ms"],
+                  "planned_ms": p["duration_ms"], "picture_ok": report["ok"],
+                  "failures": report["failures"]}
+        try:
+            stage.rename(cdir)
+        except OSError as exc:
+            if cdir.exists() or cdir.is_symlink():
+                raise VPError("data", exists_msg) from exc
+            raise
+    return result
 
 
 # ---- CLI -----------------------------------------------------------------------------------
@@ -334,9 +373,12 @@ def main(argv: list[str]) -> int:
                 print(json.dumps(out, ensure_ascii=False, indent=1))
             return 0
     canvas = None
-    if getattr(a, "canvas", None):
+    if a.canvas is not None:
         cw, _, chh = a.canvas.lower().partition("x")
-        canvas = (int(cw), int(chh))
+        try:
+            canvas = (int(cw), int(chh))
+        except ValueError as exc:
+            raise VPError("data", "--canvas must be WIDTHxHEIGHT in pixels") from exc
     res = render(a.job, a.item, canvas)
     out["clip"] = res
     if a.json:

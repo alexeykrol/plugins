@@ -12,7 +12,7 @@
   review show|preview|set|add|close ...      S3b gate in the dialog: vp.gates.review:main(argv)
   approve show|set ...                       S9 gate in the dialog: vp.gates.approve:main(argv)
   doctor [--json]                            machine/config readiness: vp.doctor:main(argv)
-  youtube authorize|convert-token|status     OAuth setup / connection check: vp.adapters.youtube:main(argv)
+  youtube authorize|convert-token|status|disconnect  OAuth setup / check / revoke + delete: vp.adapters.youtube:main(argv)
   results <job> [--json]                     what came out (links, files, states): vp.watch:results_main
   progress <job> [--json] [--wait N]         current long step, one line: vp.watch:progress_main
   capcut export <job> [item ...] | check     new CapCut desktop project per clip: vp.adapters.capcut:main
@@ -48,7 +48,8 @@
                                              (+ word timings): vp.adapters.elevenlabs:voice_main
   music estimate|make ...                    music with the person's ElevenLabs key (paid plans) ->
                                              <job>/music: vp.adapters.elevenlabs:music_main
-  telemetry status|flush|show-id|import-install  test-period telemetry: vp.telemetry:main
+  telemetry status|on|off|show|flush|show-id  test-period telemetry (allowlisted fields only,
+                                             after the terms; `show` sends nothing): vp.telemetry:main
   messages poll|ack                          messages from the authors: vp.messages:main
   busy [--json]                              is a render/upload/generation running: vp.busy:main
   app restart-claude|quit capcut|status      quit/restart Claude and CapCut for the person (never
@@ -64,8 +65,8 @@
   takes clean|set|apply <job> ...            cut pauses, fillers, restarts from raw takes (Ч):
                                              vp.analysis.takes:main
 
-Every command records itself in the telemetry spool (vp.telemetry, AIMC_TELEMETRY=off disables),
-uncaught errors included, and starts a detached background flush (throttled) when it ends.
+Every command records itself in the telemetry spool (vp.telemetry: after the terms are accepted;
+`vp telemetry off` or AIMC_TELEMETRY=off disables), uncaught errors included (their class only), and starts a detached background flush (throttled) when it ends.
 Long commands (BUSY_COMMANDS) hold a busy marker (vp.busy) while they run.
 
 Global option: --home <dir> (anywhere on the line, also after `learn` / `knowledge`) sets VP_HOME
@@ -157,6 +158,9 @@ QUICK_SUBCOMMANDS = {("extras", "status"), ("extras", "check"), ("extras", "deci
                      ("shots", "list"), ("shots", "describe-set"), ("takes", "set")}
 # the channel's own commands are neither recorded nor followed by a flush (the mod calls them)
 SILENT_COMMANDS = {"telemetry", "messages", "busy", "progress", None}
+# commands the mod runs in EVERY session (the channel, reminders, restart): they do not make the
+# session Elsa's for the prompt journal (vp.journal.mark_session); any other command does
+NOT_ELSA_COMMANDS = SILENT_COMMANDS | {"update", "app"}
 
 
 def _lookup(path: str) -> Callable[..., Any] | None:
@@ -264,6 +268,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     is_busy = cmd in BUSY_COMMANDS and (cmd, sub) not in QUICK_SUBCOMMANDS
     t0 = time.monotonic()
     rc: int | None = None
+    if cmd not in NOT_ELSA_COMMANDS and os.environ.get("CLAUDE_CODE_SESSION_ID"):
+        from .journal import mark_session
+        mark_session(os.environ["CLAUDE_CODE_SESSION_ID"])
     try:
         with marker(f"{cmd} {sub}".strip() if sub else str(cmd)) if is_busy \
                 else contextlib.nullcontext():

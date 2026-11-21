@@ -76,8 +76,8 @@ export const ACCENT = '#b4532a'
  * The release on the band, after the name. A unit test holds both to
  * .claude-plugin/plugin.json and to the top heading of CHANGELOG.md.
  */
-export const VERSION = '0.8.5'
-export const RELEASED = '2026-11-20'
+export const VERSION = '0.8.6'
+export const RELEASED = '2026-11-21'
 
 /** The release date as the person reads it. */
 export function releasedText(words: DirectorLang): string {

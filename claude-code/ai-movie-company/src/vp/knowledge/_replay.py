@@ -6,14 +6,16 @@ Recordings archive `<vp_home>/selection/recordings/<slug>/` (written by `learn s
     recording.yaml   {recording_id, slug, job_root, snapshot_at, subtitles_sha256, duration_ms,
                       end_limit_ms, boundary_mode, profile: {reel, long, selection_margin, ...},
                       human_time: [status.yaml human_time entries], live: {knowledge_version,
+                      brief_sha, brief_text (when briefed),
                       prompt_chars: {kind: n}, cost_usd: {kind: usd}}}
 
 Replay of version V on recording R, type T: judge task `s3c.replay.<slug>.<T>`, same prompt
 builder and the same S3a validator/placement code; result in
-`replay/<V>/<slug>/<T>.yaml` (cached by knowledge content hash + subtitles hash).
+`replay/<V>/<slug>/<T>.yaml` (cached by knowledge content hash, subtitles hash and brief hash).
 
 Measurement of V on a recording set: proposals come from the replay file, or — if V itself ran
-live on the recording — from the proposals of its live review (no model call needed). Verdict
+live on the recording — from the proposals of its live review (no model call needed). Recordings
+with evidence of briefed selection need a matching archived brief to be scored. Verdict
 inheritance and coverage per `_matching`; unevaluated proposals count as reject; human time is
 NOT inherited (load = proxy only).
 """
@@ -29,6 +31,7 @@ from ..core.costs import CostJournal
 from ..core.ctx import Ctx
 from ..core.errors import VPError
 from ..core.io import now_iso, read_yaml, sha256_bytes, sha256_file, write_yaml
+from ..core.manifest import read_manifest
 from ..core.paths import Job
 from ..core.srt import read_srt, srt_duration_ms
 from ..core.status import Status
@@ -39,6 +42,7 @@ from .prompt_builder import build_prompt
 from .store import KnowledgeStore
 
 KINDS = F.TYPES
+BRIEF_UNAVAILABLE = "brief_unavailable"
 PROPOSAL_FIELDS = ("start_ms", "end_ms", "first_cue", "last_cue", "boundary", "title", "score",
                    "applied", "text")
 
@@ -51,6 +55,25 @@ def rec_slug(recording_id: str) -> str:
 
 def boundary_of_mode(mode: str | None) -> str:
     return "subtitle" if mode == "srt_only" else "words"
+
+
+def brief_fingerprint(text: Any) -> str | None:
+    return sha256_bytes(text)[:16] if isinstance(text, str) and text.strip() else None
+
+
+def replay_exclusion(meta: dict[str, Any], verdicts: Iterable[dict[str, Any]]) -> str | None:
+    live = meta.get("live") or {}
+    brief_sha = live.get("brief_sha")
+    brief = live.get("brief_text")
+    if (brief_sha or brief is not None) and brief_fingerprint(brief) != brief_sha:
+        return BRIEF_UNAVAILABLE
+    # Scoring pools verdicts across reviews. Known brief hashes must agree with the
+    # archive, while absent verdict markers leave legacy provenance unknown.
+    for verdict in verdicts:
+        verdict_sha = verdict.get("brief_sha")
+        if (verdict_sha and verdict_sha != brief_sha) or (verdict.get("briefed") is True and not brief_sha):
+            return BRIEF_UNAVAILABLE
+    return None
 
 
 # ---- archive ----------------------------------------------------------------------------------
@@ -99,6 +122,10 @@ class Archive:
                 k = task.split(".", 1)[1]
                 cost[k] = round(cost.get(k, 0.0) + float(r.get("usd") or 0.0), 6)
         prompts = proposed.get("prompts") or {}
+        # Capture the completed selection's brief even if the request was edited since S3a.
+        manifest = read_manifest(job, "S3a") or {}
+        brief = ((manifest.get("config") or {}).get("brief") or {}).get("text")
+        brief_sha = brief_fingerprint(brief)
         meta = {
             "recording_id": rid, "slug": rec_slug(rid), "job_root": str(job.root),
             "snapshot_at": now_iso(), "subtitles_sha256": sha256_file(d / "subtitles.srt"),
@@ -109,10 +136,13 @@ class Archive:
             "selection": dict(cfg.get("selection") or {}),
             "human_time": human,
             "live": {"knowledge_version": proposed.get("knowledge_version"),
+                     "brief_sha": brief_sha,
                      "prompt_chars": {k: (prompts.get(k) or {}).get("chars") for k in KINDS
                                       if isinstance(prompts.get(k), dict)},
                      "cost_usd": cost},
         }
+        if brief_sha is not None:
+            meta["live"]["brief_text"] = brief
         write_yaml(d / "recording.yaml", meta)
         return meta
 
@@ -121,13 +151,17 @@ class Archive:
         return m if isinstance(m, dict) else None
 
     def recordings(self) -> list[str]:
+        """Archived recordings eligible for replay scoring and split coverage."""
         if not self.dir.exists():
             return []
+        vi = VerdictIndex(self.store.verdicts())
         out = []
         for p in sorted(self.dir.iterdir()):
             m = read_yaml(p / "recording.yaml", default=None)
             if isinstance(m, dict) and m.get("recording_id"):
-                out.append(str(m["recording_id"]))
+                rid = str(m["recording_id"])
+                if replay_exclusion(m, vi.by_rec.get(rid, [])) is None:
+                    out.append(rid)
         return sorted(out)
 
     def timeline(self, recording_id: str) -> F.Timeline:
@@ -227,7 +261,7 @@ def replay_path(store: KnowledgeStore, version: str, rid: str, kind: str) -> Pat
 
 def read_replay(store: KnowledgeStore, archive: Archive, version: str, rid: str,
                 kind: str) -> dict[str, Any] | None:
-    """A replay result that is still valid (same knowledge content, same subtitles)."""
+    """A replay result for the same knowledge content, subtitles and brief."""
     doc = read_yaml(replay_path(store, version, rid, kind), default=None)
     meta = archive.load(rid)
     if not isinstance(doc, dict) or meta is None:
@@ -236,6 +270,8 @@ def read_replay(store: KnowledgeStore, archive: Archive, version: str, rid: str,
         return None
     if doc.get("subtitles_sha256") != meta.get("subtitles_sha256"):
         return None
+    if doc.get("brief_sha") != (meta.get("live") or {}).get("brief_sha"):
+        return None
     return doc
 
 
@@ -243,6 +279,8 @@ def proposals_for(store: KnowledgeStore, archive: Archive, vindex: VerdictIndex,
                   rid: str, kind: str) -> dict[str, Any] | None:
     """{"source": replay|live, "proposals": [...], "prompt_chars", "cost_usd"} or None."""
     meta = archive.load(rid) or {}
+    if replay_exclusion(meta, vindex.by_rec.get(rid, [])):
+        return None
     live_meta = meta.get("live") or {}
     live = vindex.live_review(version, rid)
     if live is not None or live_meta.get("knowledge_version") == version:
@@ -288,9 +326,17 @@ def measure(store: KnowledgeStore, archive: Archive, vindex: VerdictIndex, versi
             rids: Iterable[str], kinds: Iterable[str] = KINDS) -> dict[str, Any]:
     """Units of `version` on recordings `rids` (replay semantics). Returns
     {"units", "recs", "missing": [(rid, kind)], "unevaluated": [{recording_id, type, proposal}],
-     "sources": {rid: {kind: replay|live}}}."""
+     "sources": {rid: {kind: replay|live}}, "excluded": {rid: reason}}."""
     units, recs, missing, uneval, sources = [], {}, [], [], {}
+    excluded = {}
+    kinds = tuple(kinds)
     for rid in rids:
+        reason = replay_exclusion(archive.load(rid) or {}, vindex.by_rec.get(rid, []))
+        if reason:
+            excluded[rid] = reason
+            # The curve uses missing coverage to intersect recording sets, including explicit lists.
+            missing.extend((rid, kind) for kind in kinds)
+            continue
         places = vindex.places(rid)
         refs = vindex.references(rid) if vindex.full_scan(rid) else None
         info = archive.minutes(rid)
@@ -305,7 +351,8 @@ def measure(store: KnowledgeStore, archive: Archive, vindex: VerdictIndex, versi
             units.append(unit)
             uneval.extend({"recording_id": rid, "type": kind, "proposal": p} for p in ue)
             sources.setdefault(rid, {})[kind] = got["source"]
-    return {"units": units, "recs": recs, "missing": missing, "unevaluated": uneval, "sources": sources}
+    return {"units": units, "recs": recs, "missing": missing, "unevaluated": uneval,
+            "sources": sources, "excluded": excluded}
 
 
 def live_units(vindex: VerdictIndex, archive: Archive, version: str,
@@ -356,14 +403,25 @@ def run_replay(store: KnowledgeStore, archive: Archive, version: str, rids: Iter
     content_hash = kv.content_hash
     ctx = work_ctx(store, f"replay-{version}", config, judge)
     out = []
+    vi = VerdictIndex(store.verdicts())
+    kinds = tuple(kinds)
     for rid in rids:
         meta = archive.load(rid)
         if meta is None:
             raise VPError("data", f"recording {rid} is not in the archive (run `learn snapshot <job>`)")
+        reason = replay_exclusion(meta, vi.by_rec.get(rid, []))
+        if reason:
+            ctx.log.event("s3c_replay_skipped", version=version, recording_id=rid, reason=reason)
+            out.extend({"recording_id": rid, "type": kind, "status": "skipped", "reason": reason}
+                       for kind in kinds)
+            continue
         tl = archive.timeline(rid)
         transcript = transcript_text(tl.cues)
         rec_ms = srt_duration_ms(tl.cues)
         prof = meta.get("profile") or {}
+        live = meta.get("live") or {}
+        brief_sha = live.get("brief_sha")
+        brief = live.get("brief_text") if brief_sha else None
         for kind in kinds:
             path = replay_path(store, version, rid, kind)
             if not force and read_replay(store, archive, version, rid, kind) is not None:
@@ -372,7 +430,7 @@ def run_replay(store: KnowledgeStore, archive: Archive, version: str, rids: Iter
             rng = F.duration_range(prof, kind)
             cap = F.proposal_cap(kind, rec_ms, prof)
             built = build_prompt(store, version, kind, transcript, cap=cap, min_s=rng[0] / 1000,
-                                 max_s=rng[1] / 1000, settings=meta.get("selection") or {})
+                                 max_s=rng[1] / 1000, settings=meta.get("selection") or {}, brief=brief)
             task = f"s3c.replay.{rec_slug(rid)}.{kind}"
             started = now_iso()
             raw = judge.run(task, built.text, {"subtitles.txt": transcript}, "output.yaml", ctx)
@@ -382,6 +440,7 @@ def run_replay(store: KnowledgeStore, archive: Archive, version: str, rids: Iter
                       if r.get("task") == task and str(r.get("at") or "") >= started)
             doc = {"version": version, "content_hash": content_hash, "recording_id": rid,
                    "type": kind, "subtitles_sha256": meta.get("subtitles_sha256"),
+                   "brief_sha": brief_sha,
                    "created_at": now_iso(), "cap": cap, "prompt_chars": built.chars,
                    "prompt_sha256": built.sha256, "cases": built.cases, "cost_usd": round(usd, 6),
                    "returned": len(items), "discarded": len(dropped),

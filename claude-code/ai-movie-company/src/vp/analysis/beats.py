@@ -57,7 +57,8 @@ def decode(path: str | Path, sr: int = SR, timeout_s: float = 600) -> tuple[arra
     graph = (f"[0:a:0]aresample={sr},aformat=sample_fmts=fltp:channel_layouts=mono,asplit=2[f][b];"
              "[b]lowpass=f=150,lowpass=f=150[l];"
              "[f][l]join=inputs=2:channel_layout=stereo,aformat=sample_fmts=s16[o]")
-    cmd = [media.FFMPEG, "-hide_banner", "-nostdin", "-v", "error", "-i", str(p),
+    cmd = [media.FFMPEG, "-hide_banner", "-nostdin", "-v", "error", "-xerror",
+           "-err_detect", "explode", "-i", str(p),
            "-filter_complex", graph, "-map", "[o]", "-f", "s16le", "-acodec", "pcm_s16le", "-"]
     try:
         proc = subprocess.run(cmd, capture_output=True, timeout=timeout_s)
@@ -65,12 +66,13 @@ def decode(path: str | Path, sr: int = SR, timeout_s: float = 600) -> tuple[arra
         raise VPError("internal", "ffmpeg not found on PATH") from e
     except subprocess.TimeoutExpired as e:
         raise VPError("data", f"decoding {p.name} timed out") from e
-    if proc.returncode != 0:
+    if proc.returncode or proc.stderr.strip():
         raise VPError("data", f"decoding {p.name} failed: "
                               f"{proc.stderr.decode('utf-8', 'replace').strip()[-400:]}")
     data = array("h")
-    raw = proc.stdout[: len(proc.stdout) - len(proc.stdout) % 4]
-    data.frombytes(raw)
+    if len(proc.stdout) % 4:
+        raise VPError("data", f"decoding {p.name} returned an incomplete stereo PCM frame")
+    data.frombytes(proc.stdout)
     if sys.byteorder != "little":
         data.byteswap()
     if len(data) < 2 * WIN:
@@ -220,11 +222,16 @@ def analyse_signal(full: array | list[float], low: array | list[float], sr: int 
     # frame i covers samples [i*HOP, i*HOP+WIN); its flux rises when an onset enters the window,
     # i.e. the onset lies in the last hop of the window: on average at i*HOP + WIN - HOP/2
     t0 = (WIN - HOP / 2) / sr
-    period, conf = tempo_period(o, fps)
-    frames = track_beats(o, period)
-    beat_s = [f / fps + t0 for f in refine(o, frames)]
-    slope = regression_period(beat_s)
-    tempo = 60.0 / slope if slope else 60.0 * fps / period
+    onsets = peaks(o, fps)
+    tempo, conf = None, 0.0
+    frames, beat_s = [], []
+    if onsets:
+        period, conf = tempo_period(o, fps)
+        frames = track_beats(o, period)
+        beat_s = [f / fps + t0 for f in refine(o, frames)]
+        slope = regression_period(beat_s)
+        estimate = 60.0 / slope if slope else 60.0 * fps / period
+        tempo = max(BPM_MIN, min(BPM_MAX, estimate))
     # downbeat phase from the low band onset strength at the beats
     lowo = _flux(frame_energy(low))
     phase_score = [0.0] * METER
@@ -237,11 +244,12 @@ def analyse_signal(full: array | list[float], low: array | list[float], sr: int 
         k = (i - phase) % METER
         beats.append({"ms": int(round(t * 1000)), "bar": (i - phase) // METER + 1, "beat": k + 1,
                       "downbeat": k == 0, "strength": round(o[f] / top, 3) if top else 0.0})
-    return {"tempo_bpm": round(tempo, 2), "period_ms": round(60000.0 / tempo, 1),
+    return {"tempo_bpm": round(tempo, 2) if tempo is not None else None,
+            "period_ms": round(60000.0 / tempo, 1) if tempo is not None else None,
             "meter": METER, "meter_guess": True, "confidence": round(conf, 3),
             "beats_ms": [b["ms"] for b in beats],
             "downbeats_ms": [b["ms"] for b in beats if b["downbeat"]],
-            "onsets_ms": [int(round((t + t0) * 1000)) for t in peaks(o, fps)],
+            "onsets_ms": [int(round((t + t0) * 1000)) for t in onsets],
             "beats": beats, "duration_ms": int(round(len(full) / sr * 1000))}
 
 
@@ -263,6 +271,7 @@ def main(argv: list[str]) -> int:
     if a.json:
         print(json.dumps(res, ensure_ascii=False, indent=1))
     else:
-        print(f"tempo {res['tempo_bpm']} BPM, {len(res['beats_ms'])} beats, "
+        tempo = f"{res['tempo_bpm']} BPM" if res["tempo_bpm"] is not None else "unavailable"
+        print(f"tempo {tempo}, {len(res['beats_ms'])} beats, "
               f"{len(res['downbeats_ms'])} bars (4/4 guessed), confidence {res['confidence']}")
     return 0

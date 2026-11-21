@@ -1,8 +1,10 @@
 """The dialog journal (K6, K27): what the person said, where they got stuck, one-step feedback.
 
 Two sources, both JSON lines on the person's disk, nothing sent anywhere:
-  * typed prompts — written by the hook hooks/journal_prompt.py to <VP_HOME>/journal/<date>.jsonl
-    ({"at", "session_id", "kind": "prompt", "cwd", "text"});
+  * typed prompts of Elsa's sessions only — written by the hook hooks/journal_prompt.py to
+    <VP_HOME>/journal/<date>.jsonl ({"at", "session_id", "kind": "prompt", "cwd", "text"}); a
+    session is Elsa's once a prompt calls her (a plugin command or her name) or the engine runs a
+    pipeline command in it (`mark_session`, from vp.cli);
   * tagged notes — `vp journal note`, written by the director when something happens worth
     learning from: `deadend` (stuck, an error, gave up, irritation, "не понимаю"), `surprise`
     (a request the plugin did not foresee — a new scenario), `feedback` (the person's opinion).
@@ -40,9 +42,6 @@ from .core.errors import VPError
 from .core.paths import vp_home
 
 NOTE_KINDS = ("deadend", "surprise", "feedback")
-# telemetry kind of each note (vp.telemetry): a dead end is its own kind, a surprise is a question
-# the plugin had no scenario for, the rest is the journal
-TELEMETRY_KINDS = {"deadend": "deadend", "surprise": "question", "feedback": "journal"}
 KINDS = ("prompt",) + NOTE_KINDS
 JOB_FILE = "journal.jsonl"
 PACK_DAYS = 14
@@ -81,6 +80,42 @@ def journal_dir(home: Path | None = None) -> Path:
     return (home or vp_home()) / "journal"
 
 
+# Elsa's sessions: the prompt hook records only these (keep in sync with hooks/journal_prompt.py,
+# a test compares them)
+SESSIONS_FILE = "elsa-sessions.json"
+MAX_SESSIONS = 200
+
+
+def elsa_sessions(home: Path | None = None) -> list[str]:
+    try:
+        data = json.loads((journal_dir(home) / SESSIONS_FILE).read_text(encoding="utf-8"))
+        got = data.get("sessions") if isinstance(data, dict) else None
+        return [s for s in got if isinstance(s, str)] if isinstance(got, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def mark_session(session_id: str | None, home: Path | None = None) -> bool:
+    """Mark a Claude Code session as Elsa's (the engine ran a pipeline command in it), so the
+    prompt hook journals its prompts from now on. Never raises; True when newly marked."""
+    sid = (session_id or "").strip()[:200]
+    if not sid:
+        return False
+    try:
+        ids = elsa_sessions(home)
+        if sid in ids:
+            return False
+        ids = (ids + [sid])[-MAX_SESSIONS:]
+        path = journal_dir(home) / SESSIONS_FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps({"sessions": ids}), encoding="utf-8")
+        os.replace(tmp, path)
+        return True
+    except Exception:  # noqa: BLE001 - bookkeeping must never break a command
+        return False
+
+
 def _now() -> datetime:
     return datetime.now().astimezone()
 
@@ -111,9 +146,8 @@ def note(job: str | None, kind: str, text: str, now: datetime | None = None) -> 
         path = _append(folder / JOB_FILE, rec)
     else:
         path = _append(journal_dir() / f"{now.strftime('%Y-%m-%d')}.jsonl", rec)
-    from . import telemetry
-    telemetry.record(TELEMETRY_KINDS.get(kind, "journal"), note_kind=kind, text=text,
-                     job=rec.get("job"), at=rec["at"])
+    # local only (owner, alpha 2026-11-20): a note is free text about the person; it is never
+    # sent automatically — it goes into `vp feedback pack`, which the person sends themselves
     return {**rec, "file": str(path)}
 
 
@@ -354,7 +388,7 @@ def feedback_main(argv: list[str]) -> int:
         size = path.stat().st_size
     except OSError:
         size = None
-    telemetry.record("feedback_pack", file=str(path), bytes=size, days=a.days, revealed=shown)
+    telemetry.record("feedback_pack", bytes=size, days=a.days, revealed=shown)   # no path
     print(json.dumps({"file": str(path), "revealed": shown}, ensure_ascii=False) if a.json
           else str(path))
     return 0

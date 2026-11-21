@@ -13,11 +13,15 @@ cleaning) with 10 ms fades at the joins against clicks; then every source must h
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
+from subprocess import TimeoutExpired
+from tempfile import TemporaryDirectory
 from typing import Any, Sequence
 
 from ..adapters import media
 from ..core.errors import VPError
+from ..verify_mp4 import _probe, _seconds
 
 JOIN_FADE_S = 0.010
 MUSIC_FADE_S = 1.5
@@ -39,6 +43,8 @@ def ffmpeg_args(segments: Sequence[dict[str, Any]], canvas: tuple[int, int, floa
         raise VPError("data", "plan has no segments")
     w, h, fps = int(canvas[0]), int(canvas[1]), float(canvas[2])
     w, h = w - w % 2, h - h % 2
+    if w <= 0 or h <= 0 or not math.isfinite(fps) or fps <= 0:
+        raise VPError("data", "canvas dimensions and frame rate must be finite and positive")
     frames = segment_frames([int(s["duration_ms"]) for s in segments], fps)
     if any(f <= 0 for f in frames):
         raise VPError("data", "plan has a segment shorter than one frame")
@@ -50,8 +56,10 @@ def ffmpeg_args(segments: Sequence[dict[str, Any]], canvas: tuple[int, int, floa
         dur_s = f / fps
         args += ["-ss", f"{int(s['in_ms']) / 1000:.3f}", "-t", f"{dur_s + 0.25:.3f}",
                  "-i", str(s["source_path"])]
-        graph.append(f"[{i}:v:0]fps={fps:g},scale={w}:{h}:force_original_aspect_ratio=increase,"
-                     f"crop={w}:{h},setsar=1,trim=end_frame={f},setpts=PTS-STARTPTS[v{i}]")
+        # Start the frame grid at the first decoded frame and preserve the final input frame.
+        graph.append(f"[{i}:v:0]setpts=PTS-STARTPTS,fps={fps:g}:eof_action=pass,"
+                     f"scale={w}:{h}:force_original_aspect_ratio=increase,"
+                     f"crop={w}:{h},setsar=1,trim=end_frame={f}[v{i}]")
         parts.append(f"[v{i}]")
         if keep_audio:
             fo = max(0.0, dur_s - JOIN_FADE_S)
@@ -85,4 +93,23 @@ def render(segments: Sequence[dict[str, Any]], out: str | Path, canvas: tuple[in
             raise VPError("data", f"plan source not found: {s['source_path']}")
     if music and not Path(music["path"]).is_file():
         raise VPError("data", f"music not found: {music['path']}")
-    return media._render_to(out, ffmpeg_args(segments, canvas, music, keep_audio), timeout_s=timeout_s)
+    args = ffmpeg_args(segments, canvas, music, keep_audio)
+    fps = float(canvas[2])
+    frames = segment_frames([int(s["duration_ms"]) for s in segments], fps)
+    expected_s = sum(frames) / fps
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(prefix=f".{out.stem}.", dir=out.parent) as tmp:
+        rendered = media._render_to(Path(tmp) / out.name, args, timeout_s=timeout_s)
+        # Inspect the video stream directly. Audio may extend the container duration.
+        try:
+            result = _probe(rendered, "-select_streams", "v:0", "-show_entries", "stream=duration")
+        except (OSError, TimeoutExpired, ValueError) as exc:
+            raise VPError("data", f"cannot verify rendered video duration: {exc}") from exc
+        streams = result.get("streams") or []
+        video_s = _seconds(streams[0].get("duration")) if streams else None
+        if video_s is None or video_s <= 0 or abs(video_s - expected_s) > 1 / fps + 0.001:
+            raise VPError("data", f"rendered video stream duration {video_s}s differs from plan "
+                          f"({expected_s:.3f}s)")
+        rendered.replace(out)
+    return out

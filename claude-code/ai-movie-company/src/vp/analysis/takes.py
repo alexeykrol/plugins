@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -93,21 +94,24 @@ def find_fillers(words: list[Word], iso_ms: int = ISO_MS, pad_ms: int = PAD_MS) 
     out = []
     i = 0
     while i < len(words):
-        if words[i].norm in HESITATIONS:
-            out.append(_cut(*_span(words, i, i, pad_ms), "filler", words[i:i + 1]))
-            i += 1
-            continue
-        hit = None
-        for ph in FILLERS_ISOLATED:
-            j = i + len(ph) - 1
-            if j < len(words) and tuple(x.norm for x in words[i:j + 1]) == ph \
-                    and _gap_before(words, i) >= iso_ms and _gap_after(words, j) >= iso_ms:
-                hit = j
-                break
+        hit = i if words[i].norm in HESITATIONS else None
+        if hit is None:
+            for ph in FILLERS_ISOLATED:
+                j = i + len(ph) - 1
+                if j < len(words) and tuple(x.norm for x in words[i:j + 1]) == ph \
+                        and _gap_before(words, i) >= iso_ms and _gap_after(words, j) >= iso_ms:
+                    hit = j
+                    break
         if hit is None:
             i += 1
             continue
-        out.append(_cut(*_span(words, i, hit, pad_ms), "filler", words[i:hit + 1]))
+        start, end = _span(words, i, hit, pad_ms)
+        if i > 0:
+            start = max(start, words[i - 1].end_ms)
+        if hit + 1 < len(words):
+            end = min(end, words[hit + 1].start_ms)
+        if end > start:
+            out.append(_cut(start, end, "filler", words[i:hit + 1]))
         i = hit + 1
     return out
 
@@ -181,6 +185,25 @@ def propose(words: list[Word], duration_ms: int, pause_ms: int = PAUSE_MS, pad_m
             "review": None}
 
 
+def _renderable_keep(keep: list[dict], fps: float) -> list[dict]:
+    kept = []
+    elapsed = 0
+    for k in keep:
+        duration = k["end_ms"] - k["start_ms"]
+        if render_plan.segment_frames([elapsed, duration], fps)[-1] > 0:
+            kept.append(k)
+            elapsed += duration
+    if not kept:
+        raise VPError("data", "no keep range reaches one frame")
+    return kept
+
+
+def _update_keep(data: dict[str, Any], fps: float | None) -> None:
+    if fps is not None:
+        data["keep"] = _renderable_keep(data["keep"], fps)
+    data["removed_ms"] = data["duration_ms"] - sum(k["end_ms"] - k["start_ms"] for k in data["keep"])
+
+
 def remap_words(words_json: dict[str, Any], keep: list[dict]) -> dict[str, Any]:
     """Whisper-style words moved onto the kept timeline; words inside a cut are dropped."""
     raw = []
@@ -190,8 +213,8 @@ def remap_words(words_json: dict[str, Any], keep: list[dict]) -> dict[str, Any]:
         raw.extend(words_json.get("words") or [])
     out = []
     for w in raw:
-        s, e = float(w["start"]) * 1000, float(w["end"]) * 1000
-        off = 0.0
+        s, e = round(float(w["start"]) * 1000), round(float(w["end"]) * 1000)
+        off = 0
         for k in keep:
             if k["start_ms"] <= s < k["end_ms"]:
                 ns = off + s - k["start_ms"]
@@ -210,14 +233,20 @@ def takes_path(job: str | Path) -> Path:
 
 
 def clean(job: str | Path, pause_ms: int = PAUSE_MS) -> dict[str, Any]:
+    if not math.isfinite(pause_ms) or pause_ms <= 0:
+        raise VPError("data", "pause must be finite and positive")
     j = Job(job_root(job))
     words = load_words(j.source_words)
     if not words:
         raise VPError("data", f"no word timings in {j.source_words}")
     video = j.source_video
-    dur = media.duration_ms(video) if video.is_file() else words[-1].end_ms + 500
-    res = {"schema": 1, "source_video": str(video) if video.is_file() else None,
+    info = media.probe(video) if video.is_file() else None
+    dur = info["duration_ms"] if info else words[-1].end_ms + 500
+    res = {"schema": 1, "source_video": str(video) if info else None,
            "source_words": str(j.source_words), **propose(words, dur, pause_ms)}
+    if info:
+        res["fps"] = float(info.get("fps") or 30)
+        _update_keep(res, res["fps"])
     write_json(takes_path(job), res, indent=1)
     return res
 
@@ -236,7 +265,7 @@ def set_status(job: str | Path, cut_id: str, decision: str) -> dict[str, Any]:
         raise VPError("data", f"no cut {cut_id!r}")
     c["status"] = {"keep": "rejected", "cut": "accepted"}[decision]
     data["keep"] = keep_ranges(data["cuts"], data["duration_ms"])
-    data["removed_ms"] = data["duration_ms"] - sum(k["end_ms"] - k["start_ms"] for k in data["keep"])
+    _update_keep(data, data.get("fps"))
     write_json(takes_path(job), data, indent=1)
     return c
 
@@ -245,18 +274,31 @@ def apply(job: str | Path) -> dict[str, Any]:
     data = load(job)
     if not data.get("source_video"):
         raise VPError("data", "no source video to cut")
+    transcript = Path(data["source_words"]) if data.get("source_words") else None
+    try:
+        words_json = read_json(transcript) if transcript is not None else None
+    except FileNotFoundError:
+        words_json = None
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise VPError("data", f"invalid source transcript: {transcript}") from exc
+    if words_json is None:
+        raise VPError("data", f"source transcript missing: {transcript or 'no path in takes plan'}")
     src = Path(data["source_video"])
     info = media.probe(src)
     if not info.get("has_audio"):
         raise VPError("data", f"{src.name} has no audio")
+    fps = float(info.get("fps") or 30)
+    _update_keep(data, fps)
+    clean_words = remap_words(words_json, data["keep"])
+    if not clean_words["words"]:
+        raise VPError("data", f"no transcript words remain after cuts: {transcript}")
     segs = [{"source_path": str(src), "in_ms": k["start_ms"],
              "duration_ms": k["end_ms"] - k["start_ms"]} for k in data["keep"]]
     out_dir = analysis_dir(job) / "takes"
     out = render_plan.render(segs, out_dir / "clean.mp4",
-                             (int(info["width"]), int(info["height"]), float(info.get("fps") or 30)),
+                             (int(info["width"]), int(info["height"]), fps),
                              keep_audio=True)
-    words_json = read_json(Path(data["source_words"]), {}) or {}
-    write_json(out_dir / "clean.json", remap_words(words_json, data["keep"]), indent=1)
+    write_json(out_dir / "clean.json", clean_words, indent=1)
     return {"video": str(out), "words": str(out_dir / "clean.json"),
             "duration_ms": media.duration_ms(out), "removed_ms": data["removed_ms"]}
 
@@ -277,7 +319,10 @@ def main(argv: list[str]) -> int:
     ap_.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     if a.cmd == "clean":
-        res = clean(a.job, int(round(a.pause * 1000)))
+        pause_ms = a.pause * 1000
+        if not math.isfinite(pause_ms) or pause_ms <= 0:
+            raise VPError("data", "--pause must be finite and positive")
+        res = clean(a.job, max(1, round(pause_ms)))
         if a.json:
             print(json.dumps(res, ensure_ascii=False, indent=1))
         else:

@@ -67,7 +67,7 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-TERMS_VERSION = "2026-11-21-draft"      # keep in sync with vp.consent.TERMS_VERSION (a test checks)
+TERMS_VERSION = "2026-11-21-alpha1"      # keep in sync with vp.consent.TERMS_VERSION (a test checks)
 INSTALLER_URL = ("https://raw.githubusercontent.com/alexeykrol/plugins/main/claude-code/"
                  "ai-movie-company/install.sh")
 APPROVAL_TTL_S = 30 * 60

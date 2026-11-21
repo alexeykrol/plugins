@@ -8,8 +8,8 @@ written next to shots.json.
 
 What a shot SHOWS is judgment: `description` stays null here; Elsa looks at the keyframes and fills
 it with `vp shots describe-set <job> <shot-id> "<text>"` (optionally a 1–5 rating and tags).
-Re-running detection keeps descriptions of shots that did not move (same source, start within
-`KEEP_MS`).
+Re-running detection keeps annotations by matching the closest starts within `KEEP_MS` on the
+same source, with each annotation used at most once.
 
 Layout (job = a folder of videos, or a job folder with request.yaml):
   sources   request.yaml `source.videos` (a folder or a list of files), else <job>/footage/,
@@ -48,6 +48,7 @@ _SHOWINFO = re.compile(r"Parsed_showinfo.*?pts_time:\s*([\d.]+)")
 _META_FRAME = re.compile(r"Parsed_metadata.*?pts_time:\s*([\d.]+)")
 _META_KEY = re.compile(r"Parsed_metadata.*?lavfi\.signalstats\.(YAVG|YDIF)=([\d.]+)")
 _EBUR = re.compile(r"Parsed_ebur128.*?t:\s*([\d.]+).*?M:\s*(-?[\d.]+)")
+_FFMPEG_ERROR = re.compile(r"^(?:\[[^\]]+\] )*\[(?:error|fatal|panic)\] ")
 
 
 # ---- where things are ---------------------------------------------------------------------
@@ -155,30 +156,89 @@ def shot_measures(start: int, end: int, samples: list[tuple[int, float, float]],
 
 # ---- ffmpeg --------------------------------------------------------------------------------
 
+def _video_probe(path: Path, entries: str) -> dict[str, Any]:
+    cmd = [media.FFPROBE, "-v", "error", "-select_streams", "v:0", "-show_entries", entries,
+           "-of", "json", str(path)]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except FileNotFoundError as e:
+        raise VPError("internal", "ffprobe not found on PATH") from e
+    except subprocess.TimeoutExpired as e:
+        raise VPError("data", f"video timing probe of {path.name} timed out") from e
+    if proc.returncode or proc.stderr.strip():
+        raise VPError("data", f"ffprobe failed on {path.name}: {proc.stderr.strip()[-300:]}")
+    return json.loads(proc.stdout)
+
+
+def _seconds(value: object) -> float | None:
+    try:
+        seconds = float(str(value))
+    except ValueError:
+        return None
+    return seconds if math.isfinite(seconds) else None
+
+
+def _video_bounds_ms(path: Path) -> tuple[int, int]:
+    """Video bounds on FFmpeg's input-relative timeline, in milliseconds."""
+    timing = _video_probe(path, "stream=start_time,duration:format=start_time")
+    streams = timing.get("streams") or []
+    if not streams:
+        raise VPError("data", f"{path.name}: no video stream")
+    stream = streams[0]
+    origin = _seconds(timing.get("format", {}).get("start_time")) or 0.0
+    first = _seconds(stream.get("start_time"))
+    duration = _seconds(stream.get("duration"))
+    if first is not None and duration is not None and duration > 0:
+        end = first + duration
+    else:
+        # Some containers omit stream duration. Read only the video packets to find its end.
+        packets = _video_probe(path, "packet=pts_time,duration_time").get("packets", [])
+        starts, ends = [], []
+        for packet in packets:
+            pts = _seconds(packet.get("pts_time"))
+            if pts is not None:
+                starts.append(pts)
+                ends.append(pts + (_seconds(packet.get("duration_time")) or 0.0))
+        if not starts:
+            raise VPError("data", f"{path.name}: cannot determine video stream duration")
+        first = min(starts)
+        end = max(ends)
+    # Include the last timestamp even when no packet duration was available.
+    start_ms = max(0, math.ceil((first - origin) * 1000))
+    end_ms = max(start_ms + 1, math.ceil((end - origin) * 1000))
+    return start_ms, end_ms
+
+
 def analyse_video(path: Path, threshold: float = THRESHOLD, timeout_s: float = 3600) -> dict[str, Any]:
     info = media.probe(path)
     if not info.get("width"):
         raise VPError("data", f"{path.name}: no video stream")
-    graph = (f"[0:v]scale=320:-2,split[a][b];[a]select='gt(scene,{threshold})',showinfo[o1];"
+    graph = (f"[0:v:0]scale=320:-2,split[a][b];[a]select='gt(scene,{threshold})',showinfo[o1];"
              f"[b]fps={SAMPLE_FPS},scale=160:-2,signalstats,metadata=mode=print[o2]")
     outs = ["-map", "[o1]", "-f", "null", "-", "-map", "[o2]", "-f", "null", "-"]
     if info.get("has_audio"):
         graph += ";[0:a:0]ebur128=framelog=info[o3]"
         outs += ["-map", "[o3]", "-f", "null", "-"]
-    cmd = [media.FFMPEG, "-hide_banner", "-nostdin", "-i", str(path), "-filter_complex", graph, *outs]
+    cmd = [media.FFMPEG, "-hide_banner", "-nostdin", "-loglevel", "level+info", "-xerror",
+           "-err_detect", "explode", "-i", str(path), "-filter_complex", graph, *outs]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_s)
     except FileNotFoundError as e:
         raise VPError("internal", "ffmpeg not found on PATH") from e
     except subprocess.TimeoutExpired as e:
         raise VPError("data", f"scene analysis of {path.name} timed out after {timeout_s}s") from e
-    if proc.returncode != 0:
-        raise VPError("data", f"scene analysis of {path.name} failed: {proc.stderr.strip()[-400:]}")
-    return {"info": info, **parse_pass(proc.stderr)}
+    errors = [line for line in proc.stderr.splitlines() if _FFMPEG_ERROR.match(line)]
+    if proc.returncode or errors:
+        details = "\n".join(errors) if errors else proc.stderr
+        raise VPError("data", f"scene analysis of {path.name} failed: {details.strip()[-400:]}")
+    start_ms, end_ms = _video_bounds_ms(path)
+    return {"info": {**info, "duration_ms": end_ms}, "video_start_ms": start_ms,
+            **parse_pass(proc.stderr)}
 
 
 def keyframe(src: Path, at_ms: int, out: Path) -> Path:
-    return media._render_to(out, ["-ss", f"{at_ms / 1000:.3f}", "-i", str(src), "-frames:v", "1",
+    return media._render_to(out, ["-ss", f"{at_ms / 1000:.3f}", "-i", str(src), "-map", "0:v:0",
+                                  "-frames:v", "1",
                                   "-vf", "scale=-2:'min(720,ih)'", "-q:v", "3", "-update", "1",
                                   "-f", "image2"], timeout_s=120)
 
@@ -198,8 +258,10 @@ def detect(job: str | Path, threshold: float = THRESHOLD, min_shot_ms: int = MIN
     adir = analysis_dir(root)
     kdir = adir / "keyframes"
     old = read_json(shots_path(root), None) or {}
-    kept = {(s.get("source_path"), int(s.get("start_ms", 0))): s for s in old.get("shots") or []
-            if s.get("description") or s.get("rating") or s.get("tags")}
+    kept: dict[str, dict[int, dict[str, Any]]] = {}
+    for shot in old.get("shots") or []:
+        if shot.get("source_path") and (shot.get("description") or shot.get("rating") or shot.get("tags")):
+            kept.setdefault(shot["source_path"], {})[int(shot.get("start_ms", 0))] = shot
     sources, shots = [], []
     for vi, path in enumerate(videos or source_videos(root), 1):
         path = Path(path).resolve()
@@ -213,19 +275,29 @@ def detect(job: str | Path, threshold: float = THRESHOLD, min_shot_ms: int = MIN
         for si, (s, e) in enumerate(ranges, 1):
             shot_id = f"{sid}-s{si:03d}"
             kf = kdir / f"{shot_id}.jpg"
-            keyframe(path, (s + e) // 2, kf)
+            keyframe(path, (max(s, a["video_start_ms"]) + e) // 2, kf)
             rec = {"id": shot_id, "source": sid, "source_path": str(path), "start_ms": s,
                    "end_ms": e, "duration_ms": e - s, "keyframe": kf.relative_to(root).as_posix(),
                    "keyframes": [kf.relative_to(root).as_posix()],
                    **shot_measures(s, e, a["samples"], a["loudness"], bool(info["has_audio"])),
                    "has_audio": bool(info["has_audio"]),
                    "description": None, "rating": None, "tags": []}
-            prev = next((v for (p, st), v in kept.items()
-                         if p == str(path) and abs(st - s) <= KEEP_MS), None)
-            if prev:
-                rec.update(description=prev.get("description"), rating=prev.get("rating"),
-                           tags=list(prev.get("tags") or []))
             shots.append(rec)
+    matches = []
+    for index, shot in enumerate(shots):
+        for start in kept.get(shot["source_path"], {}):
+            distance = abs(start - shot["start_ms"])
+            if distance <= KEEP_MS:
+                matches.append((distance, index, start))
+    matched = set()
+    for _, index, start in sorted(matches):
+        shot = shots[index]
+        candidates = kept[shot["source_path"]]
+        if index not in matched and start in candidates:
+            prev = candidates.pop(start)
+            shot.update(description=prev.get("description"), rating=prev.get("rating"),
+                        tags=list(prev.get("tags") or []))
+            matched.add(index)
     data = {"schema": SCHEMA, "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "threshold": threshold, "min_shot_ms": min_shot_ms, "sources": sources, "shots": shots}
     write_json(shots_path(root), data, indent=1)
@@ -260,13 +332,27 @@ def _fmt(ms: int) -> str:
     return f"{ms // 60000}:{ms // 1000 % 60:02d}.{ms % 1000 // 100}"
 
 
+def _positive_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        raise argparse.ArgumentTypeError("expected a finite positive number")
+    return number
+
+
+def _shot_milliseconds(value: str) -> int:
+    milliseconds = _positive_float(value) * 1000
+    if not math.isfinite(milliseconds):
+        raise argparse.ArgumentTypeError("duration is too large")
+    return max(1, round(milliseconds))
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="vp shots", description="shots of a folder of videos")
     sub = ap.add_subparsers(dest="cmd", required=True)
     d = sub.add_parser("detect", help="find the shots, keyframes and measures -> analysis/shots.json")
     d.add_argument("job")
-    d.add_argument("--threshold", type=float, default=THRESHOLD)
-    d.add_argument("--min-shot", type=float, default=MIN_SHOT_MS / 1000, help="seconds")
+    d.add_argument("--threshold", type=_positive_float, default=THRESHOLD)
+    d.add_argument("--min-shot", type=_shot_milliseconds, default=MIN_SHOT_MS, help="seconds")
     d.add_argument("--json", action="store_true")
     ls = sub.add_parser("list", help="shots with their keyframes")
     ls.add_argument("job")
@@ -276,11 +362,11 @@ def main(argv: list[str]) -> int:
     s.add_argument("job")
     s.add_argument("shot")
     s.add_argument("text", nargs="?")
-    s.add_argument("--rating", type=int)
+    s.add_argument("--rating", type=int, choices=range(1, 6))
     s.add_argument("--tags")
     a = ap.parse_args(argv)
     if a.cmd == "detect":
-        data = detect(a.job, a.threshold, int(round(a.min_shot * 1000)))
+        data = detect(a.job, a.threshold, a.min_shot)
         if a.json:
             print(json.dumps(data, ensure_ascii=False, indent=1))
         else:
@@ -290,8 +376,17 @@ def main(argv: list[str]) -> int:
         return 0
     if a.cmd == "list":
         data = load_shots(a.job)
-        shots = pending(data) if a.pending else data["shots"]
         root = job_root(a.job)
+        if a.pending:
+            shots = [{"id": x["id"], "keyframe": x["keyframe"],
+                      "keyframe_path": str(root / x["keyframe"])} for x in pending(data)]
+            if a.json:
+                print(json.dumps(shots, ensure_ascii=False, indent=1))
+            else:
+                for x in shots:
+                    print(f"{x['id']}\t{x['keyframe_path']}")
+            return 0
+        shots = data["shots"]
         if a.json:
             print(json.dumps([{**x, "keyframe_path": str(root / x["keyframe"])} for x in shots],
                              ensure_ascii=False, indent=1))

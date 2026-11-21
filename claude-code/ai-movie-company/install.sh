@@ -20,9 +20,9 @@
 #                               was closed; a rerun opens it again)
 #
 # Its own log: every line it prints (and the engine's output) also goes to a lasting file,
-# ~/.ai_video_pipeline/logs/install-<UTC time>.log; once the engine is there, the log is turned into
-# test-period telemetry and sent in the background (`vp telemetry flush --detach`; a log of a run that
-# stopped earlier is sent by the engine's next flush). AIMC_TELEMETRY=off: kept locally, not sent.
+# ~/.ai_video_pipeline/logs/install-<UTC time>.log. It stays on this Mac: the installer sends nothing
+# to the plugin's authors (it runs before the person accepts the terms). If something went wrong,
+# the person may attach the log to a message themselves.
 #
 # For testing (not for users): AIMC_STORE=<owner/repo | path to a marketplace folder> installs from
 # another store (default alexeykrol/plugins); AIMC_MARKETPLACE=<name> its marketplace name (default
@@ -304,8 +304,7 @@ say "Done in $(( ($(date +%s) - T0) / 60 )) min $(( ($(date +%s) - T0) % 60 )) s
 say "Claude has to restart once to load the plugin; the command below does it (no keys to press)."
 log "$ADDONS"
 log "STATUS: OK"
-# the log -> telemetry, sent in the background; silent, never fails the install
-"$VP" telemetry flush --detach >/dev/null 2>&1 || true
+# no telemetry from the installer: nothing leaves the Mac before the terms are accepted
 echo "$ADDONS"
 if [ "$UPDATING" = 1 ]; then
   # an update keeps every project and its state; the new tab asks Elsa to pick up where we stopped

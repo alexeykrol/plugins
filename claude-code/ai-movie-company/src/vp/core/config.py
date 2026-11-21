@@ -62,6 +62,9 @@ DEFAULTS: dict[str, Any] = {
     "budget": {"max_usd_per_run": 20.0, "youtube_quota_per_day": 10000},
     "retries": {"transport": 3, "backoff_s": [2, 5, 15]},
     "loop_guard": {"max_failures": 3},
+    # the person's telemetry switch (vp.telemetry; `vp telemetry off|on`), read by vp.telemetry
+    # straight from config.yaml; AIMC_TELEMETRY=off works too
+    "telemetry": {"enabled": True},
     # S3a prompt builder (vp.knowledge.prompt_builder.DEFAULTS)
     "selection": {"k_cases": 6, "case_chars_budget": 6000, "case_text_max": 700},
     # S5/S7 renderer (vp.adapters.render.BRAND_DEFAULTS / RENDER_DEFAULTS)

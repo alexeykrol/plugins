@@ -17,7 +17,8 @@ A message is shown by the mod only while the engine is idle (`vp busy`), never d
 approval gate; after showing, `vp messages ack <id>` records it as seen and spools the telemetry
 event {"kind": "message_shown", "id": N} — the receiver's acknowledgement.
 
-With AIMC_TELEMETRY=off the feed is still asked, without the install id.
+Before the terms are accepted the feed is not asked at all (nothing leaves the Mac). With telemetry
+off (`vp telemetry off` or AIMC_TELEMETRY=off) the feed is still asked, without the install id.
 
 `poll --json` also carries `update` (a newer version installed on disk: restart needed) and
 `reminder` (an auto-update reminder due by the schedule), see vp.update.
@@ -130,9 +131,12 @@ def _valid(msg: Any) -> bool:
 
 
 def fetch(since: int) -> tuple[list[dict[str, Any]], int | None, str | None]:
-    """One GET of the feed: (messages, latest, error)."""
+    """One GET of the feed: (messages, latest, error). Nothing leaves the Mac before the terms are
+    accepted (no request at all); the install id goes only when telemetry may be sent."""
+    if telemetry.consent_accepted_at() is None:
+        return [], None, "no consent"
     q = {"since": str(int(since)), "version": telemetry.plugin_version()}
-    if not telemetry.is_off():
+    if telemetry.can_send():
         iid = telemetry.install_id()
         if iid:
             q["install"] = iid

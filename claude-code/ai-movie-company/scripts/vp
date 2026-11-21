@@ -62,21 +62,70 @@ venv_ok() {
 }
 
 bootstrap() {
-  mkdir -p "$DATA"
-  guard="$DATA/.bootstrap.lock"; local waited=0
-  until mkdir "$guard" 2>/dev/null; do          # one bootstrap at a time
+  guard="$DATA/.bootstrap.lock"
+  local waited=0
+  # Keep the same inode for all contenders. FD 9 holds the advisory lock across
+  # pip and venv creation, even if a child outlives a killed launcher.
+  while true; do
+    if "$PY" - "$guard" "$$" <<'PY'
+import fcntl
+import os
+import sys
+from pathlib import Path
+
+guard = Path(sys.argv[1])
+owner_file = guard / "pid"
+try:
+    fcntl.flock(9, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    sys.exit(75)
+
+
+def owner_is_alive():
+    try:
+        owner = int(owner_file.read_text())
+        if owner <= 0:
+            return False
+        os.kill(owner, 0)
+    except (FileNotFoundError, ValueError, OverflowError, ProcessLookupError):
+        return False
+    except PermissionError:
+        pass  # the PID exists, but we cannot signal it
+    return True
+
+
+if guard.exists():
+    if owner_is_alive():
+        fcntl.flock(9, fcntl.LOCK_UN)
+        sys.exit(75)
+    # An empty guard can be left by the old launcher or by an interrupted mkdir.
+    owner_file.unlink(missing_ok=True)
+    guard.rmdir()
+guard.mkdir(mode=0o700)
+owner_file.write_text(sys.argv[2] + "\n")
+PY
+    then
+      break
+    elif [ "$?" -ne 75 ]; then
+      say "could not acquire bootstrap lock at $guard."
+      exit 3
+    fi
+    if [ "$waited" -eq 0 ]; then
+      say "waiting for another bootstrap holding $guard."
+    fi
     if [ "$waited" -ge 600 ]; then
       say "another bootstrap holds $guard for 10 minutes; remove it if no install is running."
       exit 3
     fi
     sleep 2; waited=$((waited + 2))
   done
-  trap 'rmdir "$guard" 2>/dev/null || true' EXIT
-  if venv_ok; then rmdir "$guard" 2>/dev/null || true; trap - EXIT; return 0; fi  # done meanwhile
+  trap 'release_bootstrap_lock' EXIT
+  if venv_ok; then release_bootstrap_lock; return 0; fi  # done meanwhile
   local tmp="$VENV.tmp.$$"
   say "first run: creating $VENV and installing pinned dependencies from PyPI (hash-checked)..."
   "$PY" -m venv "$tmp"
   if ! "$tmp/bin/python" -m pip install --disable-pip-version-check --no-input -q \
+        --timeout 15 --retries 2 \
         --require-hashes --only-binary=:all: --no-deps -r "$LOCKFILE" >&2; then
     rm -rf "$tmp"
     say "dependency install failed (network, or no wheel for this Python/platform in requirements.lock)."
@@ -85,13 +134,18 @@ bootstrap() {
   echo "$WANT" > "$tmp/.vp-lock-sha256"
   rm -rf "$VENV"
   mv "$tmp" "$VENV"
-  rmdir "$guard" 2>/dev/null || true
-  trap - EXIT
+  release_bootstrap_lock
   say "runtime ready ($VENV)."
 }
 
+release_bootstrap_lock() {
+  rm -f "$guard/pid" && rmdir "$guard" 2>/dev/null || true
+  trap - EXIT
+}
+
 if ! venv_ok; then
-  bootstrap
+  mkdir -p "$DATA"
+  bootstrap 9>>"$DATA/.bootstrap.flock"
 fi
 export VP_VENV="$VENV"
 export PYTHONDONTWRITEBYTECODE=1    # no caches inside the versioned plugin folder

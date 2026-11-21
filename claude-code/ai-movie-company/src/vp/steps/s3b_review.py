@@ -11,6 +11,9 @@ absent (human edits are never overwritten). Then:
     rules as S3a, ids stable) and verdict lines appended to the knowledge store's verdicts.jsonl
     (idempotent: key = recording + fragment id + review file sha256).
 
+Each new verdict carries `briefed` and `brief_sha` from the S3a manifest. Legacy lines without
+these fields have unknown brief provenance.
+
 Review file format (human-facing, see `review_template`):
 
     full_scan: true|false        # true = the human searched the whole recording for misses
@@ -38,6 +41,8 @@ import yaml
 
 from ..core.io import (atomic_write, dump_yaml, now_iso, parse_iso, read_json, read_yaml,
                        sha256_bytes, sha256_file, sha256_obj, write_yaml)
+from ..core.manifest import read_manifest
+from ..core.paths import Job
 from ..core.status import Status
 from ..knowledge.store import KnowledgeStore, verdict_key
 from . import _fragments as F
@@ -87,6 +92,14 @@ def _num(fid: str) -> int:
 
 
 FINGERPRINT_FIELDS = ("id", "type", "start_ms", "end_ms", "first_cue", "last_cue")
+
+
+def selection_brief_sha(job: Job) -> str | None:
+    """Fingerprint the brief used by S3a, even if request.yaml has since changed."""
+    manifest = read_manifest(job, "S3a") or {}
+    brief = (manifest.get("config") or {}).get("brief") or {}
+    text = brief.get("text")
+    return sha256_bytes(text)[:16] if isinstance(text, str) and text else None
 
 
 def proposals_fingerprint(proposed: dict[str, Any]) -> str:
@@ -424,6 +437,7 @@ class S3bReview(StepSpec):
                                              f"{job.fragments_review.name}", n)
 
         # closed: fragments.yaml + verdicts
+        brief_sha = selection_brief_sha(job)
         fragments = [{**{k: f[k] for k in ("id", "type", "origin", "start_ms", "end_ms", "duration_ms",
                                           "boundary", "first_cue", "last_cue", "title", "thesis", "text")},
                       "start": F.clock(f["start_ms"]), "end": F.clock(f["end_ms"])} for f in res.final]
@@ -438,6 +452,7 @@ class S3bReview(StepSpec):
                          "recording_id": job.job_id, "job_id": job.job_id, **r,
                          "knowledge_version": kv, "knowledge_hash": proposed.get("knowledge_hash"),
                          "boundary_mode": timeline.mode, "full_scan": res.full_scan,
+                         "briefed": brief_sha is not None, "brief_sha": brief_sha,
                          "review_sha256": review_sha, "recorded_at": now_iso()})
         added_lines = KnowledgeStore(ctx.home).append_verdicts(recs)
         counts = {v: sum(1 for r in res.records if r["verdict"] == v)

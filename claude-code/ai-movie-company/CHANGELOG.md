@@ -2,6 +2,22 @@
 
 All notable changes to ai-movie-company. Versions follow [semver](https://semver.org/).
 
+## 0.8.6 — 2026-11-21
+
+- **Alpha terms and privacy (version `2026-11-21-alpha1`).** Short in-plugin terms now match the
+  public pages alexeykrol.com/elsa/terms/ and /elsa/privacy/: an alpha "as is", at your own risk;
+  the only thing we try to do is keep it safe and private as far as we can. Everyone accepts the new
+  version once.
+- **Nothing leaves your Mac before you agree.** Telemetry starts only after the terms are accepted;
+  the installer sends nothing. What is sent is built from a fixed list of technical fields
+  (commands, steps, error classes, timings, costs, versions) — no paths, user names, error texts or
+  Elsa's notes. Elsa's notes go only into the feedback pack you send yourself.
+- **`vp telemetry show | off | on | status`.** See exactly what would be sent; turn it off any time.
+- **`vp youtube disconnect`.** Revokes the plugin's Google access and deletes the local token.
+  The plugin now asks Google for two YouTube permissions instead of three; existing logins keep
+  working.
+- **The prompt journal covers only sessions with Elsa** and still never leaves your Mac.
+
 ## 0.8.5 — 2026-11-20
 
 - **Elsa restarts Claude and closes CapCut herself.** She never asks you to press ⌘Q any more (it

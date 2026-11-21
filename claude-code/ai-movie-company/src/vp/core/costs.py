@@ -31,8 +31,9 @@ class CostJournal:
         rec.update(fields)
         append_line(self.path, json.dumps(rec, ensure_ascii=False, default=str))
         from .. import telemetry
+        # numbers and model/op names only; the job id stays local (vp.telemetry allowlist)
         telemetry.record("cost", **{("cost_kind" if k == "kind" else k): v for k, v in rec.items()
-                                    if k != "at"})
+                                    if k not in ("at", "job")})
         return rec
 
     def records(self, job: str | None = None) -> list[dict[str, Any]]:

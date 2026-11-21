@@ -8,6 +8,8 @@ client-secrets files are never logged, printed or put into errors. There is no i
 login at runtime: a missing/invalid token is an `auth` error. One-time setup (owner, terminal):
     python -m vp.adapters.youtube authorize            (browser login, writes token_path)
     python -m vp.adapters.youtube convert-token <legacy.pickle>   (Legacy pickle -> JSON token)
+    vp youtube disconnect   revoke the login at Google (oauth2.googleapis.com/revoke), delete the
+                            token file and the remembered connection state; never prints the token
 
 Uploads: our own resumable protocol on the authorized HTTP object, so that opening the session
 (start_upload -> session_uri, saved by S8 BEFORE any byte is sent) and sending bytes
@@ -40,10 +42,12 @@ from ..core.io import atomic_write, parse_iso
 from .publisher import (API_COSTS, Publisher, PublisherError, UploadOutcomeUnknown,
                         SNIPPET_FIELDS)
 
+# The smallest set that does the job (2026-11-20): upload covers uploads; force-ssl covers the
+# channel, videos, captions, thumbnails and playlists. The broad `auth/youtube` scope is no longer
+# asked for (it adds nothing the plugin uses).
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.force-ssl",
-    "https://www.googleapis.com/auth/youtube",
 ]
 SNIPPET_WRITABLE = SNIPPET_FIELDS + ("defaultAudioLanguage",)
 STATUS_WRITABLE = ("privacyStatus", "embeddable", "license", "publicStatsViewable", "publishAt",
@@ -143,7 +147,7 @@ def load_credentials(token_path: str | None) -> Any:
                                      "`python -m vp.adapters.youtube authorize`")
     from google.oauth2.credentials import Credentials
     try:
-        creds = Credentials.from_authorized_user_file(str(p), SCOPES)
+        creds = Credentials.from_authorized_user_file(str(p), token_scopes(p))
     except (ValueError, json.JSONDecodeError):
         raise PublisherError("auth", "youtube token file is not a valid authorized-user JSON "
                                      "(convert a Legacy pickle with `convert-token`)") from None
@@ -158,6 +162,23 @@ def load_credentials(token_path: str | None) -> Any:
         _write_token(p, creds.to_json())
         return creds
     raise PublisherError("auth", "youtube token is invalid and cannot be refreshed; re-authorize")
+
+
+def token_scopes(path: Path) -> list[str]:
+    """The scopes to load a saved token with. A token from an older login holds a larger set (it
+    also has `auth/youtube`): when the stored set covers SCOPES it is used as it is, so the token
+    refreshes exactly as before and nobody has to log in again. Otherwise SCOPES."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return list(SCOPES)
+    stored = data.get("scopes") if isinstance(data, dict) else None
+    if isinstance(stored, str):
+        stored = stored.split()
+    if isinstance(stored, list) and all(isinstance(s, str) for s in stored) \
+            and set(SCOPES) <= set(stored):
+        return list(stored)
+    return list(SCOPES)
 
 
 def _write_token(path: Path, text: str) -> None:
@@ -804,6 +825,7 @@ def main(argv: list[str] | None = None) -> int:
     cv = sub.add_parser("convert-token", help="Legacy pickle token -> JSON at youtube.token_path")
     cv.add_argument("pickle_path")
     sub.add_parser("status", help="is the channel connected? (1 quota unit)")
+    sub.add_parser("disconnect", help="revoke the login at Google and delete the local token")
     cf = sub.add_parser("client-find", help="is the Google client file in place? With --scan: list "
                                             "client files in Downloads/Desktop/Documents")
     cf.add_argument("--scan", action="store_true",
@@ -843,6 +865,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if d["ok"] else 2
     if args.cmd == "authorize":
         return authorize(cfg)
+    if args.cmd == "disconnect":
+        return disconnect(cfg)
     return _convert(args, cfg.get("youtube") or {})  # pragma: no cover - owner's Legacy file
 
 
@@ -907,6 +931,73 @@ def authorize(cfg: dict[str, Any], login: Callable[[str], Any] | None = None,
     fill_channel_id(cfg, info["id"], overwrite=True, out=out)
     fill_channel_handle(cfg, info.get("handle"), out=out)
     return 0
+
+
+REVOKE_URL = "https://oauth2.googleapis.com/revoke"
+PERMISSIONS_URL = "https://security.google.com/settings/security/permissions"
+
+
+def _revoke_at_google(token: str, timeout: float = 15.0) -> tuple[bool, str]:  # pragma: no cover - network
+    """POST token=... to Google's revoke endpoint. Returns (ok, short reason); never the token."""
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    req = urllib.request.Request(
+        REVOKE_URL, data=urllib.parse.urlencode({"token": token}).encode("ascii"), method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return (200 <= r.status < 300), f"http {r.status}"
+    except urllib.error.HTTPError as e:
+        # 400 invalid_token: Google no longer knows it (already revoked or expired) — access is gone
+        return e.code == 400, f"http {e.code}"
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        return False, type(e).__name__
+
+
+def disconnect(cfg: dict[str, Any], revoke: Callable[[str], tuple[bool, str]] | None = None,
+               out: Callable[[str], None] = print) -> int:
+    """`vp youtube disconnect`: revoke the saved login at Google, then delete the local token file
+    and the remembered connection state. The token is never printed. On a network failure the local
+    files are still deleted and the person is told where to remove the access by hand."""
+    yt = cfg.get("youtube") or {}
+    home = cfg.get("vp_home")
+    token_path = Path(str(yt.get("token_path") or "")).expanduser() if yt.get("token_path") else None
+    secret = None
+    if token_path and token_path.is_file():
+        try:
+            data = json.loads(token_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                secret = data.get("refresh_token") or data.get("token")
+        except (OSError, ValueError, UnicodeDecodeError):
+            secret = None
+    revoked, why = False, "no saved login"
+    if secret:
+        try:
+            revoked, why = (revoke or _revoke_at_google)(str(secret))
+        except Exception as e:  # noqa: BLE001 - never let a revoke error stop the local cleanup
+            revoked, why = False, type(e).__name__
+    secret = None
+    removed = []
+    for p in ([token_path] if token_path else []) + ([Path(str(home)) / CONNECTION_FILE] if home else []):
+        try:
+            if p.is_file():
+                p.unlink()
+                removed.append(p.name)
+        except OSError:
+            pass
+    if revoked:
+        out("revoked: Google no longer accepts this plugin's access to your YouTube channel")
+    elif why == "no saved login":
+        out("no saved YouTube login was found on this Mac")
+    else:
+        out(f"could not reach Google to revoke the access ({why}). Remove it by hand: open "
+            f"{PERMISSIONS_URL}, find AI Movie Company and choose «Remove access».")
+    out("deleted on this Mac: " + (", ".join(removed) if removed else "nothing (no files were there)")
+        + ". Captions and videos in your project folders are yours and were not touched; the plugin "
+          "keeps no other YouTube data.")
+    out("to connect again: `vp youtube authorize`")
+    return 0 if (revoked or why == "no saved login") else 2
 
 
 def _convert(args: Any, yt: dict[str, Any]) -> int:  # pragma: no cover - owner's Legacy file

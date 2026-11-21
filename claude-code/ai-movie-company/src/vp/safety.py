@@ -52,7 +52,7 @@ from .core.paths import vp_home
 from .gates import human
 from .gates._common import UserInputRequired
 
-TERMS_VERSION = "2026-11-21-draft"      # keep in sync with hooks/guard.py and TERMS*.md
+TERMS_VERSION = "2026-11-21-alpha1"      # keep in sync with hooks/guard.py and TERMS*.md
 PLUGIN_ROOT = Path(__file__).resolve().parents[2]
 APPROVAL_TTL = timedelta(minutes=30)
 RC_NOT_ACCEPTED = 5
@@ -62,30 +62,41 @@ ASKING_MODES = ("default", "acceptEdits", "plan")
 VERDICTS = ("clean", "caution")
 
 SUMMARY_RU = """\
-Коротко об условиях AI Movie Company (черновик {version}):
-- Плагин работает на вашем Mac: читает ваши записи и субтитры, пишет файлы в папку проекта,
-  в «Фильмы» и в ~/.ai_video_pipeline. Исходные файлы не меняет.
-- Ставит только проверенное: закреплённые версии с контрольными суммами (Python, ffmpeg,
-  дополнения для анимации). Любую другую установку останавливает и сначала проверяет.
-- В сеть уходит только: загрузка на ваш YouTube (черновики, публикация — только после вашего
-  «ок»), голос, музыка и расшифровка (по вашему нажатию) через ваш ключ ElevenLabs (или коннектор), стоки и картинки по вашим ключам, установка и обновления. На время
-  тестирования журналы работы и ошибки отправляются автору (выключить: AIMC_TELEMETRY=off).
-- Ваши записи, видео и каналы — ваши. Решения о публикации — ваши.
-- Программа бесплатная и открытая (лицензия MIT), «как есть», без гарантий. Систему и плагин
-  обновляете вы. Поддержка: support@alexeykrol.com."""
+Коротко об условиях альфа-теста SIMovie — плагина AI Movie Company с режиссёром монтажа Эльзой
+(версия {version}):
+- Это альфа: пользуетесь на свой риск, «как есть», без гарантий; может сломаться, измениться или
+  закрыться. Храните копии своих файлов. Мы стараемся только об одном — о безопасности и о
+  приватности в той мере, в какой можем её обеспечить.
+- Плагин работает на вашем Mac. Ваши записи, видео, диалоги и журнал разговоров с Эльзой остаются
+  у вас и никуда не отправляются.
+- Автоматически, и только после вашего согласия, уходит техническая телеметрия: команды, шаги,
+  коды ошибок, время, версии — без путей, имён, текстов и содержимого. Посмотреть: vp telemetry
+  show; выключить в любой момент: vp telemetry off. Всё остальное вы присылаете нам сами.
+- YouTube, ElevenLabs, стоки и Claude работают через ваши аккаунты и ключи, по их условиям
+  (для YouTube — условия YouTube: https://www.youtube.com/t/terms). Отключить YouTube: vp youtube
+  disconnect. Публикация — только после вашего «ок»; за свой контент отвечаете вы.
+- Не пользуетесь личной ссылкой на установку 7 дней — место может перейти следующему. Возраст 18+.
+- Полные условия: alexeykrol.com/elsa/terms/ · приватность: alexeykrol.com/elsa/privacy/ ·
+  support@alexeykrol.com"""
 
 SUMMARY_EN = """\
-AI Movie Company terms in short (draft {version}):
-- The plugin works on your Mac: it reads your recordings and subtitles and writes files to the
-  job folder, Movies and ~/.ai_video_pipeline. It never changes your source files.
-- It installs only vetted things: pinned, checksum-checked versions (Python, ffmpeg, the design
-  add-ons). Any other install is stopped and vetted first.
-- Network: uploads to your YouTube (private drafts; publishing only after your "ok"), voice,
-  music and transcription (on your press) through your own ElevenLabs key (or connector), stock and pictures with your keys, installation and updates. During testing, usage logs
-  and errors are sent to the author (turn off: AIMC_TELEMETRY=off).
-- Your recordings, videos and channels are yours. Publishing decisions are yours.
-- Free and open (MIT licence), "as is", no warranty. You keep the system and the plugin updated.
-  Support: support@alexeykrol.com."""
+SIMovie alpha terms in short — the AI Movie Company plugin with editing director Elsa
+(version {version}):
+- This is an alpha: use it at your own risk, "as is", no warranty; it may break, change or stop.
+  Keep copies of your files. The one thing we try to do is keep it safe, and private as far as we
+  can.
+- The plugin runs on your Mac. Your recordings, videos, dialogues and the journal of your talks
+  with Elsa stay with you and are never sent.
+- Automatically, and only after you agree, technical telemetry is sent: commands, steps, error
+  codes, timings, versions — no paths, names, text or content. See it: vp telemetry show; turn it
+  off any time: vp telemetry off. Anything else, you send us yourself.
+- YouTube, ElevenLabs, stock sites and Claude run under your own accounts and keys and their terms
+  (for YouTube, YouTube's Terms: https://www.youtube.com/t/terms). Disconnect YouTube: vp youtube
+  disconnect. Publishing only after your "ok"; you're responsible for your content.
+- Don't use your personal install link within 7 days and your place may go to the next person.
+  Age 18+.
+- Full terms: alexeykrol.com/elsa/terms/ · privacy: alexeykrol.com/elsa/privacy/ ·
+  support@alexeykrol.com"""
 
 
 # ---- small helpers ------------------------------------------------------------------------------

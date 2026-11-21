@@ -18,14 +18,25 @@ On disk, <VP_HOME>/telemetry/:
   state.json            retry_after, last flush, imported installer logs
 The spool, batches and quarantine together are capped (CAP_BYTES): the oldest batches go first.
 
-`record()` never raises and never blocks on the network. Secrets are never recorded: values of
-secret-looking keys are replaced (vp.core.log.scrub) and strings pass the journal's redaction.
+`record()` never raises and never blocks on the network.
 
-Off switch: AIMC_TELEMETRY=off — nothing is recorded, nothing is sent.
+What is sent (owner, alpha 2026-11-20): technical telemetry only, built from an explicit allowlist
+(`sanitize_event`, ALLOWED_KINDS / ALLOWED_FIELDS): event kind, command/step names, exit codes,
+durations, counts, cost numbers, version, OS and Python versions, error class; the random install
+id goes in a header. No paths, no messages or tracebacks, no free text. The sanitizer runs when an
+event is recorded and again on every line right before it is sent.
+
+Consent: nothing is recorded or sent before the person accepted the current terms (vp.safety
+consent.json); events of that time are dropped, not queued; lines older than the acceptance are
+never sent.
+
+Off switch: `vp telemetry off` (config) or AIMC_TELEMETRY=off — nothing is recorded, nothing is sent.
 
 CLI:  vp telemetry status [--json] | flush [--detach] [--json] | show-id
-      vp telemetry import-install [<log> ...]   installer logs -> events (default: every
-                                                ~/.ai_video_pipeline/logs/install-*.log not yet imported)
+      vp telemetry on | off        the person's switch, kept in <VP_HOME>/config.yaml
+                                   (telemetry.enabled); off also deletes what is waiting
+      vp telemetry show [--json]   exactly what would be sent (the waiting events, or a sample);
+                                   sends nothing
 """
 from __future__ import annotations
 
@@ -40,7 +51,6 @@ import secrets
 import subprocess
 import sys
 import time
-import traceback
 import urllib.error
 import urllib.request
 import uuid
@@ -61,18 +71,11 @@ FLUSH_EVERY_S = 60.0                  # background flushes after commands at mos
 OFFLINE_BACKOFF_S = 60.0              # after a network failure, wait this long before retrying
 DEFAULT_RETRY_AFTER_S = 300.0
 TIMEOUT_S = 10.0
-MAX_STRING = 8000
 RESERVED_KEYS = ("_recv", "_ver")      # the receiver writes these itself
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
-_SECRET_KEYS = ("token", "secret", "password", "authorization", "api_key", "apikey", "cookie")
-_SAFE_KEYS = {"input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"}
 
 
-# ---- paths and switches -------------------------------------------------------------------------
-
-def is_off() -> bool:
-    return os.environ.get(ENV_SWITCH, "").strip().lower() in ("off", "0", "false", "no")
-
+# ---- paths -----------------------------------------------------------------------------------------
 
 def base_url() -> str:
     return (os.environ.get(ENV_URL) or DEFAULT_URL).rstrip("/")
@@ -93,11 +96,6 @@ def quarantine_dir() -> Path:
 
 def state_path() -> Path:
     return tdir() / "state.json"
-
-
-def logs_dir() -> Path:
-    from .core.paths import vp_home
-    return vp_home() / "logs"
 
 
 _VERSION: str | None = None
@@ -166,61 +164,207 @@ def _update_state(**changes: Any) -> dict[str, Any]:
     return st
 
 
+# ---- consent and the switch -----------------------------------------------------------------------
+
+def env_off() -> bool:
+    return os.environ.get(ENV_SWITCH, "").strip().lower() in ("off", "0", "false", "no")
+
+
+def config_off() -> bool:
+    """`telemetry.enabled: false` in <VP_HOME>/config.yaml (`vp telemetry off`). Read without
+    creating the config file."""
+    from .core.config import config_path
+    try:
+        import yaml
+        data = yaml.safe_load(config_path().read_text(encoding="utf-8")) or {}
+    except Exception:  # noqa: BLE001 - no file / unreadable: the default (on)
+        return False
+    sec = data.get("telemetry") if isinstance(data, dict) else None
+    return isinstance(sec, dict) and sec.get("enabled") is False
+
+
+def is_off() -> bool:
+    """The person's switch: env AIMC_TELEMETRY=off or `vp telemetry off`."""
+    return env_off() or config_off()
+
+
+def consent_accepted_at() -> datetime | None:
+    """When the CURRENT terms were accepted (vp.safety consent.json); None = not accepted."""
+    try:
+        from .safety import consent_state
+        st = consent_state()
+        if not st["accepted"]:
+            return None
+        d = datetime.fromisoformat(str(st["accepted_at"]).replace("Z", "+00:00"))
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+    except Exception:  # noqa: BLE001 - unreadable consent = no consent
+        return None
+
+
+def can_send() -> bool:
+    """Telemetry is recorded and sent only with the terms accepted and the switch on."""
+    return not is_off() and consent_accepted_at() is not None
+
+
+def why_not() -> str | None:
+    if env_off():
+        return f"off (env {ENV_SWITCH}=off)"
+    if config_off():
+        return "off (vp telemetry off)"
+    if consent_accepted_at() is None:
+        return "the terms are not accepted"
+    return None
+
+
+# ---- the allowlist: the ONLY fields that ever leave the machine ---------------------------------------
+#
+# Owner (alpha, 2026-11-20): nothing but technical telemetry leaves automatically — no dialogue, no
+# content, no free text, no file or folder name, no macOS user name. An event is rebuilt from the
+# allowlist below; every other field is dropped, and so is any value that is not of the expected
+# shape. `sanitize_event` runs when an event is recorded AND again on every line right before it is
+# sent (the sender applies it last), so a future caller cannot leak a path or a text.
+
+ALLOWED_KINDS = frozenset({"command", "engine_error", "step", "cost", "auto_update",
+                           "update_reminder_shown", "message_shown", "feedback_pack"})
+# short machine words: a command, a step, a state, an error class — never a path or a sentence
+IDENT_FIELDS = frozenset({"where", "error", "step", "event", "outcome", "state", "error_kind",
+                          "gate", "cost_kind", "op", "model", "provider", "marketplace"})
+VOCAB_FIELDS = frozenset({"command", "sub"})          # only known words, else "other"
+PREFIX_FIELDS = frozenset({"task"})                   # only the family before the first dot
+NUMBER_FIELDS = frozenset({"rc", "duration_s", "input_tokens", "output_tokens", "cache_read_tokens",
+                           "cache_write_tokens", "usd", "units", "credits", "bytes", "days",
+                           "number", "id"})
+BOOL_FIELDS = frozenset({"on", "revealed", "estimate"})
+BASE_FIELDS = ("ts", "kind", "version", "os", "python")
+ALLOWED_FIELDS = (frozenset(BASE_FIELDS) | IDENT_FIELDS | VOCAB_FIELDS | PREFIX_FIELDS
+                  | NUMBER_FIELDS | BOOL_FIELDS)
+
+_IDENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,63}$")
+_TS = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,6})?Z$")
+_OS = re.compile(r"^[A-Za-z0-9 ._()+-]{1,80}$")
+_VER_RX = re.compile(r"^[A-Za-z0-9._+-]{1,40}$")
+
+KNOWN_SUBS = frozenset("""
+ack add analyst apply approve authorize auto check clean clear-restart client-find client-install
+close convert-token critic curve decide decline describe-set detect disconnect enable estimate eval
+export flush forget generate get import install install-seed key layers list make matrix new note
+observe off offer on pack picture plan poll preview quit reminder render replay restart-claude
+rollback say scan scenes search services set setup show show-id snapshot splits stage status
+studio undo version accept later withdraw run activate verify export-eval import-eval timeline
+due shown request confirm
+""".split())
+
+
+def _known_commands() -> frozenset[str]:
+    try:
+        from .cli import SUBCOMMAND_MAINS
+        names = set(SUBCOMMAND_MAINS)
+    except Exception:  # noqa: BLE001
+        names = set()
+    return frozenset(names | {"run", "status", "stage", "unlock", "approve-ingest", "judge-pending",
+                              "resolve-upload"})
+
+
+def _home_markers() -> tuple[str, ...]:
+    marks = ["/Users/", "/home/", "~"]
+    with contextlib.suppress(Exception):
+        home = str(Path.home())
+        if home and home != "/":
+            marks.append(home)
+            name = Path(home).name
+            if len(name) >= 4:
+                marks.append(name)
+    return tuple(marks)
+
+
+def _leaks(s: str, marks: tuple[str, ...]) -> bool:
+    """Belt and braces after the shape checks: a path separator, the home dir or its user name."""
+    if "/" in s or "\\" in s:
+        return True
+    low = s.lower()
+    return any(m.lower() in low for m in marks)
+
+
+def sanitize_event(rec: Any) -> dict[str, Any] | None:
+    """The single gate of what is sent: a new dict with allowlisted fields of the right shape only;
+    None when the event's kind is not allowlisted (the whole event is dropped)."""
+    if not isinstance(rec, dict):
+        return None
+    kind = rec.get("kind")
+    if kind not in ALLOWED_KINDS:
+        return None
+    marks = _home_markers()
+    out: dict[str, Any] = {"kind": kind}
+    ts = rec.get("ts")
+    out["ts"] = ts if isinstance(ts, str) and _TS.match(ts) else _utc_iso()
+    for key, rx in (("version", _VER_RX), ("os", _OS), ("python", _VER_RX)):
+        v = rec.get(key)
+        if isinstance(v, str) and rx.match(v) and not _leaks(v.replace("/", ""), marks):
+            out[key] = v
+    commands = None
+    for key, v in rec.items():
+        if key in BASE_FIELDS or key not in ALLOWED_FIELDS or v is None:
+            continue
+        if key in NUMBER_FIELDS:
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v \
+                    and abs(v) < 1e15:
+                out[key] = v
+        elif key in BOOL_FIELDS:
+            if isinstance(v, bool):
+                out[key] = v
+        elif not isinstance(v, str):
+            continue
+        elif key in VOCAB_FIELDS:
+            if key == "command":
+                commands = commands or _known_commands()
+                out[key] = v if v in commands else "other"
+            else:
+                out[key] = v if v in KNOWN_SUBS else "other"
+        elif key in PREFIX_FIELDS:
+            fam = v.split(".", 1)[0]
+            if _IDENT.match(fam) and not _leaks(fam, marks):
+                out[key] = fam
+        elif key in IDENT_FIELDS:
+            if _IDENT.match(v) and not _leaks(v, marks):
+                out[key] = v
+    return out
+
+
 # ---- recording ----------------------------------------------------------------------------------
 
 def _utc_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def _clean(value: Any, key: str = "") -> Any:
-    k = key.lower()
-    if k and k not in _SAFE_KEYS and any(m in k for m in _SECRET_KEYS):
-        return "[redacted]"
-    if isinstance(value, dict):
-        return {str(kk): _clean(v, str(kk)) for kk, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_clean(v) for v in value]
-    if isinstance(value, str):
-        from .journal import redact
-        s = redact(value)
-        return s if len(s) <= MAX_STRING else s[:MAX_STRING] + f"...[+{len(s) - MAX_STRING} chars]"
-    if isinstance(value, (int, float, bool)) or value is None:
-        return value
-    return _clean(str(value))
-
-
-def make_event(kind: str, data: dict[str, Any]) -> dict[str, Any]:
+def make_event(kind: str, data: dict[str, Any]) -> dict[str, Any] | None:
+    """The event as it would be sent: the base fields + `data`, through the allowlist."""
     rec: dict[str, Any] = {"ts": _utc_iso(), "kind": str(kind)[:40],
                            "version": plugin_version(),
                            "os": f"{platform.system()} {platform.release()} ({platform.machine()})",
                            "python": platform.python_version()}
     for k, v in data.items():
         if k not in ("ts", "kind") and k not in RESERVED_KEYS:
-            rec[k] = _clean(v, k)
-    return rec
+            rec[k] = v
+    return sanitize_event(rec)
 
 
 def _line(rec: dict[str, Any]) -> str:
-    line = json.dumps(rec, ensure_ascii=False, default=str)
+    line = json.dumps(rec, ensure_ascii=False)
     if len(line.encode("utf-8")) <= MAX_LINE:
         return line
-    # too long: cut every long string harder, then give up on the payload
-    small = {k: (v[:1000] + "...[cut]" if isinstance(v, str) and len(v) > 1000 else v)
-             for k, v in rec.items()}
-    small["truncated"] = True
-    line = json.dumps(small, ensure_ascii=False, default=str)
-    if len(line.encode("utf-8")) <= MAX_LINE:
-        return line
-    return json.dumps({k: rec[k] for k in ("ts", "kind", "version", "os", "python")}
-                      | {"truncated": True}, ensure_ascii=False)
+    return json.dumps({k: rec[k] for k in BASE_FIELDS if k in rec}, ensure_ascii=False)
 
 
 def record(kind: str, **data: Any) -> bool:
-    """Append one event to the spool. Never raises; returns False when nothing was written."""
-    if is_off():
-        return False
+    """Append one event to the spool. Never raises; returns False when nothing was written.
+    Before the terms are accepted, or with the switch off, the event is dropped (not queued)."""
     try:
-        line = _line(make_event(kind, data)) + "\n"
+        if not can_send():
+            return False
+        ev = make_event(kind, data)
+        if ev is None:
+            return False
+        line = _line(ev) + "\n"
         d = spool_dir()
         d.mkdir(parents=True, exist_ok=True)
         install_id()
@@ -242,10 +386,8 @@ def record(kind: str, **data: Any) -> bool:
 
 
 def record_error(where: str, exc: BaseException, **data: Any) -> bool:
-    """An uncaught error: type, message and the last frames of the traceback."""
-    tb = traceback.format_exception(type(exc), exc, exc.__traceback__)
-    return record("engine_error", where=where, error=type(exc).__name__, message=str(exc)[:2000],
-                  traceback="".join(tb)[-6000:], **data)
+    """An uncaught error: its class only (no message, no traceback — they carry paths and text)."""
+    return record("engine_error", where=where, error=type(exc).__name__, **data)
 
 
 # ---- spool → batches ----------------------------------------------------------------------------
@@ -295,6 +437,12 @@ def _write_batch(lines: list[str], d: Path | None = None) -> Path:
     return p
 
 
+def _rewrite(p: Path, lines: list[str]) -> None:
+    tmp = p.with_name("." + p.name + ".tmp")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.replace(tmp, p)
+
+
 def batches() -> list[Path]:
     d = spool_dir()
     if not d.is_dir():
@@ -341,7 +489,36 @@ class _Result:
         self.code, self.body, self.retry_after, self.error = code, body, retry_after, error
 
 
+def _ts_of(ev: dict[str, Any]) -> datetime | None:
+    try:
+        return datetime.fromisoformat(str(ev.get("ts")).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def outgoing(lines: list[str], since: datetime | None) -> list[str]:
+    """The lines exactly as they leave: each one parsed and passed through `sanitize_event` (the
+    last step before the network); events of unknown kinds, unreadable lines and events recorded
+    before the terms were accepted (`since`) are dropped."""
+    out = []
+    for ln in lines:
+        try:
+            ev = sanitize_event(json.loads(ln))
+        except ValueError:
+            continue
+        if ev is None:
+            continue
+        if since is not None:
+            when = _ts_of(ev)
+            if when is None or when < since:
+                continue
+        out.append(_line(ev))
+    return out
+
+
 def _post(lines: list[str], batch: str, iid: str) -> _Result:
+    if not ID_RE.match(iid or ""):
+        return _Result(None, error="no valid install id")
     body = gzip.compress(("\n".join(lines) + "\n").encode("utf-8"))
     req = urllib.request.Request(
         base_url() + "/telemetry", data=body, method="POST",
@@ -416,6 +593,9 @@ def flush(max_batches: int = MAX_BATCHES_PER_FLUSH, now: float | None = None) ->
     if is_off():
         out["stopped"] = "off"
         return out
+    if consent_accepted_at() is None:
+        out["stopped"] = "no consent"
+        return out
     try:
         with _flush_lock() as got:
             if not got:
@@ -430,8 +610,10 @@ def flush(max_batches: int = MAX_BATCHES_PER_FLUSH, now: float | None = None) ->
 def _flush_locked(out: dict[str, Any], max_batches: int, now: float | None) -> dict[str, Any]:
     now = time.time() if now is None else now
     st = _update_state(last_flush_at=now)
-    with contextlib.suppress(Exception):
-        import_pending_installs()
+    since = consent_accepted_at()
+    if since is None:
+        out["stopped"] = "no consent"
+        return out
     if float(st.get("retry_after") or 0) > now:
         out["stopped"] = "retry_after"
         out["left"] = len(batches())
@@ -448,9 +630,11 @@ def _flush_locked(out: dict[str, Any], max_batches: int, now: float | None) -> d
                      if ln.strip()]
         except OSError:
             continue
-        if not lines:
+        lines = outgoing(lines, since)
+        if not lines:               # nothing allowlisted in it: never sent, removed
             p.unlink(missing_ok=True)
             continue
+        _rewrite(p, lines)          # on disk now exactly what is sent
         res = _post(lines, _batch_id(p), iid)
         if res.code == 200:
             p.unlink(missing_ok=True)
@@ -495,7 +679,7 @@ def _flush_locked(out: dict[str, Any], max_batches: int, now: float | None) -> d
 def spawn_flush(force: bool = False) -> bool:
     """Start `vp telemetry flush` detached, so the caller never waits. Throttled: at most every
     FLUSH_EVERY_S unless `force`; nothing to send or a pending retry_after -> no process."""
-    if is_off():
+    if not can_send():
         return False
     try:
         st = _read_state()
@@ -505,8 +689,7 @@ def spawn_flush(force: bool = False) -> bool:
         if not force and now - float(st.get("last_spawn_at") or 0) < FLUSH_EVERY_S:
             return False
         cur = spool_dir() / "current.jsonl"
-        pending_installs = bool(_unimported_install_logs())
-        if not batches() and not (cur.is_file() and cur.stat().st_size > 0) and not pending_installs:
+        if not batches() and not (cur.is_file() and cur.stat().st_size > 0):
             return False
         _update_state(last_spawn_at=now)
         env = dict(os.environ)
@@ -520,59 +703,72 @@ def spawn_flush(force: bool = False) -> bool:
         return False
 
 
-# ---- the installer's log --------------------------------------------------------------------------
-
-def _unimported_install_logs() -> list[Path]:
-    d = logs_dir()
-    if not d.is_dir():
-        return []
-    done = set(_read_state().get("imported_installs") or [])
-    return sorted(p for p in d.glob("install-*.log") if p.name not in done)
-
-
-def import_install(path: Path) -> int:
-    """Turn an installer log into events: one `install_step` per line, one `install_result`."""
-    if is_off():
-        return 0
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return 0
-    n = 0
-    status = None
-    for i, ln in enumerate(lines):
-        if not ln.strip():
-            continue
-        if ln.startswith("STATUS:") or " STATUS: " in ln:
-            status = ln.split("STATUS:", 1)[1].strip()
-        if record("install_step", log=path.name, n=i, line=ln[:2000]):
-            n += 1
-    record("install_result", log=path.name, status=status or "unfinished", lines=n)
-    done = list(_read_state().get("imported_installs") or [])
-    if path.name not in done:
-        done.append(path.name)
-        _update_state(imported_installs=done[-200:])
-    return n
-
-
-def import_pending_installs() -> int:
-    return sum(import_install(p) for p in _unimported_install_logs())
-
-
-# ---- status / CLI -------------------------------------------------------------------------------
+# ---- status / switch / preview / CLI ------------------------------------------------------------
 
 def status() -> dict[str, Any]:
     cur = spool_dir() / "current.jsonl"
     q = quarantine_dir()
     st = _read_state()
     bs = batches()
-    return {"enabled": not is_off(), "url": base_url(), "install_id": install_id(create=False),
-            "version": plugin_version(), "dir": str(tdir()),
+    acc = consent_accepted_at()
+    return {"enabled": not is_off(), "sending": can_send(), "why_not": why_not(),
+            "switch": ("env" if env_off() else "config" if config_off() else "on"),
+            "terms_accepted": acc is not None, "url": base_url(),
+            "install_id": install_id(create=False), "version": plugin_version(), "dir": str(tdir()),
             "open_spool_bytes": cur.stat().st_size if cur.is_file() else 0,
             "batches": len(bs), "batch_bytes": sum(p.stat().st_size for p in bs),
             "quarantined": len(list(q.glob("batch-*.jsonl"))) if q.is_dir() else 0,
-            "retry_after": st.get("retry_after"), "last_flush_at": st.get("last_flush_at"),
-            "install_logs_waiting": len(_unimported_install_logs())}
+            "retry_after": st.get("retry_after"), "last_flush_at": st.get("last_flush_at")}
+
+
+def drop_pending() -> int:
+    """Delete everything waiting to be sent (open spool, batches, quarantine). Returns files removed."""
+    n = 0
+    for d in (spool_dir(), quarantine_dir()):
+        if d.is_dir():
+            for p in d.iterdir():
+                if p.is_file():
+                    with contextlib.suppress(OSError):
+                        p.unlink()
+                        n += 1
+    return n
+
+
+def set_enabled(on: bool) -> dict[str, Any]:
+    """`vp telemetry on|off`, kept in <VP_HOME>/config.yaml (telemetry.enabled). Off also deletes
+    what is waiting, so nothing recorded before is sent later."""
+    from .core.config import set_config_value
+    set_config_value("telemetry", "enabled", bool(on))
+    dropped = 0 if on else drop_pending()
+    return {"enabled": not is_off(), "dropped_files": dropped, "why_not": why_not()}
+
+
+def pending_lines() -> list[str]:
+    """What waits on disk, as it would be sent (sanitized), without sending or changing anything."""
+    raw: list[str] = []
+    cur = spool_dir() / "current.jsonl"
+    for p in ([cur] if cur.is_file() else []) + batches():
+        with contextlib.suppress(OSError):
+            raw += [ln for ln in p.read_text(encoding="utf-8", errors="replace").splitlines()
+                    if ln.strip()]
+    return outgoing(raw, consent_accepted_at())
+
+
+def preview() -> dict[str, Any]:
+    """`vp telemetry show`: exactly what would be sent, the headers included; sends nothing."""
+    lines = pending_lines()
+    sample = not lines
+    if sample:
+        ev = make_event("command", {"command": "run", "sub": None, "rc": 0, "duration_s": 12.5})
+        lines = [_line(ev)] if ev else []
+    iid = install_id(create=False)
+    return {"would_send_now": can_send(), "why_not": why_not(), "sample": sample,
+            "url": base_url() + "/telemetry",
+            "headers": {"X-Elsa-Install": iid or "(created when the first event is recorded)",
+                        "X-Elsa-Version": plugin_version(), "X-Elsa-Batch": "(a random id per batch)",
+                        "User-Agent": f"ai-movie-company/{plugin_version()}"},
+            "events": [json.loads(ln) for ln in lines],
+            "allowed_fields": sorted(ALLOWED_FIELDS), "allowed_kinds": sorted(ALLOWED_KINDS)}
 
 
 def main(argv: list[str]) -> int:
@@ -584,8 +780,10 @@ def main(argv: list[str]) -> int:
     f.add_argument("--detach", action="store_true", help="start the flush in the background and return")
     f.add_argument("--json", action="store_true")
     sub.add_parser("show-id")
-    im = sub.add_parser("import-install")
-    im.add_argument("logs", nargs="*")
+    sh = sub.add_parser("show", help="print exactly what would be sent; sends nothing")
+    sh.add_argument("--json", action="store_true")
+    sub.add_parser("on")
+    sub.add_parser("off")
     a = ap.parse_args(argv)
     if a.cmd == "status":
         st = status()
@@ -602,11 +800,29 @@ def main(argv: list[str]) -> int:
               else " ".join(f"{k}={v}" for k, v in res.items()))
         return 0
     if a.cmd == "show-id":
-        print(install_id() or "")
+        print(install_id(create=False) or "(none yet)")
         return 0
-    if a.cmd == "import-install":
-        n = sum(import_install(Path(p).expanduser()) for p in a.logs) if a.logs \
-            else import_pending_installs()
-        print(f"imported {n} lines")
+    if a.cmd == "show":
+        pv = preview()
+        if a.json:
+            print(json.dumps(pv, ensure_ascii=False, indent=1))
+            return 0
+        print("Telemetry: " + ("sent when online" if pv["would_send_now"]
+                               else f"NOT sent now ({pv['why_not']})") + ". Nothing is sent by this command.")
+        print(f"POST {pv['url']}")
+        for k, v in pv["headers"].items():
+            print(f"{k}: {v}")
+        print("(a sample event: nothing is waiting)" if pv["sample"]
+              else f"{len(pv['events'])} event(s) waiting:")
+        for ev in pv["events"]:
+            print(json.dumps(ev, ensure_ascii=False))
+        return 0
+    if a.cmd in ("on", "off"):
+        res = set_enabled(a.cmd == "on")
+        if a.cmd == "off":
+            print("telemetry: OFF — nothing is recorded or sent"
+                  + (f"; {res['dropped_files']} waiting file(s) deleted" if res["dropped_files"] else ""))
+        else:
+            print("telemetry: ON" + (f" (but nothing is sent: {res['why_not']})" if res["why_not"] else ""))
         return 0
     return 2

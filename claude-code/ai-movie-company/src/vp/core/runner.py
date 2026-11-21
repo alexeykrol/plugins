@@ -194,9 +194,8 @@ class Runner:
                       items: list[str] | None) -> str:
         """Telemetry of one step instance: its start, then how it ended and how long it took."""
         from .. import telemetry
-        job = self.job.job_id
-        telemetry.record("step", event="start", step=inst.step, item=inst.item, job=job,
-                         job_dir=str(self.job.root), reason=fr.reason)
+        # allowlisted fields only (vp.telemetry.sanitize_event): no job, folder, item or free text
+        telemetry.record("step", event="start", step=inst.step)
         t0 = time.monotonic()
         outcome = "crashed"
         try:
@@ -205,12 +204,11 @@ class Runner:
         finally:
             last = self.status.last(inst.step, inst.item) or {}
             meta = last.get("metadata") or {}
-            telemetry.record("step", event="end", step=inst.step, item=inst.item, job=job,
+            telemetry.record("step", event="end", step=inst.step,
                              outcome=outcome, state=last.get("state"),
                              duration_s=round(time.monotonic() - t0, 3),
                              error_kind=meta.get("kind") if last.get("state") in
                              ("failed", "abandoned") else None,
-                             error=meta.get("error") or meta.get("message"),
                              gate=meta.get("gate"))
 
     def _run_tracked(self, inst: Instance, spec: StepSpec, ctx: Ctx, fr: Any,
