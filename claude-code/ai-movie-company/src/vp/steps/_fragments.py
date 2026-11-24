@@ -508,20 +508,31 @@ def clock(ms: int) -> str:
 
 
 def load_timeline(job, words_mode: str | None = None) -> Timeline:
-    """Timeline of a job: subtitles.srt + _cut.json words unless the mode is srt_only.
+    """Load the subtitles and usable source transcript word times for S3.
 
-    The mode comes from job.yaml `boundary_mode` (S0) when present, else from the presence of
-    word timings."""
+    An explicit words mode refers to a proposal whose boundaries already depend on those times.
+    """
+    from .. import transcribe
     from ..core.io import read_yaml
     from ..core.srt import read_srt
+    from .s0_intake import INFERRED_WORD_TIMES, staged_word_times
+
     cues = read_srt(job.subtitles_srt)
     mode = words_mode
     if mode is None:
         jy = read_yaml(job.job_yaml, default={}) or {}
         mode = jy.get("boundary_mode") if isinstance(jy, dict) else None
-    words = None if mode == "srt_only" else load_words(job.source_words)
-    if mode == "words" and not words:
-        raise VPError("data", "boundary mode is words but _cut.json has no word timings")
+    words = None
+    if mode != "srt_only":
+        timing = staged_word_times(job)
+        words = [Word(token, start, end) for text, start, end, origin in timing.words
+                 if origin != "inferred" for token in norm_tokens(text)]
+        if not words:
+            reason = timing.reason or INFERRED_WORD_TIMES
+            if words_mode == "words":
+                raise VPError("data", reason)
+            if reason != transcribe.NO_WORD_TIMES:
+                print(f"S3 is using subtitles only because {reason}.", flush=True)
     return Timeline(cues, words, end_limit_ms=_video_end_ms(job))
 
 

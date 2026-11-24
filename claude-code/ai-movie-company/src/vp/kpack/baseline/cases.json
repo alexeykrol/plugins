@@ -1,0 +1,690 @@
+[
+  {
+    "id": "c-reels-from-lecture",
+    "title": {
+      "ru": "Нарезать короткие ролики из лекции или эфира",
+      "en": "Cut short reels from a lecture or a live stream"
+    },
+    "says": {
+      "ru": [
+        "нарежь рилсы из вчерашней лекции",
+        "сделай шортсы из эфира",
+        "вытащи из записи самые сильные моменты"
+      ],
+      "en": [
+        "cut reels from yesterday's lecture",
+        "make shorts from my stream",
+        "pull the strongest moments out of the recording"
+      ]
+    },
+    "scenario": "D",
+    "needs": [
+      "video",
+      "subtitles"
+    ],
+    "result": {
+      "ru": "Несколько вертикальных роликов с титрами; каждый фрагмент вы утверждаете сами.",
+      "en": "Several vertical reels with captions; you approve every fragment yourself."
+    },
+    "status": "ready",
+    "tutorials": [
+      "T07",
+      "T06"
+    ]
+  },
+  {
+    "id": "c-lesson-from-lecture",
+    "title": {
+      "ru": "Сделать из длинной лекции отдельные уроки",
+      "en": "Turn a long lecture into separate lessons"
+    },
+    "says": {
+      "ru": [
+        "раздели лекцию на темы",
+        "сделай из трёхчасовой записи отдельные уроки",
+        "вырежи законченные куски по 5–10 минут"
+      ],
+      "en": [
+        "split the lecture by topic",
+        "make separate lessons from a three-hour recording",
+        "cut complete 5–10 minute pieces"
+      ]
+    },
+    "scenario": "D",
+    "needs": [
+      "video",
+      "subtitles"
+    ],
+    "result": {
+      "ru": "Длинные законченные фрагменты по темам, с титрами.",
+      "en": "Long complete fragments by topic, with captions."
+    },
+    "status": "ready",
+    "tutorials": [
+      "T07",
+      "T06"
+    ]
+  },
+  {
+    "id": "c-interview-clips",
+    "title": {
+      "ru": "Клипы из интервью",
+      "en": "Clips from an interview"
+    },
+    "says": {
+      "ru": [
+        "у меня интервью на час, нужны клипы",
+        "выбери лучшие ответы гостя",
+        "сделай из интервью ролики для соцсетей"
+      ],
+      "en": [
+        "I have an hour-long interview and need clips",
+        "pick the guest's best answers",
+        "make social clips from the interview"
+      ]
+    },
+    "scenario": "D",
+    "needs": [
+      "video",
+      "subtitles"
+    ],
+    "result": {
+      "ru": "Ролики с лучшими ответами, с титрами.",
+      "en": "Reels with the best answers, with captions."
+    },
+    "status": "ready",
+    "tutorials": [
+      "T07",
+      "T06"
+    ]
+  },
+  {
+    "id": "c-podcast-clips",
+    "title": {
+      "ru": "Клипы из видеоподкаста",
+      "en": "Clips from a video podcast"
+    },
+    "says": {
+      "ru": [
+        "нарежь подкаст на клипы",
+        "нужны анонсы выпуска подкаста",
+        "сделай тизеры из нашего разговора"
+      ],
+      "en": [
+        "cut the podcast into clips",
+        "I need promo clips for the episode",
+        "make teasers from our conversation"
+      ]
+    },
+    "scenario": "D",
+    "needs": [
+      "video",
+      "subtitles"
+    ],
+    "result": {
+      "ru": "Короткие клипы из выпуска, с титрами.",
+      "en": "Short clips from the episode, with captions."
+    },
+    "status": "ready",
+    "tutorials": [
+      "T07",
+      "T06"
+    ]
+  },
+  {
+    "id": "c-webinar-cutdown",
+    "title": {
+      "ru": "Короткая версия вебинара или доклада",
+      "en": "A short version of a webinar or a talk"
+    },
+    "says": {
+      "ru": [
+        "сократи вебинар до главного",
+        "сделай выжимку из доклада",
+        "из часового вебинара — самое важное"
+      ],
+      "en": [
+        "cut the webinar down to the essentials",
+        "make a digest of the talk",
+        "the key parts of an hour-long webinar"
+      ]
+    },
+    "scenario": "D",
+    "needs": [
+      "video",
+      "subtitles"
+    ],
+    "result": {
+      "ru": "Несколько законченных фрагментов с главным, с титрами.",
+      "en": "A few complete fragments with the essentials, with captions."
+    },
+    "status": "ready",
+    "tutorials": [
+      "T07",
+      "T06"
+    ]
+  },
+  {
+    "id": "c-quote-clip",
+    "title": {
+      "ru": "Ролик-цитата из записи",
+      "en": "A quote clip from a recording"
+    },
+    "says": {
+      "ru": [
+        "вырежи одну мысль из записи",
+        "нужна цитата спикера роликом",
+        "сделай клип с этой фразой"
+      ],
+      "en": [
+        "cut one thought out of the recording",
+        "I need the speaker's quote as a clip",
+        "make a clip with this phrase"
+      ]
+    },
+    "scenario": "D",
+    "needs": [
+      "video",
+      "subtitles"
+    ],
+    "result": {
+      "ru": "Один короткий ролик с одной мыслью, с титрами.",
+      "en": "One short reel with one thought, with captions."
+    },
+    "status": "ready",
+    "tutorials": [
+      "T07",
+      "T06"
+    ]
+  },
+  {
+    "id": "c-conference-highlights",
+    "title": {
+      "ru": "Лучшие моменты конференции или панели",
+      "en": "Highlights of a conference or a panel"
+    },
+    "says": {
+      "ru": [
+        "собери хайлайты с конференции",
+        "лучшие моменты панельной дискуссии",
+        "нарезка с нашего мероприятия"
+      ],
+      "en": [
+        "put together conference highlights",
+        "the best moments of the panel",
+        "a cut from our event"
+      ]
+    },
+    "scenario": "D",
+    "needs": [
+      "video",
+      "subtitles"
+    ],
+    "result": {
+      "ru": "Ролики с лучшими высказываниями из одной записи.",
+      "en": "Reels with the best statements from one recording."
+    },
+    "status": "partial",
+    "tutorials": [
+      "T07",
+      "T06"
+    ],
+    "gap": {
+      "ru": "Работаю с одной записью за раз: несколько камер и несколько файлов в один ролик пока не собираю.",
+      "en": "I work with one recording at a time: several cameras and several files are not assembled into one video yet."
+    }
+  },
+  {
+    "id": "c-qa-answers",
+    "title": {
+      "ru": "Ответы на вопросы отдельными роликами",
+      "en": "Answers to questions as separate clips"
+    },
+    "says": {
+      "ru": [
+        "у меня эфир с ответами на вопросы, раздели по вопросам",
+        "каждый ответ — отдельным роликом",
+        "сделай из сессии вопросов и ответов серию"
+      ],
+      "en": [
+        "I have a Q&A stream, split it by question",
+        "each answer as its own clip",
+        "make a series from the Q&A session"
+      ]
+    },
+    "scenario": "D",
+    "needs": [
+      "video",
+      "subtitles"
+    ],
+    "result": {
+      "ru": "Серия роликов: один вопрос — один ролик.",
+      "en": "A series of clips: one question, one clip."
+    },
+    "status": "partial",
+    "tutorials": [
+      "T07",
+      "T06"
+    ],
+    "gap": {
+      "ru": "Выбираю сильные моменты, а не каждый вопрос подряд: часть ответов может не попасть в серию.",
+      "en": "I pick strong moments, not every question in a row: some answers may not make it into the series."
+    }
+  },
+  {
+    "id": "c-leadership-message",
+    "title": {
+      "ru": "Обращение руководителя: почистить и сократить",
+      "en": "A leadership message: clean up and shorten"
+    },
+    "says": {
+      "ru": [
+        "записал обращение к команде, убери лишнее",
+        "сократи моё выступление до трёх минут",
+        "почисти запись от пауз и повторов"
+      ],
+      "en": [
+        "I recorded a message to the team, remove the excess",
+        "shorten my speech to three minutes",
+        "clean pauses and repeats out of the recording"
+      ]
+    },
+    "scenario": "D",
+    "needs": [
+      "video",
+      "subtitles"
+    ],
+    "result": {
+      "ru": "Законченные фрагменты выступления с титрами.",
+      "en": "Complete fragments of the speech with captions."
+    },
+    "status": "partial",
+    "tutorials": [
+      "T07",
+      "T06"
+    ],
+    "gap": {
+      "ru": "Беру фрагменты целиком: паузы и слова-паразиты внутри фрагмента пока не вырезаю.",
+      "en": "I take fragments whole: pauses and filler words inside a fragment are not cut out yet."
+    }
+  },
+  {
+    "id": "c-post-to-video",
+    "title": {
+      "ru": "Превратить пост или статью в ролик",
+      "en": "Turn a post or an article into a video"
+    },
+    "says": {
+      "ru": [
+        "вот текст, сделай ролик",
+        "хочу видео из моего поста",
+        "озвучь статью и добавь картинку"
+      ],
+      "en": [
+        "here is a text, make a video",
+        "I want a video from my post",
+        "voice the article and add visuals"
+      ]
+    },
+    "scenario": "B",
+    "needs": [
+      "text"
+    ],
+    "result": {
+      "ru": "Ролик с закадровым голосом, музыкой и анимацией и разборный проект в CapCut.",
+      "en": "A video with voice-over, music and animation, plus an editable CapCut project."
+    },
+    "status": "ready",
+    "tutorials": [
+      "T04",
+      "T05",
+      "T06"
+    ]
+  },
+  {
+    "id": "c-explainer",
+    "title": {
+      "ru": "Объясняющий ролик с анимацией",
+      "en": "An animated explainer"
+    },
+    "says": {
+      "ru": [
+        "объясни это роликом",
+        "нужен эксплейнер про наш подход",
+        "сделай ролик, который объясняет идею за минуту"
+      ],
+      "en": [
+        "explain this in a video",
+        "I need an explainer about our approach",
+        "make a video that explains the idea in a minute"
+      ]
+    },
+    "scenario": "B",
+    "needs": [
+      "text"
+    ],
+    "result": {
+      "ru": "Ролик на минуту–две: голос объясняет, анимация показывает.",
+      "en": "A one-to-two-minute video: the voice explains, the animation shows."
+    },
+    "status": "ready",
+    "tutorials": [
+      "T04",
+      "T05",
+      "T06"
+    ]
+  },
+  {
+    "id": "c-listicle",
+    "title": {
+      "ru": "Ролик-список: «пять причин», «топ-7»",
+      "en": "A list video: \"five reasons\", \"top 7\""
+    },
+    "says": {
+      "ru": [
+        "сделай ролик «5 ошибок новичка»",
+        "хочу топ-7 советов роликом",
+        "список из статьи — в видео по пунктам"
+      ],
+      "en": [
+        "make a \"5 beginner mistakes\" video",
+        "I want a top-7 tips video",
+        "the list from my article as a video, point by point"
+      ]
+    },
+    "scenario": "B",
+    "needs": [
+      "text"
+    ],
+    "result": {
+      "ru": "Ролик по пунктам: каждый пункт — своя сцена.",
+      "en": "A point-by-point video: each point is its own scene."
+    },
+    "status": "ready",
+    "tutorials": [
+      "T04",
+      "T05",
+      "T06"
+    ]
+  },
+  {
+    "id": "c-news-recap",
+    "title": {
+      "ru": "Короткий разбор новости",
+      "en": "A short news recap"
+    },
+    "says": {
+      "ru": [
+        "сделай ролик про эту новость",
+        "нужен быстрый обзор события",
+        "перескажи новость за минуту"
+      ],
+      "en": [
+        "make a video about this news",
+        "I need a quick recap of the event",
+        "retell the news in a minute"
+      ]
+    },
+    "scenario": "B",
+    "needs": [
+      "text"
+    ],
+    "result": {
+      "ru": "Ролик-пересказ вашего текста о новости, с голосом и анимацией.",
+      "en": "A video retelling your text about the news, with voice and animation."
+    },
+    "status": "ready",
+    "tutorials": [
+      "T04",
+      "T05",
+      "T06"
+    ]
+  },
+  {
+    "id": "c-faceless-channel",
+    "title": {
+      "ru": "Ролик без лица в кадре",
+      "en": "A faceless video"
+    },
+    "says": {
+      "ru": [
+        "не хочу сниматься, нужен ролик с голосом за кадром",
+        "канал без лица — сделай выпуск",
+        "чтобы был только голос и картинка"
+      ],
+      "en": [
+        "I don't want to be on camera, I need a voice-over video",
+        "a faceless channel — make an episode",
+        "voice and visuals only"
+      ]
+    },
+    "scenario": "B",
+    "needs": [
+      "text"
+    ],
+    "result": {
+      "ru": "Ролик без съёмки: закадровый голос, музыка и анимация.",
+      "en": "A video with no shooting: voice-over, music and animation."
+    },
+    "status": "ready",
+    "tutorials": [
+      "T04",
+      "T05",
+      "T06"
+    ]
+  },
+  {
+    "id": "c-announcement",
+    "title": {
+      "ru": "Анонс, приглашение или цитата текстом в движении",
+      "en": "An announcement, an invitation or a quote in moving text"
+    },
+    "says": {
+      "ru": [
+        "сделай анонс вебинара",
+        "нужно приглашение на мероприятие роликом",
+        "оформи цитату в короткое видео"
+      ],
+      "en": [
+        "make a webinar announcement",
+        "I need an event invitation as a video",
+        "turn the quote into a short video"
+      ]
+    },
+    "scenario": "B",
+    "needs": [
+      "text"
+    ],
+    "result": {
+      "ru": "Короткий ролик с текстом в движении, голосом и музыкой.",
+      "en": "A short video with moving text, voice and music."
+    },
+    "status": "ready",
+    "tutorials": [
+      "T04",
+      "T05",
+      "T06"
+    ]
+  },
+  {
+    "id": "c-teaser-from-description",
+    "title": {
+      "ru": "Тизер курса, книги или канала по описанию",
+      "en": "A teaser for a course, a book or a channel from its description"
+    },
+    "says": {
+      "ru": [
+        "сделай тизер моего курса",
+        "нужен трейлер канала, съёмок нет",
+        "анонс книги роликом"
+      ],
+      "en": [
+        "make a teaser for my course",
+        "I need a channel trailer and have no footage",
+        "a book announcement as a video"
+      ]
+    },
+    "scenario": "B",
+    "needs": [
+      "text"
+    ],
+    "result": {
+      "ru": "Тизер из вашего описания: голос, музыка, анимация.",
+      "en": "A teaser made from your description: voice, music, animation."
+    },
+    "status": "ready",
+    "tutorials": [
+      "T04",
+      "T05",
+      "T06"
+    ]
+  },
+  {
+    "id": "c-data-story",
+    "title": {
+      "ru": "История в цифрах",
+      "en": "A story in numbers"
+    },
+    "says": {
+      "ru": [
+        "покажи эти цифры роликом",
+        "нужен ролик с графиками по отчёту",
+        "расскажи про результаты года в цифрах"
+      ],
+      "en": [
+        "show these numbers as a video",
+        "I need a video with charts from the report",
+        "tell the year's results in numbers"
+      ]
+    },
+    "scenario": "B",
+    "needs": [
+      "text"
+    ],
+    "result": {
+      "ru": "Ролик, где голос рассказывает, а на экране — ключевые цифры.",
+      "en": "A video where the voice tells the story and the key numbers are on screen."
+    },
+    "status": "partial",
+    "tutorials": [
+      "T04",
+      "T05",
+      "T06"
+    ],
+    "gap": {
+      "ru": "Цифры показываю анимированным текстом: графики по файлу с данными пока не строю.",
+      "en": "Numbers are shown as animated text: charts built from a data file are not made yet."
+    }
+  },
+  {
+    "id": "c-video-essay",
+    "title": {
+      "ru": "Видеоэссе",
+      "en": "A video essay"
+    },
+    "says": {
+      "ru": [
+        "хочу видеоэссе по моему тексту",
+        "длинное рассуждение — в видео на десять минут",
+        "сделай авторский ролик-размышление"
+      ],
+      "en": [
+        "I want a video essay from my text",
+        "a long reflection as a ten-minute video",
+        "make a personal essay video"
+      ]
+    },
+    "scenario": "B",
+    "needs": [
+      "text"
+    ],
+    "result": {
+      "ru": "Ролик по вашему тексту с голосом и анимацией.",
+      "en": "A video from your text with voice and animation."
+    },
+    "status": "partial",
+    "tutorials": [
+      "T04",
+      "T05",
+      "T06"
+    ],
+    "gap": {
+      "ru": "Путь из текста рассчитан на короткие ролики: длинное эссе с архивом и цитатами пока не собираю.",
+      "en": "The text path is tuned for short videos: a long essay with archive footage and quotes is not assembled yet."
+    }
+  },
+  {
+    "id": "c-app-promo",
+    "title": {
+      "ru": "Промо приложения или сервиса",
+      "en": "A promo for an app or a service"
+    },
+    "says": {
+      "ru": [
+        "сделай промо нашего сервиса",
+        "нужен ролик о приложении для лендинга",
+        "покажи продукт за тридцать секунд"
+      ],
+      "en": [
+        "make a promo for our service",
+        "I need a video about the app for the landing page",
+        "show the product in thirty seconds"
+      ]
+    },
+    "scenario": "B",
+    "needs": [
+      "text"
+    ],
+    "result": {
+      "ru": "Ролик о продукте из вашего описания: голос, музыка, анимация.",
+      "en": "A product video from your description: voice, music, animation."
+    },
+    "status": "partial",
+    "tutorials": [
+      "T04",
+      "T05",
+      "T06"
+    ],
+    "gap": {
+      "ru": "Записи экрана внутри ролика пока нет: продукт рассказан и нарисован, а не показан вживую.",
+      "en": "There is no screen recording inside the video yet: the product is told and drawn, not shown live."
+    }
+  },
+  {
+    "id": "c-offer-ad",
+    "title": {
+      "ru": "Ролик с предложением и сроком",
+      "en": "A video with an offer and a deadline"
+    },
+    "says": {
+      "ru": [
+        "сделай ролик про скидку до пятницы",
+        "нужна реклама набора на курс",
+        "объяви акцию роликом"
+      ],
+      "en": [
+        "make a video about the discount until Friday",
+        "I need an ad for course enrolment",
+        "announce the offer as a video"
+      ]
+    },
+    "scenario": "B",
+    "needs": [
+      "text"
+    ],
+    "result": {
+      "ru": "Короткий ролик: предложение, срок, призыв — голосом и текстом на экране.",
+      "en": "A short video: the offer, the deadline, the call — in voice and on-screen text."
+    },
+    "status": "partial",
+    "tutorials": [
+      "T04",
+      "T05",
+      "T06"
+    ],
+    "gap": {
+      "ru": "Готовых рекламных шаблонов с фиксированным ритмом пока нет: каждый ролик собирается из текста заново.",
+      "en": "There are no ready ad templates with fixed timing yet: each video is built from the text anew."
+    }
+  }
+]

@@ -276,33 +276,20 @@ def status(folder: str | Path) -> dict[str, Any]:
         raise VPError("data", f"no job in {folder} (request.yaml missing)")
     if not is_text_job(folder):
         raise VPError("data", f"{folder} is not a text job (request.yaml kind is not 'text')")
-    have = stages_present(folder)
-    nxt = next((s for s in STAGES if not have[s]), None)
-    detail: dict[str, Any] = {}
-    try:
-        sc = load_scenes(folder)
-    except VPError as e:
-        sc, detail["scenes_error"] = None, str(e)
-    if sc:
-        scenes = sc["scenes"]
-        voiced = sum(1 for n, s in enumerate(scenes) if scene_voice(folder, s, n))
-        detail["scenes"] = len(scenes)
-        detail["voiced_scenes"] = voiced
-    detail["sketches"] = len(_files(folder / "sketches", IMAGE_EXT))
-    detail["renders"] = [p.name for p in renders(folder)]
-    detail["capcut_versions"] = capcut_versions(folder)
-    approved = approvals(folder)
-    # the sketches gate: production (voice onwards) waits for the person's approval
-    if have["sketches"] and "sketches" not in approved and nxt in STAGES[3:]:
-        nxt = "approve_sketches"
+    from .position_text import _inspect
+    position, have, detail, approved = _inspect(folder)
+    nxt = None if position["state"] == "done" else position["engine"]
+    action = position["next"]
     req = read_yaml(folder / "request.yaml", default={}) or {}
     return {"folder": str(folder), "title": req.get("title") or folder.name, "stages": have,
-            "approved": approved, "next": nxt, "next_step": next_step(folder, nxt),
-            "detail": detail}
+            "approved": approved, "next": nxt,
+            "next_step": {"what": action["text"], "command": action["command"]},
+            "detail": detail, "position": position}
 
 
 APPROVALS = "approvals.yaml"
-APPROVABLE = ("brief", "script", "sketches", "voice", "music", "render")
+SKIP_APPROVALS = ("no_music",)
+APPROVABLE = ("brief", "script", "sketches", "voice", "music", "render") + SKIP_APPROVALS
 
 
 def approvals(folder: Path) -> dict[str, Any]:
@@ -317,57 +304,12 @@ def approve(folder: str | Path, what: str, note: str | None = None) -> dict[str,
         raise VPError("data", f"{folder} is not a text job")
     if what not in APPROVABLE:
         raise VPError("data", f"can approve: {', '.join(APPROVABLE)}")
-    if not stages_present(folder).get(what):
+    if what not in SKIP_APPROVALS and not stages_present(folder).get(what):
         raise VPError("data", f"nothing to approve yet: stage {what} has no files")
     data = approvals(folder)
     data[what] = {"at": now_iso(), **({"note": note} if note else {})}
     write_yaml(folder / APPROVALS, data)
     return data
-
-
-def _q(p: Path) -> str:
-    s = str(p)
-    return f'"{s}"' if re.search(r"[\s'\"$`\\]", s) else s
-
-
-def next_step(folder: Path, nxt: str | None) -> dict[str, str]:
-    """What to do next and the exact command (or the file to write) for it."""
-    j = _q(folder)
-    nv = f"v{len(capcut_versions(folder)) + 1}"
-    steps = {
-        "brief": ("write the brief: goal, format (9:16), length, tone, sound, credit budget "
-                  f"(estimate: vp text estimate {j})", f"write {_q(folder / 'brief.md')}"),
-        "script": ("write the screenplay: a table `| S1 | voice text | what is on screen | ≈ s |` "
-                   "(the voice text of each scene becomes its subtitles)",
-                   f"write {_q(folder / 'script.md')}"),
-        "sketches": ("draw a static sketch of every scene with Remotion stills and show them in the "
-                     "chat", f"render stills to {_q(folder / 'sketches')}/S01.png …"),
-        "approve_sketches": ("ask the person to approve the sketches; on «yes» record it",
-                             f"vp text approve {j} sketches"),
-        "voice": ("voice every scene with ElevenLabs (one file per scene; the voice_id comes from "
-                  "`vp voice list`, chosen by the person from three samples)",
-                  f"vp voice scenes {j} --voice <voice_id> ; then vp text status {j}"),
-        "music": ("make one music track for the whole video (ElevenLabs, paid plans; or the "
-                  "person's own file in music/)",
-                  f"vp music make {j} --prompt-file {_q(folder / 'music' / 'prompt.txt')} "
-                  f"--seconds <video length> --out {_q(folder / 'music')}/music.mp3"),
-        "animation": ("measure the voice files and lay out the scenes (subtitle timing by code)",
-                      f"vp text timeline {j}"),
-        "render": ("animate the scenes in the job's Remotion project "
-                   f"({REMOTION_PROJECT}/{REMOTION_ENTRY}, scenes from the timeline.json props) "
-                   f"and render with the engine: {nv}.mp4 (voice+music, loudness mastered), "
-                   f"{nv}-picture.mp4 and, if needed, {nv}-chat.mp4; check before showing, then "
-                   "send the chat-sized file into the chat",
-                   f"vp text render {j} --composition <Id> --version {nv} ; "
-                   f"vp check picture {_q(folder / 'renders')}/{nv}.mp4"),
-        "capcut": ("export the CapCut project: picture, subtitles, voice and music on their own "
-                   "tracks in one step", f"vp capcut {j} --version {nv}"),
-    }
-    if nxt is None:
-        return {"what": "all stages done: on a change, render a new version and export it",
-                "command": f"vp capcut {j} --version {nv}"}
-    what, cmd = steps[nxt]
-    return {"what": what, "command": cmd}
 
 
 # ---- estimate -------------------------------------------------------------------------------
@@ -1003,9 +945,23 @@ def _main(a: argparse.Namespace) -> int:
                 print("CapCut versions: " + ", ".join(d["capcut_versions"]))
             if res["approved"]:
                 print("approved: " + ", ".join(res["approved"]))
-            print(f"next: {res['next'] or 'all stages done (new versions on request)'} — "
-                  f"{res['next_step']['what']}")
-            print(f"command: {res['next_step']['command']}")
+            pos = res["position"]
+            nxt = res["next"]
+            if nxt is None:
+                nxt = "all stages done (new versions on request)" if pos["state"] == "done" else "unknown"
+            print(f"next: {nxt} — {res['next_step']['what']}")
+            print(f"command: {res['next_step']['command'] or '—'}")
+            place = f" ({pos['index']}/{pos['total']})" if pos["index"] is not None else ""
+            title = pos["title"]["en"] if pos["title"] else "unknown step"
+            focus = pos["focus"]
+            count = ""
+            if pos["step"] in ("sketches", "sketch_gate", "voice"):
+                count = f" · {focus['items_at_step']}/{focus['items_total']} scenes"
+            print(f"position: {focus['version']} · {title}{place} · {pos['state']}{count}")
+            if pos["waiting_for"]:
+                print(f"waiting for: {pos['waiting_for']['text']}")
+            action = pos["next"]
+            print(f"next action: {action['action']} — {action['text']}")
         return 0
     if a.cmd == "estimate":
         res = estimate_job(a.job)

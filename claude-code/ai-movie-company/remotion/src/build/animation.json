@@ -1,0 +1,11 @@
+{
+  "tagDegrees": 8,
+  "stickerDegrees": 12,
+  "stickerScale": 1.08,
+  "flybyDegrees": 10,
+  "flybyTravelWidths": 0.25,
+  "captionLineHeight": 1.12,
+  "plateWidthFraction": 0.32,
+  "plateHeightFraction": 0.075,
+  "plateMarginFraction": 0.0225
+}

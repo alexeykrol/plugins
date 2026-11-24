@@ -128,14 +128,17 @@ def resolve_step(step: dict[str, Any]) -> dict[str, Any]:
 
 
 def scenario_list() -> list[dict[str, Any]]:
-    return tree()["scenarios"]
+    from .kpack import load
+    return load()["scenarios"]
 
 
 def scenario(sid: str) -> dict[str, Any]:
-    for s in scenario_list():
-        if s["id"].upper() == str(sid).strip().upper():
+    choices = scenario_list()
+    code = str(sid).strip().upper()
+    for s in choices:
+        if s["id"].upper() == code:
             return s
-    raise VPError("data", f"unknown scenario {sid!r} (known: {', '.join(s['id'] for s in scenario_list())})")
+    raise VPError("data", f"unknown scenario {sid!r} (known: {', '.join(s['id'] for s in choices)})")
 
 
 def steps_of(s: dict[str, Any]) -> list[dict[str, Any]]:
@@ -496,8 +499,13 @@ def _keywords_hit(words: Iterable[str], text: str) -> list[str]:
 
 def detect(path: str | Path, says: str | None = None,
            probe: Callable[[Path], bool | None] | None = _default_probe) -> dict[str, Any]:
+    from .kpack import load
+    from .kpack.schema import AMBIGUOUS_QUESTION
+
     inv = inventory(path)
-    scores: dict[str, int] = {s["id"]: 0 for s in scenario_list()}
+    content = load()
+    scenarios = {s["id"]: s for s in content["scenarios"]}
+    scores: dict[str, int] = dict.fromkeys(scenarios, 0)
     reasons: dict[str, list[str]] = {k: [] for k in scores}
 
     def add(sid: str, pts: int, why: str) -> None:
@@ -558,7 +566,7 @@ def detect(path: str | Path, says: str | None = None,
                 add("C", 15, "a text can be a ready script")
     if not any((v, sub, au, im, tx, inv["request_kind"])):
         add("A", 30, "no materials yet")
-    for s in scenario_list():
+    for s in scenarios.values():
         kws = s["detection"]["keywords"]
         if says:
             hit = _keywords_hit(kws, says)
@@ -569,9 +577,9 @@ def detect(path: str | Path, says: str | None = None,
             if hit:
                 add(s["id"], TEXT_KEYWORD, f"the text mentions: {', '.join(hit[:3])}")
 
-    order = {s["id"]: i for i, s in enumerate(scenario_list())}
+    order = {sid: i for i, sid in enumerate(scenarios)}
     ranked = sorted((sid for sid in scores if scores[sid] > 0), key=lambda x: (-scores[x], order[x]))
-    cands = [{"scenario": sid, "name": scenario(sid)["name"], "score": scores[sid], "reasons": reasons[sid]}
+    cands = [{"scenario": sid, "name": scenarios[sid]["name"], "score": scores[sid], "reasons": reasons[sid]}
              for sid in ranked[:4]]
     ambiguous = not cands or cands[0]["score"] < WEAK_SCORE or (
         len(cands) > 1 and cands[0]["score"] - cands[1]["score"] < AMBIGUOUS_MARGIN)
@@ -583,13 +591,14 @@ def detect(path: str | Path, says: str | None = None,
             pair = [cands[0]["scenario"], "A" if cands[0]["scenario"] != "A" else "B"]
         else:
             pair = ["A", "B"]
-        question = {"ru": "Что ближе к вашей задаче?", "en": "Which is closer to what you need?",
-                    "options": [{"scenario": sid, "ru": scenario(sid)["detection"]["choice"]["ru"],
-                                 "en": scenario(sid)["detection"]["choice"]["en"]} for sid in pair]}
+        words = content["hints"].get(AMBIGUOUS_QUESTION, {
+            "ru": "Что ближе к вашей задаче?", "en": "Which is closer to what you need?"})
+        question = {**words, "options": [{"scenario": sid, **scenarios[sid]["detection"]["choice"]}
+                                        for sid in pair]}
     top = cands[0]["scenario"] if cands else None
     kind = _guess_kind(" ".join(filter(None, (says, inv["text_sample"]))))
     if not kind and top:
-        kind = (scenario(top).get("intake_kinds") or [None])[0]
+        kind = (scenarios[top].get("intake_kinds") or [None])[0]
     counts = {k: len(inv[k]) for k in ("video", "subs", "audio", "image", "text", "words")}
     return {"path": str(Path(path).expanduser()), "inventory": counts,
             "audio_probe": {"probed": len(audio_flags), "with_sound": sum(audio_flags)},

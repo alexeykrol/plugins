@@ -9,13 +9,18 @@ import hashlib
 import json
 import os
 import tempfile
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 import yaml
 
+from .errors import VPError
+
 MISSING = "MISSING"  # hash marker for a file that does not exist
+HASH_PROGRESS_BYTES = 256 * (1 << 20)
 
 # libyaml loader when available (≈10x faster, same objects). Writing stays on the pure-Python
 # dumper: the C emitter escapes astral-plane characters (emoji) differently, and file bytes
@@ -23,7 +28,8 @@ MISSING = "MISSING"  # hash marker for a file that does not exist
 _Loader = getattr(yaml, "CSafeLoader", None) if getattr(yaml, "__with_libyaml__", False) else None
 _Loader = _Loader or yaml.SafeLoader
 
-_SHA_CACHE: dict[tuple, str] = {}
+_SHA_CACHE: dict[tuple[Path, int, int, int, int], str] = {}
+_SHA_LOCK = Lock()
 
 
 def now_iso() -> str:
@@ -114,27 +120,67 @@ def sha256_obj(obj: Any) -> str:
     return sha256_bytes(canonical_json(obj))
 
 
-def sha256_file(path: str | os.PathLike) -> str:
-    """Hex sha256 of a file's bytes, or MISSING if it does not exist.
+class FileChangedError(VPError):
+    def __init__(self):
+        super().__init__("data", "the media file changed while it was being verified")
 
-    Cached in-process by (path, inode, size, mtime_ns): atomic rewrites change the inode.
+
+def _stat_identity(st: os.stat_result) -> tuple[int, int, int, int]:
+    return st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_ino
+
+
+def file_identity(path: Path) -> tuple[Path, int, int, int, int]:
+    resolved = path.resolve(strict=True)
+    return resolved, *_stat_identity(resolved.stat())
+
+
+def sha256_file(path: str | os.PathLike, *, missing_ok: bool = True,
+                progress_root: Path | None = None) -> str:
+    """Hex SHA-256 of a stable file, or MISSING when allowed and initially absent.
+
+    The process cache keys on resolved path, size, mtime_ns, ctime_ns and inode.
+    An uncached large read uses the active tracker or opens one at progress_root.
     """
+    from . import progress
+
     p = Path(path)
-    try:
-        st = p.stat()
-    except FileNotFoundError:
-        return MISSING
-    key = (str(p.resolve()), st.st_ino, st.st_size, st.st_mtime_ns)
-    cached = _SHA_CACHE.get(key)
-    if cached is not None:
-        return cached
-    h = hashlib.sha256()
-    with open(p, "rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            h.update(block)
-    digest = h.hexdigest()
-    _SHA_CACHE[key] = digest
-    return digest
+    with _SHA_LOCK:
+        try:
+            key = file_identity(p)
+        except FileNotFoundError:
+            if missing_ok:
+                return MISSING
+            raise
+        cached = _SHA_CACHE.get(key)
+        if cached is not None:
+            return cached
+
+        resolved, size, *_ = key
+        report = size > HASH_PROGRESS_BYTES
+        tracking = (progress.tracking(progress_root, "verify recording", None, total=size, unit="bytes")
+                    if report and progress_root is not None and progress.current() is None else nullcontext())
+        with tracking as tracker:
+            start = progress.clock() if report else None
+            if report and tracker is None:
+                progress.report(0, size, "bytes", since=start, force=True)
+            h = hashlib.sha256()
+            done = 0
+            try:
+                with open(resolved, "rb") as f:
+                    if _stat_identity(os.fstat(f.fileno())) != key[1:]:
+                        raise FileChangedError()
+                    for block in iter(lambda: f.read(1 << 20), b""):
+                        h.update(block)
+                        done += len(block)
+                        if report:
+                            progress.report(done, size, "bytes", since=start, force=done == size)
+                    if _stat_identity(os.fstat(f.fileno())) != key[1:] or file_identity(p) != key:
+                        raise FileChangedError()
+            except FileNotFoundError as exc:
+                raise FileChangedError() from exc
+        digest = h.hexdigest()
+        _SHA_CACHE[key] = digest
+        return digest
 
 
 def append_line(path: str | os.PathLike, line: str) -> None:

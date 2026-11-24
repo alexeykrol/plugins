@@ -1,0 +1,24 @@
+{
+  "engine": {
+    "S0": "intake",
+    "S1": "proofread",
+    "S2": "retime",
+    "S3a": "select",
+    "S3b": "review",
+    "S4": "cut_render",
+    "S6a": "cut_render",
+    "S5": "cut_render",
+    "S5v": "picture_check",
+    "S7": "metadata",
+    "S6b": "metadata",
+    "S8": "upload",
+    "S10": "approve",
+    "S9": "approve",
+    "PUB": "approve",
+    "S11": "approve"
+  },
+  "whole_recording": {
+    "S3a": "cut_render",
+    "S3b": "cut_render"
+  }
+}

@@ -1,6 +1,6 @@
 {
   "name": "ai-movie-company",
-  "version": "0.8.8",
+  "version": "0.9.0",
   "types": "./types/index.d.ts",
   "description": "AI movie company: Elsa, an editing director you talk to in Claude. She turns a recorded lecture or interview into a reviewed YouTube series: agrees the task with you, transcribes the speech when there are no subtitles, proofreads subtitles, proposes reels and long fragments for your review in the chat, renders clips with captions, cards and thumbnails, writes metadata, uploads private drafts and publishes only what you approve in the dialog. She also makes a short video from a plain text: storyboard, voice, music, animation and a CapCut project.",
   "author": {

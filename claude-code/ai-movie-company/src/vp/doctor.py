@@ -31,6 +31,7 @@ from .core.paths import vp_home
 MIN_PY = (3, 12)
 REQUIRED_MODULES = ("yaml",)
 YOUTUBE_MODULES = ("googleapiclient", "google_auth_oauthlib", "google.oauth2", "httplib2")
+VIDEO_ENCODERS = ("libx264", "h264_videotoolbox", "hevc_videotoolbox")
 
 
 def _module_ok(name: str) -> bool:
@@ -52,6 +53,39 @@ def _ffmpeg_filters(ffmpeg: str) -> set[str]:
         if len(parts) >= 2 and len(parts[0]) <= 4 and set(parts[0]) <= set("TSC.|"):
             out.add(parts[1])
     return out
+
+
+def _ffmpeg_encoders(ffmpeg: str) -> list[str] | None:
+    try:
+        p = subprocess.run([ffmpeg, "-hide_banner", "-encoders"], capture_output=True, text=True,
+                           timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if p.returncode != 0:
+        return None
+    video = set()
+    for line in p.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and len(parts[0]) == 6 and parts[0].startswith("V"):
+            video.add(parts[1])
+    return [encoder for encoder in VIDEO_ENCODERS if encoder in video]
+
+
+def _render_checks(cfg: dict[str, Any]) -> list[tuple[str, str, str]]:
+    from .adapters.media import VIDEO_ENC
+    from .adapters.render_remotion import DEFAULT_GL_BACKEND, effective_renderer, render_gl
+
+    setting, backend = render_gl(cfg)
+    resolved = backend or f"{DEFAULT_GL_BACKEND} via Remotion default"
+    if effective_renderer(cfg)[0] == "remotion":
+        effective = f"{resolved} (before any render-time fallback)"
+    else:
+        effective = f"unused (ffmpeg renderer, Remotion would select {resolved})"
+    return [
+        ("INFO", "render video encoder", VIDEO_ENC[VIDEO_ENC.index("-c:v") + 1]),
+        ("INFO", "render.gl", setting),
+        ("INFO", "render.gl_effective", effective),
+    ]
 
 
 def checks(home: Path | None = None) -> list[tuple[str, str, str]]:
@@ -76,6 +110,11 @@ def checks(home: Path | None = None) -> list[tuple[str, str, str]]:
     fpath, ppath = shutil.which(ffmpeg), shutil.which(ffprobe)
     add("OK" if fpath else "FAIL", "ffmpeg", fpath or "not found (macOS: ask Claude to run the plugin installer again)")
     add("OK" if ppath else "FAIL", "ffprobe", ppath or "not found (installed with ffmpeg)")
+    encoders = _ffmpeg_encoders(fpath) if fpath else None
+    if encoders is None:
+        add("WARN", "ffmpeg video encoders", "could not list encoders")
+    else:
+        add("INFO", "ffmpeg video encoders", ", ".join(encoders) or "none of the tracked encoders")
     if fpath:
         filters = _ffmpeg_filters(fpath)
         for f, why in (("subtitles", "burned-in subtitles (ffmpeg built with libass)"),
@@ -100,6 +139,7 @@ def checks(home: Path | None = None) -> list[tuple[str, str, str]]:
         add("FAIL", "config", f"{config_path(h)}: {e}")
         return res
     add("OK", "config", str(config_path(h)))
+    res.extend(_render_checks(cfg))
     res.extend(_publisher_checks(cfg))
     res.extend(_notifier_checks(cfg))
     res.extend(_judge_checks(cfg))

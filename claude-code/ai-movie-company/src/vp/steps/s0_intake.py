@@ -8,43 +8,120 @@ Checks: request `platforms` and `brief` (optional text, at most 2000 characters)
 (video missing -> VPError data; video present but no SRT -> Inconclusive with the reason code
 `NEED_TRANSCRIPT`, the run stops like a gate: `INCONCLUSIVE S0: NEED_TRANSCRIPT: ...`, exit 0);
 ffprobe (duration, resolution, fps, audio); SRT parses and is non-empty; SRT duration <= video
-duration + 1 s; profile known; boundary mode `words` iff the words file has word timings, else
-`srt_only`; YouTube channel of the token == configured channel (auth problem or mismatch ->
-VPError auth, the route does not start). Output: job.yaml (deterministic — no clock values, so
-re-running S0 on unchanged inputs does not cascade). The brief is only checked here, not copied
-into job.yaml: S3a reads it from the request, so a changed brief re-runs the selection (S3a and
-what follows from it) and leaves S1/S2 alone.
+duration + 1 s; profile known; boundary mode `words` when the source transcript provides usable
+word timings, otherwise `srt_only`; YouTube channel of the token == configured channel
+(auth problem or mismatch -> VPError auth). Outputs are deterministic job.yaml and a separate
+word timing report. S3a reads the brief directly from the request, so a changed brief reruns
+selection and leaves S1/S2 fresh.
 """
 from __future__ import annotations
 
-import json
+from itertools import pairwise
+from pathlib import Path
 from typing import Any
 
+from .. import transcribe
 from ..adapters import media
+from ..analysis import align_words
+from ..core.adoption import recognition_inputs
 from ..core.config import request_brief
-from ..core.io import read_json, write_yaml
+from ..core.io import MISSING, read_json, sha256_file, sha256_obj, write_yaml
+from ..core.manifest import hash_files, read_manifest
+from ..core.paths import Job
 from ..core.srt import read_srt, srt_duration_ms
 from .base import Ctx, Inconclusive, StepSpec, VPError
 from ._s2_retime import load_words
 
 CONTRACT_VERSION = 1
+KEY_CONTRACT_VERSION_088 = 1
 SRT_SLACK_MS = 1000
 KNOWN_PLATFORMS = ("youtube",)
 NEED_TRANSCRIPT = "NEED_TRANSCRIPT"   # reason code: video present, subtitles missing
+INFERRED_WORD_TIMES = "the saved word times only contain inferred boundaries"
 
 
-def boundary_mode(ctx: Ctx) -> tuple[str, int]:
-    """('words', n_words) if the words file exists and carries word timings, else ('srt_only', 0).
-    A words file that exists but is not valid JSON / has broken timings -> VPError(data)."""
-    p = ctx.job.source_words
-    if not p.exists():
-        return "srt_only", 0
+def intake_timing_path(job: Job) -> Path:
+    return job.root / "intake.word-times.yaml"
+
+
+def _group_transcript_words(job: Job, words: list[tuple[str, int, int, str]], *,
+                            legacy_rows: bool = False) -> list[tuple[str, int, int, str]]:
+    """Preserve the original S0 word count and S2 alignment for accepted transcript rows."""
+    # The timing reader gives every token from the same row identical start and end times.
+    if not any(a[1:3] == b[1:3] for a, b in pairwise(words)):
+        return words
+    if not legacy_rows and any(origin == "inferred" for _, _, _, origin in words):
+        return words
     try:
-        data = read_json(p)
-        words = load_words(data)
-    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as e:
-        raise VPError("data", f"words file {p.name} is unreadable: {e}") from e
-    return ("words", len(words)) if words else ("srt_only", 0)
+        rows = load_words(read_json(job.source_words))
+    except (OSError, TypeError, ValueError, OverflowError):
+        return words
+    flattened = [(token, row["start"], row["end"]) for row in rows for token in row["w"].split()]
+    if flattened != [word[:3] for word in words]:
+        return words
+    grouped = []
+    offset = 0
+    for row in rows:
+        grouped.append((row["w"], row["start"], row["end"], words[offset][3]))
+        offset += len(row["w"].split())
+    return grouped
+
+
+def staged_word_times(job: Job, *, probe=None) -> transcribe.JobWordTimes:
+    """Read the boundary source independently of any newer purchase made for captions."""
+    if not job.source_words.is_file():
+        reason = ("the available word times are separate from the source transcript"
+                  if job.caption_words.is_file() else transcribe.NO_WORD_TIMES)
+        return transcribe.JobWordTimes([], reason=reason)
+    unreadable = "the word times of the recording could not be read"
+    doc = transcribe._document(job.source_words)
+    if not doc:
+        return transcribe.JobWordTimes([], reason=unreadable)
+    provenance, reason = transcribe._timing_validation(job, job.source_video, doc, "recording", probe)
+    if reason:
+        return transcribe.JobWordTimes([], reason=reason)
+    source = doc["source"] if isinstance(doc.get("source"), dict) else {}
+    digest = source.get("recording_sha256") or doc.get("recording_sha256")
+    provider = transcribe.SERVICE in (doc.get("service"), source.get("service"))
+    try:
+        words = align_words.source_words(doc, legacy=provider and not digest)
+    except (TypeError, ValueError, OverflowError):
+        return transcribe.JobWordTimes([], reason=unreadable)
+    if not words:
+        return transcribe.JobWordTimes([], reason=transcribe.NO_WORD_TIMES)
+    if provenance == transcribe.LEGACY_UNVERIFIED:
+        words = [(word, start, end, provenance if origin == "measured" else origin)
+                 for word, start, end, origin in words]
+    legacy_rows = provider and transcribe.legacy_word_rows(doc, source)
+    return transcribe.JobWordTimes(_group_transcript_words(job, words, legacy_rows=legacy_rows),
+                                   provenance, "source_words", owned=bool(digest or provider),
+                                   legacy_rows=legacy_rows)
+
+
+def closed_review_matches(job: Job) -> bool:
+    review = read_manifest(job, "S3b") or {}
+    saved = (review.get("outputs") or {}).get(job.rel(job.fragments_yaml))
+    return bool(saved and saved != MISSING and sha256_file(job.fragments_yaml) == saved)
+
+
+def _reviewed_sources_unchanged(job: Job) -> bool:
+    previous = (read_manifest(job, "S0") or {}).get("inputs") or {}
+    current = hash_files(job, (job.source_video, job.source_srt, job.source_words))
+    return all(previous.get(path) == digest for path, digest in current.items())
+
+
+def _changed_intake_fields(previous: dict, current: dict, prefix: str = "") -> list[str]:
+    changed = []
+    for name in sorted(previous.keys() | current.keys(), key=str):
+        old, live = previous.get(name), current.get(name)
+        if name in previous and name in current and type(old) is type(live) and old == live:
+            continue
+        field = f"{prefix}{name}"
+        if isinstance(old, dict) and isinstance(live, dict):
+            changed.extend(_changed_intake_fields(old, live, f"{field}."))
+        else:
+            changed.append(field)
+    return changed
 
 
 def check_channel(ctx: Ctx) -> dict[str, Any]:
@@ -75,15 +152,15 @@ class S0Intake(StepSpec):
 
     def inputs(self, ctx):
         j = ctx.job
-        return [j.request_yaml, j.source_video, j.source_srt, j.source_words]
+        return [j.request_yaml, j.source_video, j.source_srt, j.source_words, *recognition_inputs(j, self.id)]
 
     def config(self, ctx):
-        return {"contract_version": CONTRACT_VERSION, "profile": ctx.config.get("profile_name"),
+        return {"contract_version": KEY_CONTRACT_VERSION_088, "profile": ctx.config.get("profile_name"),
                 "publisher": ctx.config.get("publisher", "youtube"),
                 "channel_id": (ctx.config.get("youtube") or {}).get("channel_id")}
 
     def outputs(self, ctx):
-        return [ctx.job.job_yaml]
+        return [ctx.job.job_yaml, intake_timing_path(ctx.job)]
 
     def run(self, ctx):
         j = ctx.job
@@ -100,6 +177,7 @@ class S0Intake(StepSpec):
         if unknown:
             raise VPError("data", f"unknown platforms {unknown}; known: {list(KNOWN_PLATFORMS)}")
         request_brief(req)  # a bad `brief` stops the route here, before any model work (S3a uses it)
+        transcribe.guard_inputs(j, *self.outputs(ctx))
 
         if not j.source_video.exists():
             raise VPError("data", f"source video not found: {j.source_video.name}")
@@ -127,7 +205,14 @@ class S0Intake(StepSpec):
         profile = ctx.config.get("profile_name")
         if not profile or not ctx.profile:
             raise VPError("data", "profile is not determined")
-        mode, n_words = boundary_mode(ctx)
+        timing = staged_word_times(j, probe=lambda _: info)
+        n_words = sum(timing.legacy_rows or origin != "inferred" for _, _, _, origin in timing.words)
+        mode = "words" if n_words else "srt_only"
+        if n_words:
+            timing_meta = {"word_times_provenance": timing.provenance}
+        else:
+            reason = timing.reason or INFERRED_WORD_TIMES
+            timing_meta = {"word_times_reason": reason}
         channel = check_channel(ctx) if "youtube" in platforms else None
 
         job = {
@@ -145,9 +230,27 @@ class S0Intake(StepSpec):
             "channel": channel,
             "stages": req.get("stages") or {},
         }
-        write_yaml(j.job_yaml, job)
+        previous = transcribe._document(j.job_yaml, yaml=True)
+        # Keep the reviewed timing interpretation when its sources have not changed. The rest
+        # of the intake stays live because selection and review also depend on that data.
+        reviewed = closed_review_matches(j)
+        if (reviewed and previous.get("boundary_mode") in ("words", "srt_only")
+                and "words" in previous and _reviewed_sources_unchanged(j)):
+            if previous.get("words") != n_words:
+                timing_meta["usable_words"] = n_words
+            job.update(boundary_mode=previous["boundary_mode"], words=previous["words"])
+        mode = job["boundary_mode"]
+        if sha256_obj(previous) != sha256_obj(job):
+            write_yaml(j.job_yaml, job)
+            if reviewed and previous:
+                fields = ", ".join(_changed_intake_fields(previous, job))
+                print(f"S0 updated the intake used for fragment selection and review: {fields}.", flush=True)
+        if mode == "srt_only" and timing_meta.get("word_times_reason") not in (None, transcribe.NO_WORD_TIMES):
+            print(f"S0 is using subtitles only because {timing_meta['word_times_reason']}.", flush=True)
+        write_yaml(intake_timing_path(j), timing_meta)
         return {"boundary_mode": mode, "profile": profile, "cues": len(cues),
-                "duration_ms": info["duration_ms"], "channel_verified": bool(channel and channel["verified"])}
+                "duration_ms": info["duration_ms"], "channel_verified": bool(channel and channel["verified"]),
+                **timing_meta}
 
 
 STEP = S0Intake()

@@ -75,6 +75,7 @@ from . import capcut_library as lib
 PROJECT_LINK = "project.json"          # <job>/capcut/project.json: which CapCut project is the job's
 PROJECT_CLIP_ID = "job-project"        # marker clip_id of a per-job multi-timeline project
 LAYERS_FILE = "layers.json"
+WRITTEN_DIR = "written"
 IMAGE_EXT = (".png", ".jpg", ".jpeg", ".webp")
 CROP_MODEL = "A"   # cropped region fitted to the canvas, then scaled (capcut-format-reference
                    # §1.3/1.5). Unverified by a CapCut open (probe 4.1); without a crop both models
@@ -760,7 +761,7 @@ class TimelineBuild:
 def write_version(builds: list[TimelineBuild], *, job_root: Path, job_id: str, title: str,
                   root: Path, running: Callable[[], bool], backup_dir: Path | None = None,
                   cover: Callable[[Path, Path], None] | None = None,
-                  make_main: bool = True) -> dict[str, Any]:
+                  make_main: bool = True, baseline_dir: Path | None = None) -> dict[str, Any]:
     """Add one timeline per build to the job's CapCut project (created on first use).
 
     Existing timelines are never touched; nothing is written while CapCut runs or has the project
@@ -825,7 +826,10 @@ def write_version(builds: list[TimelineBuild], *, job_root: Path, job_id: str, t
             tmp = work / "Timelines" / f".{info['id']}.tmp"
             tmp.mkdir(parents=True)
             created.append(tmp)
-            (tmp / "draft_info.json").write_text(_dump(info), encoding="utf-8")
+            written = _dump(info)
+            (tmp / "draft_info.json").write_text(written, encoding="utf-8")
+            if baseline_dir is not None:
+                atomic_write(baseline_dir / f"{info['id']}.json", written)
             if cover and b.cover_from and not (work / "draft_cover.jpg").exists():
                 cover(b.cover_from, work / "draft_cover.jpg")
                 if (work / "draft_cover.jpg").exists():

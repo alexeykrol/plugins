@@ -3,6 +3,9 @@
   run <job> [--whole-recording [full|reel]]  run the pipeline until done / gate / failure
   status <job>                               print status summary
   stage <job> <id> [--item X] [--force] [--reset]
+  reel <job> [--item ID] [--json]             compile, render and check local reels
+  long-plan <job> [--json]                    compile a local long-video timeline
+  long-render <job> [--json]                  render and check the current long-video timeline
   unlock <job>                               remove a stale job.lock
   judge-pending <job>                        list judge tasks waiting for an output file (manual judge)
   resolve-upload <job> <item>                S8 uncertain upload -> vp.steps.s8_upload:resolve_upload(ctx, item)
@@ -20,13 +23,15 @@
                                              project, a track per layer (capcut/layers.json);
                                              <job>/capcut/vN, never overwritten
   capcut library [--json]                    library items layers.json can name
+  capcut diff <job> [--version vN] [--json]  compare a written version with its saved CapCut edit
+  capcut diff note <job> --change N --reason CODE [--version vN]
   projects list|summary|add|scan|forget [--json]  jobs the person worked on; `summary` says
                                              whether this is the first project: vp.projects:main
   tutorial list|for|set|offer|check          tutorials at the moment of need (T01–T08: a video
                                              link or a short card for the chat): vp.tutorials:main
   text new|status|estimate|timeline|timing|approve  text-only jobs: vp.text:main
   check picture <video> [--json]             black/frozen picture + frame sheet: vp.check:main
-  transcribe estimate|run|import|key ...     recording without subtitles -> _cut.srt + _cut.json
+  transcribe estimate|run|import|purge|key ...  recognition and saved answers
                                              (ElevenLabs Scribe): vp.transcribe:main
   captions plan|exact|keep --job <job>       exact caption timing for a recording with subtitles
                                              only (word times by the person's click): vp.captions:main
@@ -57,7 +62,11 @@
                                              <job>/music: vp.adapters.elevenlabs:music_main
   telemetry status|on|off|show|flush|show-id  test-period telemetry (allowlisted fields only,
                                              after the terms; `show` sends nothing): vp.telemetry:main
+  insight add|preview       record or preview a filtered insight card: vp.insight:main
   messages poll|ack                          messages from the authors: vp.messages:main
+  pick folder|file [--json]                 open the macOS folder or file chooser: vp.pick:main
+  kpack status|sync|rollback|show            signed knowledge packs
+  case list|show [--json]                    browse effective cases
   busy [--json]                              is a render/upload/generation running: vp.busy:main
   app restart-claude|quit capcut|status      quit/restart Claude and CapCut for the person (never
                                              Cmd+Q by hand): vp.app:main
@@ -98,6 +107,8 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from yaml import YAMLError
+
 from .core import runner
 from .core.errors import (EXIT_CONSENT_REQUIRED, ConsentRequired, VPError, failure_noted,
                           note_failure, take_failure)
@@ -131,7 +142,14 @@ SUBCOMMAND_MAINS = {
     "guard": "vp.safety:guard_main",
     "mode": "vp.safety:mode_main",
     "telemetry": "vp.telemetry:main",
+    "insight": "vp.insight:main",
     "messages": "vp.messages:main",
+    "pick": "vp.pick:main",
+    "reel": "vp.steps.local_build:reel_main",
+    "long-plan": "vp.steps.local_build:long_plan_main",
+    "long-render": "vp.steps.local_build:long_render_main",
+    "kpack": "vp.kpack.cli:main",
+    "case": "vp.kpack.cli:case_main",
     "busy": "vp.busy:main",
     "app": "vp.app:main",
     "update": "vp.update:main",
@@ -176,10 +194,13 @@ QUICK_SUBCOMMANDS = {("extras", "status"), ("extras", "check"), ("extras", "deci
                      ("shots", "list"), ("shots", "describe-set"), ("takes", "set")}
 # the channel's own commands are neither recorded nor followed by a flush (the mod calls them);
 # `version` only reads two files of the plugin (the installer and the release script ask it too)
-SILENT_COMMANDS = {"telemetry", "messages", "busy", "progress", "version", None}
+LOCAL_BUILD_COMMANDS = {"reel", "long-plan", "long-render"}
+SILENT_COMMANDS = {"telemetry", "insight", "messages", "kpack", "case", "busy", "progress", "version",
+                   "pick", None} | LOCAL_BUILD_COMMANDS
 # commands the mod runs in EVERY session (the channel, reminders, restart): they do not make the
 # session Elsa's for the prompt journal (vp.journal.mark_session); any other command does
 NOT_ELSA_COMMANDS = SILENT_COMMANDS | {"update", "app"}
+LOCAL_SUBCOMMANDS = {("capcut", "diff")}
 
 
 def _lookup(path: str) -> Callable[..., Any] | None:
@@ -208,6 +229,8 @@ def _with_ctx(job: Job, fn: Callable[..., int], *args: Any) -> int:
             print("LOCKED")
             return 0
         try:
+            from .core.adoption import adopt
+            adopt(job)
             cfg = runner.prepare_config(job, None)
             ctx = runner.make_ctx(job, cfg)
             rc = fn(ctx, *args)
@@ -247,28 +270,37 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--home", help="pipeline home (sets VP_HOME; default ~/.ai_video_pipeline)")
     sub = p.add_subparsers(dest="command", required=True)
     for name in ("run", "status", "unlock", "approve-ingest", "judge-pending"):
-        s = sub.add_parser(name)
+        s = sub.add_parser(name, allow_abbrev=name != "run")
         s.add_argument("job")
         if name == "run":
             s.add_argument("--whole-recording", nargs="?", const="full", choices=("full", "reel"),
                            help="make one full video or vertical reel from the entire recording")
+            s.add_argument("--plan", action="store_true", help="show what a run would do without writing")
+            s.add_argument("--json", action="store_true", help="print the plan as JSON")
+        if name == "status":
+            s.add_argument("--json", action="store_true")
     s = sub.add_parser("stage")
     s.add_argument("job")
     s.add_argument("step")
     s.add_argument("--item")
     s.add_argument("--force", action="store_true")
     s.add_argument("--reset", action="store_true")
+    s.add_argument("--check-only", action="store_true",
+                   help="check captions on existing fresh S5 renders without rebuilding")
     s = sub.add_parser("resolve-upload")
     s.add_argument("job")
     s.add_argument("item")
     for name in ("learn", "knowledge", "review", "approve", "doctor", "youtube", "results",
                  "progress", "capcut", "resolve", "fcpxml", "asks", "design", "projects", "text",
-                 "check", "journal", "feedback", "consent", "guard", "mode", "telemetry",
-                 "messages", "busy", "update", "version", "transcribe", "captions", "scenario",
+                 "check", "journal", "feedback", "consent", "guard", "mode", "telemetry", "insight",
+                 "messages", "kpack", "case", "busy", "update", "version", "transcribe", "captions",
+                 "scenario",
                  "tutorial",
                  "shots", "beats", "montage", "takes") + tuple(MEDIA_COMMANDS):
         s = sub.add_parser(name, add_help=False)
         s.add_argument("rest", nargs=argparse.REMAINDER)
+    for name in sorted(LOCAL_BUILD_COMMANDS):
+        sub.add_parser(name, add_help=False)
     return p
 
 
@@ -287,15 +319,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     raw, home = extract_home(list(argv) if argv is not None else sys.argv[1:])
     if home:
         os.environ["VP_HOME"] = str(Path(home).expanduser().resolve())
+    read_status = raw[:1] == ["status"] and os.environ.get("VP_STATUS_READ_ONLY") == "1"
+    read_plan = raw[:1] == ["run"] and "--plan" in raw[:raw.index("--") if "--" in raw else len(raw)]
+    if read_status or read_plan:
+        # Read commands bypass session marks, busy markers, telemetry, and background sync.
+        take_failure()
+        try:
+            return _dispatch(raw)
+        finally:
+            take_failure()
     cmd, sub = _command_of(raw)
     from . import telemetry
     from .busy import marker
-    quiet = cmd in SILENT_COMMANDS
-    is_busy = cmd in BUSY_COMMANDS and (cmd, sub) not in QUICK_SUBCOMMANDS
+    local = cmd in LOCAL_BUILD_COMMANDS or (cmd, sub) in LOCAL_SUBCOMMANDS
+    quiet = cmd in SILENT_COMMANDS or local
+    is_busy = cmd in BUSY_COMMANDS and (cmd, sub) not in QUICK_SUBCOMMANDS and not local
     t0 = time.monotonic()
     rc: int | None = None
     take_failure()                      # a stale note of an earlier in-process call never counts
-    if cmd not in NOT_ELSA_COMMANDS and os.environ.get("CLAUDE_CODE_SESSION_ID"):
+    if not local and cmd not in NOT_ELSA_COMMANDS and os.environ.get("CLAUDE_CODE_SESSION_ID"):
         from .journal import mark_session
         mark_session(os.environ["CLAUDE_CODE_SESSION_ID"])
     try:
@@ -309,7 +351,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             note_failure(e, "usage")    # argparse: a missing or unknown argument / sub-command
         raise
     except BaseException as e:
-        if not isinstance(e, KeyboardInterrupt):
+        if not local and not isinstance(e, KeyboardInterrupt):
             telemetry.record_error("cli", e, command=cmd, sub=sub)
         note_failure(e, "interrupted" if isinstance(e, KeyboardInterrupt) else "crash")
         rc = 3
@@ -323,6 +365,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             telemetry.record("command", command=cmd, sub=sub, rc=rc,
                              duration_s=round(time.monotonic() - t0, 3), **why)
             telemetry.spawn_flush()
+        elif (cmd, sub) == ("insight", "add") and rc == 0 and telemetry.insights_allowed():
+            telemetry.spawn_flush()
+        if cmd == "run" or (cmd, sub) == ("text", "new"):
+            from . import kpack
+            kpack.spawn_sync()
 
 
 def _dispatch(raw: list[str]) -> int:
@@ -337,21 +384,73 @@ def _dispatch(raw: list[str]) -> int:
             note_failure(e)
             print(f"ERROR {e}")
             return 3 if e.kind == "internal" else 2
-    args = build_parser().parse_args(raw)
+    parser = build_parser()
+    args = parser.parse_args(raw)
     cmd = args.command
-    if cmd in ("run", "stage"):
+    if cmd == "run" and args.json and not args.plan:
+        parser.error("--json requires --plan")
+    if cmd == "stage" or (cmd == "run" and not args.plan):
         from .projects import safe_touch
         safe_touch(args.job)          # K3: every job worked on is listed by `vp projects list`
     try:
         if cmd == "run":
-            return runner.run(Job(args.job), whole_recording=args.whole_recording,
+            job = Job(args.job)
+            if args.plan:
+                try:
+                    report = runner.plan(job, whole_recording=args.whole_recording)
+                except (VPError, OSError, ValueError, TypeError, YAMLError) as e:
+                    kind = e.kind if isinstance(e, VPError) else "data"
+                    print(f"ERROR {kind}: could not compute the run plan", file=sys.stderr)
+                    return 3 if kind == "internal" else 2
+                if args.json:
+                    import json
+                    print(json.dumps(report, ensure_ascii=False))
+                else:
+                    lines = [f"{step['key']}: {step['reason']}" for step in report["steps"]
+                             if step["execute"] is True]
+                    print("\n".join(lines) if lines else "nothing to do")
+                return 0
+            return runner.run(job, whole_recording=args.whole_recording,
                               out=lambda line: print(line, flush=True))
         if cmd == "status":
-            print(runner.status_report(Job(args.job)))
+            from . import position
+            job = Job(args.job)
+            doc = position.of(job.root)
+            failures = runner.caption_failures(job) if doc["kind"] == "recording" else {}
+            if failures and doc["state"] != "running":
+                from .core.graph import Instance
+
+                item, failure = next(iter(failures.items()))
+                inst = Instance("S5", item)
+                if doc["engine"] and doc["engine"].split(".", 1)[0] in position._GRAPH.order:
+                    order = position._GRAPH.order
+                    if order.index(doc["engine"].split(".", 1)[0]) >= order.index(inst.step):
+                        meta = {"kind": "data", "error": failure}
+                        moment = position._at_instance(job, inst, {"state": "failed", "metadata": meta},
+                                                       meta, doc["since"])
+                        focus = {**(doc["focus"] or {}), "item": item}
+                        doc = position._document(job, moment, scenario_id=doc["scenario"],
+                                                 focus=focus)
+            if args.json:
+                import json
+                from .core.lock import holder
+                from .core.status import Status
+                status = Status(job).load()
+                if failures and doc["state"] == "failed" and doc["engine"] in {
+                        f"S5.{item}" for item in failures}:
+                    status.update(current_stage=doc["engine"], current_state="failed")
+                print(json.dumps({**status, "job": job.job_id,
+                                  "job_folder": str(job.root), "lock": holder(job),
+                                  "position": doc}, ensure_ascii=False, indent=2, default=str))
+            else:
+                report = runner.status_report(job)
+                if doc["state"] == "new":
+                    report = report.replace("\ncurrent: None None", f"\ncurrent: {doc['engine']} new", 1)
+                print(f"{report}\n\n{position.describe(doc)}")
             return 0
         if cmd == "stage":
             return runner.run_stage(Job(args.job), args.step, args.item, force=args.force,
-                                    reset=args.reset)
+                                    reset=args.reset, check_only=args.check_only)
         if cmd == "unlock":
             return runner.unlock(Job(args.job))
         if cmd == "judge-pending":

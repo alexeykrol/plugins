@@ -30,6 +30,8 @@ import contextlib
 import functools
 import hashlib
 import json
+import logging
+import math
 import os
 import re
 import shutil
@@ -37,8 +39,9 @@ import subprocess
 import tempfile
 import threading
 import time
+from bisect import bisect_left
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any, Callable, Iterable, Iterator, TypeVar
 
 try:
     import fcntl
@@ -51,7 +54,8 @@ from ..core.io import write_yaml
 from ..analysis import align_words
 from ..core.srt import Cue, read_srt
 from . import media
-from .render import KINDS, THUMB_H, THUMB_W, FfmpegRenderer, card_durations, readable_text_color, video_info
+from .render import (KINDS, THUMB_H, THUMB_W, FfmpegRenderer, card_durations, readable_text_color,
+                     render_settings, video_info)
 
 PLUGIN_ROOT = Path(__file__).resolve().parents[3]
 REMOTION_SOURCE = PLUGIN_ROOT / "remotion"
@@ -64,6 +68,8 @@ SOURCE_DIRS = ("src",)
 READY_MARK = ".vp-ready"
 CODE_MARK = ".vp-code"
 NODE_MIN_MAJOR = 18
+DEFAULT_GL_BACKEND = "swiftshader"
+_DrawResult = TypeVar("_DrawResult")
 
 REMOTION_DEFAULTS: dict[str, Any] = {
     "node_bin": None,          # None -> PATH, then ~/.nvm, /opt/homebrew, /usr/local
@@ -96,6 +102,19 @@ def remotion_settings(config: dict[str, Any] | None) -> dict[str, Any]:
     """Config `remotion` over REMOTION_DEFAULTS."""
     from .render import _merge
     return _merge(REMOTION_DEFAULTS, (config or {}).get("remotion"))
+
+
+def render_gl(config: dict[str, Any] | None) -> tuple[str, str | None]:
+    """The configured setting and its CLI value. None leaves GL selection to Remotion."""
+    setting = render_settings(config)["gl"]
+    if setting == "auto" or setting is None:
+        legacy = remotion_settings(config)["gl"]
+        if legacy:
+            return "auto", str(legacy)
+        # Measured 2026-11-24 on an M4 Max, a real reel: `angle` 206.95 s vs the default 206.07 s for
+        # the main composition. No gain, so `auto` keeps Remotion's default until a measurement says otherwise.
+        return "auto", None
+    return str(setting), str(setting)
 
 
 # ---- captions: cues -> Remotion Caption JSON (code, deterministic) -----------------------------
@@ -136,8 +155,8 @@ def captions_from_cues(cues: Iterable[Cue], *, max_words: int = 3, max_chars: in
     itself never draws that estimate (see RemotionRenderer.captions).
 
     `whole` = indices of the cues to show as a whole phrase: one page with every word of the
-    cue, each carrying the cue's own time and `"phrase": true` (the composition knows such a
-    page by the shared time: no word lights up, a long phrase is set smaller). Nothing inside
+    cue, each carrying the cue's own time and `"phrase": true` (no word lights up, a long
+    phrase is set smaller). Nothing inside
     such a cue is timed, so nothing in it can drift."""
     if max_words < 1 or max_chars < 1:
         raise VPError("data", "captions: max_words and max_chars must be ≥ 1")
@@ -177,14 +196,12 @@ def captions_from_cues(cues: Iterable[Cue], *, max_words: int = 3, max_chars: in
     return out
 
 
-PAGE_HOLD_MS = 350   # how long a page stays after its last word when the next is not due yet.
-                     # Must equal HOLD_MS in remotion/src/Captions.tsx (a unit test compares).
+PAGE_HOLD_MS = 350   # how long a timed page stays after its last word when the next is not due yet
+CAPTION_DISPLAY_REVISION = 1
 
 
-def caption_pages(captions: list[dict[str, Any]], hold_ms: int = PAGE_HOLD_MS) -> list[dict[str, Any]]:
-    """The pages the composition draws from caption JSON, as the viewer sees them:
-    [{"start", "end" (on screen until), "whole" (a phrase shown at once: no word lights up),
-    "tokens": [caption, ...]}]. Mirrors remotion/src/Captions.tsx."""
+def caption_pages(captions: list[dict[str, Any]], *, legacy: bool = False) -> list[dict[str, Any]]:
+    """Group the code-made pages and apply the hold. The frame schedule clips them to the video."""
     groups: list[list[dict[str, Any]]] = []
     cur: list[dict[str, Any]] = []
     for c in captions:
@@ -197,15 +214,48 @@ def caption_pages(captions: list[dict[str, Any]], hold_ms: int = PAGE_HOLD_MS) -
     out = []
     for i, g in enumerate(groups):
         span = (g[0]["startMs"], g[0]["endMs"])
-        # several words sharing one time = a whole phrase for the composition: no hold after it
-        # (one word alone is drawn as any one-word page, held like the others)
-        shared = len(g) > 1 and all((t["startMs"], t["endMs"]) == span for t in g)
-        end = g[-1]["endMs"] + (0 if shared else hold_ms)
+        whole = all(t.get("phrase") for t in g)
+        if legacy:  # Used only to decide whether an existing S5 render needs new pixels.
+            whole = len(g) > 1 and all((t["startMs"], t["endMs"]) == span for t in g)
+        end = g[-1]["endMs"] + (0 if whole else PAGE_HOLD_MS)
         if i + 1 < len(groups):
             end = min(end, groups[i + 1][0]["startMs"])
         out.append({"start": int(g[0]["startMs"]), "end": int(max(end, g[0]["startMs"])),
-                    "whole": all(t.get("phrase") for t in g), "tokens": g})
+                    "whole": whole, "tokens": g})
     return out
+
+
+def caption_schedule(captions: list[dict[str, Any]], fps: float, frames: int, highlight: str,
+                     *, legacy: bool = False) -> list[dict[str, Any]]:
+    """Frame ranges for the composition and QA. The first token carries its page's frame data.
+
+    Keep the existing Remotion rounding and spring. The spring is transparent at frame zero,
+    except that a retained one-frame page is now opaque. Ignore pages with no visible frame.
+    """
+    scheduled = []
+    for page in caption_pages(captions, legacy=legacy):
+        start, end = page["start"], page["end"]
+        first = math.floor(start / 1000 * fps + 0.5)  # Remotion used Math.round
+        stop = min(frames, math.floor(end / 1000 * fps + 0.5))
+        single = stop - first == 1 and not legacy
+        visible = first if single else first + 1
+        if stop <= visible:
+            continue
+        tokens = [dict(t) for t in page["tokens"]]
+        samples = range(visible, stop)
+
+        def clock(frame: int) -> float:
+            return start + (frame - first) / fps * 1000
+
+        if highlight == "word" and not page["whole"]:
+            for token in tokens:
+                active = [visible + bisect_left(samples, token[key], key=clock) for key in ("startMs", "endMs")]
+                if active[0] < active[1]:
+                    token["highlightFrames"] = active
+        tokens[0]["displayPage"] = {"from": first, "to": stop, "visibleFrom": visible,
+                                    "whole": page["whole"], "count": len(tokens)}
+        scheduled.extend(tokens)
+    return scheduled
 
 
 CLIP_END_SLACK_MS = 100  # S4 accepts a cut one frame shorter than its fragment: the last cue
@@ -560,14 +610,23 @@ def _link(src: Path, dst: Path) -> None:
         os.symlink(Path(src).resolve(), dst)
 
 
+class _GLRenderError(VPError):
+    """A frame command failed while using an explicit GL backend."""
+
+
 class RemotionRenderer(FfmpegRenderer):
     """Renderer on Remotion (bumpers, reel captions, cover) + ffmpeg (join, loudness).
     Inherits brand/render settings and helpers from FfmpegRenderer."""
 
-    def __init__(self, config: dict[str, Any] | None = None, workspace: RemotionWorkspace | None = None):
+    def __init__(self, config: dict[str, Any] | None = None, workspace: RemotionWorkspace | None = None,
+                 *, caption_sidecar: Path | None = None):
         super().__init__(config)
         self.rs = remotion_settings(self.config)
+        self.caption_sidecar = caption_sidecar
         self.workspace = workspace or RemotionWorkspace(self.config)
+        _, self._gl_selected = render_gl(self.config)
+        self._drawing = False
+        self._gl_attempt: str | None = None
         self.timings: dict[str, float] = {}
         self.caption_info: dict[str, Any] = {}     # how the last captions() timed the words
 
@@ -599,13 +658,16 @@ class RemotionRenderer(FfmpegRenderer):
         nothing is known inside a phrase, so every phrase is shown whole for its own time — the
         words of a phrase are never spread by their letters here. What happened is in
         `self.caption_info`."""
-        c = self.rs["captions"]
-        if c.get("highlight") == "none":
+        if self.rs["captions"].get("highlight") == "none":
             self.caption_info = {"word_times": "none"}
             return []
         cues = read_srt(clip_srt)
+        timed, info = align_words.read_clip_words(clip_srt, cues, sidecar=self.caption_sidecar)
+        return self._caption_tokens(cues, clip_ms, timed, info)
+
+    def _caption_tokens(self, cues, clip_ms, timed, info):
+        c = self.rs["captions"]
         limits = {"max_words": int(c["max_words"]), "max_chars": int(c["max_chars"])}
-        timed, info = align_words.read_clip_words(clip_srt, cues)
         if timed is not None:
             caps = _fit_clip(captions_from_cues(cues, word_times=timed, whole=info.get("whole"), **limits),
                              clip_ms)
@@ -621,7 +683,17 @@ class RemotionRenderer(FfmpegRenderer):
             {"word_times": "estimated", "reason": info.get("reason")}, len(cues))
         return caps
 
-    def caption_timeline(self, clip_srt: str | os.PathLike, clip_ms: int) -> dict[str, Any]:
+    def scheduled_captions(self, clip_srt: str | os.PathLike, clip_ms: int,
+                           fps: float, frames: int) -> list[dict[str, Any]]:
+        return caption_schedule(self.captions(clip_srt, clip_ms), fps, frames,
+                                self.rs["captions"]["highlight"])
+
+    def caption_timeline(self, clip_srt: str | os.PathLike, clip_ms: int, fps: float = 25) -> dict[str, Any]:
+        """Inspect a clip outside a render. S5 reads the timeline returned by the render itself."""
+        caps = self.scheduled_captions(clip_srt, clip_ms, fps, max(1, round(clip_ms * fps / 1000)))
+        return self._caption_timeline(caps, fps)
+
+    def _caption_timeline(self, scheduled: list[dict[str, Any]], fps: float) -> dict[str, Any]:
         """What the viewer is shown, for the caption checks (vp.steps.s5_render):
 
           mode    "word" — every word has its own time; "phrase" — every phrase is shown whole;
@@ -631,25 +703,56 @@ class RemotionRenderer(FfmpegRenderer):
           onsets  the moments something new appears (a word lighting up, a page, a whole phrase)
           shows   [(start_ms, end_ms)] a caption page is on screen
         plus `self.caption_info` (how the words were timed)."""
-        caps = self.captions(clip_srt, clip_ms)
-        hl = self.rs["captions"].get("highlight")
-        if hl == "none":
-            return {"mode": "none", **self.caption_info, "words": [], "phrase": [], "onsets": [], "shows": []}
         words, flags, onsets, shows = [], [], [], []
-        for page in caption_pages(caps):
-            shows.append((page["start"], page["end"]))
-            onsets.append(page["start"])
-            if hl == "word" and not page["whole"]:
-                # a token without time (a dash between two stretches of sound) never lights up
-                onsets += [int(t["startMs"]) for t in page["tokens"][1:] if t["endMs"] > t["startMs"]]
-            for t in page["tokens"]:
-                words.append((t["text"].strip(), int(t["startMs"]), int(t["endMs"])))
-                flags.append(bool(page["whole"]))
-        mode = "phrase" if words and all(flags) else "mixed" if any(flags) else "word"
+        for token in scheduled:
+            if page := token.get("displayPage"):
+                start, end = (page[key] * 1000 / fps for key in ("visibleFrom", "to"))
+                static = page["whole"] or self.rs["captions"]["highlight"] == "phrase"
+                shows.append((start, end))
+                onsets.append(round(start))
+            active = token.get("highlightFrames")
+            if active:
+                span = tuple(round(frame * 1000 / fps) for frame in active)
+                onsets.append(span[0])
+            else:
+                span = (round(start), round(end))
+            words.append((token["text"].strip(), *span))
+            flags.append(active is None and (static or bool(align_words.norm(token["text"]))))
+        mode = "none" if not words else "phrase" if all(flags) else "mixed" if any(flags) else "word"
         return {"mode": mode, **self.caption_info, "words": words, "phrase": flags,
                 "onsets": sorted(set(onsets)), "shows": shows}
 
     # ---- remotion calls -----------------------------------------------------------------
+    def _draw_with_gl(self, draw: Callable[[], _DrawResult]) -> _DrawResult:
+        # The outermost draw owns retrying, so every part of a clip uses the same backend.
+        if self._gl_selected is None or self._drawing:
+            return draw()
+        self._drawing = True
+        self._gl_attempt = self._gl_selected
+        try:
+            return draw()
+        except _GLRenderError:
+            logging.getLogger(__name__).warning(
+                "gl_fallback: Remotion failed with %s, retrying with the Remotion default",
+                self._gl_selected)
+            self._gl_attempt = None
+            return draw()
+        finally:
+            self._gl_attempt = None
+            self._drawing = False
+
+    def _run_frame_command(self, args: list[str], out: Path, frames: int | None = None) -> None:
+        backend = self._gl_attempt
+        out.unlink(missing_ok=True)
+        try:
+            self.workspace.run([*args, f"--gl={backend}"] if backend else args, frames=frames)
+            if not out.is_file():
+                raise VPError("data", f"remotion wrote no {out.name}")
+        except VPError as e:
+            if backend and e.kind == "data":
+                raise _GLRenderError(e.kind, e.msg) from e
+            raise
+
     def _render(self, comp: str, props: dict[str, Any], out: Path, tmp: Path, public: Path | None,
                 frames: int, extra: list[str] | None = None) -> Path:
         pf = tmp / f"{comp}-{out.stem}.props.json"
@@ -661,21 +764,17 @@ class RemotionRenderer(FfmpegRenderer):
             args.append(f"--public-dir={public}")
         if self.rs.get("concurrency"):
             args.append(f"--concurrency={self.rs['concurrency']}")
-        if self.rs.get("gl"):
-            args.append(f"--gl={self.rs['gl']}")
         args += extra or []
         t0 = time.monotonic()
-        self.workspace.run(args, frames=frames)
+        self._run_frame_command(args, out, frames)
         self.timings[f"{comp}:{out.stem}"] = round(time.monotonic() - t0, 2)
-        if not out.is_file():
-            raise VPError("data", f"remotion wrote no {out.name}")
         return out
 
     def render_bumper(self, role: str, text: str, w: int, h: int, fps: float, frames: int, out: Path,
                       tmp: Path) -> Path:
         props = {"width": w, "height": h, "fps": fps, "durationInFrames": frames, "role": role,
                  "text": text or "", "brand": self.brand_props(), "showPlate": role == "outro"}
-        return self._render("Bumper", props, out, tmp, None, frames)
+        return self._draw_with_gl(lambda: self._render("Bumper", props, out, tmp, None, frames))
 
     def render_captions_layer(self, cut_mp4: str | os.PathLike, clip_srt: str | os.PathLike,
                               out_mov: str | os.PathLike) -> Path:
@@ -687,14 +786,16 @@ class RemotionRenderer(FfmpegRenderer):
         try:
             props = {"width": info["width"], "height": info["height"], "fps": info["fps"],
                      "durationInFrames": frames, "video": None,
-                     "captions": self.captions(clip_srt, clip_ms), "captionStyle": self.caption_style(),
+                     "captions": self.scheduled_captions(clip_srt, clip_ms, info["fps"], frames),
+                     "captionStyle": self.caption_style(),
                      "brand": self.brand_props(), "showPlate": True}
             out = Path(out_mov)
             out.parent.mkdir(parents=True, exist_ok=True)
             part = tmp / "captions.mov"
-            self._render("Main", props, part, tmp, None, frames,
-                         ["--codec=prores", "--prores-profile=4444", "--image-format=png",
-                          "--pixel-format=yuva444p10le"])
+            self._draw_with_gl(lambda: self._render(
+                "Main", props, part, tmp, None, frames,
+                ["--codec=prores", "--prores-profile=4444", "--image-format=png",
+                 "--pixel-format=yuva444p10le"]))
             os.replace(part, out) if part.stat().st_dev == out.parent.stat().st_dev else shutil.move(part, out)
             return out
         finally:
@@ -702,9 +803,13 @@ class RemotionRenderer(FfmpegRenderer):
 
     # ---- interface ------------------------------------------------------------------------
     def render_clip(self, cut_mp4, clip_srt, design_texts, kind, out_mp4, *,
-                    layers_dir: str | os.PathLike | None | bool = True) -> dict[str, int]:
+                    layers_dir: str | os.PathLike | None | bool = True) -> dict[str, Any]:
         """layers_dir: True = `<out dir>/layers` when out is render.mp4 (a real S5 render),
         a path = there, None/False = no layers (previews)."""
+        return self._draw_with_gl(
+            lambda: self._render_clip(cut_mp4, clip_srt, design_texts, kind, out_mp4, layers_dir))
+
+    def _render_clip(self, cut_mp4, clip_srt, design_texts, kind, out_mp4, layers_dir) -> dict[str, Any]:
         if kind not in KINDS:
             raise VPError("data", f"render: unknown kind {kind!r}")
         self.timings = {}
@@ -717,7 +822,7 @@ class RemotionRenderer(FfmpegRenderer):
         in_frames, out_frames = round(want_in * fps / 1000), round(want_out * fps / 1000)
         intro_ms, outro_ms = round(in_frames * 1000 / fps), round(out_frames * 1000 / fps)
         clip_ms = info["video_ms"] or media.duration_ms(cut_mp4)
-        clip_frames = round(clip_ms * fps / 1000)
+        clip_frames = max(1, round(clip_ms * fps / 1000))
         total_s = (in_frames + clip_frames + out_frames) / fps
         texts = design_texts or {}
         out = Path(out_mp4)
@@ -726,6 +831,7 @@ class RemotionRenderer(FfmpegRenderer):
         else:
             layers = Path(layers_dir) if layers_dir else None
         tmp = Path(tempfile.mkdtemp(prefix="vp-remotion-"))
+        caption_timeline = None
         try:
             parts: list[tuple[Path, str]] = []
             if in_frames > 0:
@@ -735,8 +841,10 @@ class RemotionRenderer(FfmpegRenderer):
                 public = tmp / "public"
                 public.mkdir()
                 _link(Path(cut_mp4), public / "cut.mp4")
+                captions = self.scheduled_captions(clip_srt, clip_ms, fps, clip_frames)
+                caption_timeline = self._caption_timeline(captions, fps)
                 props = {"width": w, "height": h, "fps": fps, "durationInFrames": clip_frames,
-                         "video": "cut.mp4", "captions": self.captions(clip_srt, clip_ms),
+                         "video": "cut.mp4", "captions": captions,
                          "captionStyle": self.caption_style(), "brand": self.brand_props(),
                          "showPlate": True}
                 parts.append((self._render("Main", props, tmp / "main.mp4", tmp, public, clip_frames), "clip"))
@@ -757,7 +865,12 @@ class RemotionRenderer(FfmpegRenderer):
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
         self.timings["total"] = round(time.monotonic() - t_all, 2)
-        return {"intro_ms": intro_ms, "outro_ms": outro_ms, "duration_ms": media.duration_ms(out)}
+        drew_frames = kind == "reel" or in_frames > 0 or out_frames > 0
+        return {"intro_ms": intro_ms, "outro_ms": outro_ms, "duration_ms": media.duration_ms(out),
+                "caption_timeline": caption_timeline,
+                "gl": self._gl_selected or DEFAULT_GL_BACKEND,
+                "gl_effective": (self._gl_attempt or DEFAULT_GL_BACKEND) if drew_frames else None,
+                "gl_fallback": bool(drew_frames and self._gl_selected and not self._gl_attempt)}
 
     def _join(self, parts: list[tuple[Path, str]], w: int, h: int, rate: str, total_s: float,
               out: Path, tmp: Path) -> None:
@@ -789,6 +902,10 @@ class RemotionRenderer(FfmpegRenderer):
                       final: str | None = None) -> Path:
         """Editor layers without a final render (an item rendered by ffmpeg, or before S5):
         the bumpers, optionally the transparent captions track, and layers.yaml. Returns it."""
+        return self._draw_with_gl(lambda: self._render_layers(
+            cut_mp4, clip_srt, design_texts, kind, layers_dir, captions, final))
+
+    def _render_layers(self, cut_mp4, clip_srt, design_texts, kind, layers_dir, captions, final) -> Path:
         if kind not in KINDS:
             raise VPError("data", f"render: unknown kind {kind!r}")
         info = video_info(cut_mp4)
@@ -861,8 +978,9 @@ class RemotionRenderer(FfmpegRenderer):
             pf.write_text(json.dumps(props, ensure_ascii=False), encoding="utf-8")
             still = tmp / "cover.png"
             t0 = time.monotonic()
-            self.workspace.run(["still", "src/index.ts", "Cover", str(still), f"--props={pf}",
-                                f"--public-dir={public}", "--image-format=png", "--log=info"])
+            args = ["still", "src/index.ts", "Cover", str(still), f"--props={pf}",
+                    f"--public-dir={public}", "--image-format=png", "--log=info"]
+            self._draw_with_gl(lambda: self._run_frame_command(args, still))
             self.timings["Cover"] = round(time.monotonic() - t0, 2)
             limit = int(self.settings["thumb_max_bytes"])
 

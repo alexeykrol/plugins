@@ -13,6 +13,7 @@ transitively depend on an item step are left out of the plan (they cannot run ye
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable
@@ -23,6 +24,13 @@ if TYPE_CHECKING:  # pragma: no cover
     from .ctx import Ctx
 
 _OVERRIDABLE = ("inputs", "config", "outputs", "run")
+
+
+class FreshCheckFailed(VPError):
+    """A measured check on verified outputs failed and can block dependent steps."""
+
+    def __init__(self, message: str):
+        super().__init__("data", message)
 
 
 class StepSpec:
@@ -40,6 +48,11 @@ class StepSpec:
       outputs(ctx) -> list[Path]  files the step guarantees to produce (inside the job folder)
       run(ctx)     -> dict | None metadata for status; raises VPError / WaitingHuman / JudgmentPending /
                                   Inconclusive / Skip
+      on_fresh(ctx, outputs) -> str | None  optional independent work after output verification;
+                                           may report a result or raise FreshCheckFailed;
+                                           never writes step outputs. `report_result=True` asks
+                                           for the cached result of an explicit check.
+      fresh_check(ctx, outputs) -> str  read-only state of the optional check for the plan.
     """
 
     id: str = ""
@@ -74,6 +87,12 @@ class StepSpec:
 
     def run(self, ctx: "Ctx") -> dict | None:  # pragma: no cover - abstract
         raise NotImplementedError(f"step {self.id} has no run()")
+
+    def on_fresh(self, ctx: "Ctx", outputs: Mapping[str, str], *, report_result: bool = False) -> str | None:
+        return None
+
+    def fresh_check(self, ctx: "Ctx", outputs: Mapping[str, str]) -> str:
+        return "none"
 
 
 @dataclass(frozen=True)

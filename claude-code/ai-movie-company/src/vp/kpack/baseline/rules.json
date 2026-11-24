@@ -1,0 +1,10 @@
+[
+  {
+    "id": "approve-brief-first",
+    "applies_to": "brief_gate",
+    "text": {
+      "ru": "Согласуйте цель, аудиторию и результат до создания голоса и иллюстраций.",
+      "en": "Agree on the goal, audience, and deliverable before producing narration and illustrations."
+    }
+  }
+]

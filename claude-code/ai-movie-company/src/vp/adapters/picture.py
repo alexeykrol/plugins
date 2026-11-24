@@ -7,15 +7,15 @@ know the picture without a human looking first.
     active_area(path, start_ms, end_ms, policy="union") -> Rect
         cropdetect at several sampled points of [start, end). "union" (the widest rectangle seen,
         used for CROPPING: dark scenes never make us cut picture away) or "median" (each edge's
-        median, used for CHECKING: overlays such as a subtitle or the channel plate in one sample
-        do not hide a bar).
+        median, used to report partial bars in horizontal videos).
     reel_crop_rect(frame_w, frame_h, area, x_frac, w_frac) -> (Rect, out_w, out_h)
         the largest 9:16 rectangle inside the active area, centred on the profile's band, and
         the output size (full source height, so a reel is never letterboxed or pillarboxed).
     bars(frame_w, frame_h, area) -> {side: px}   bars thicker than the noise threshold.
     inspect(path, kind, span=None, config=None, expect_size=None) -> report dict
-        code gate: frame size / aspect, black bars (reel: in most samples; horizontal: in every
-        sample), black stretches, frozen picture, silence, audio present. One decode pass for black+freeze+silence, seek-based samples for bars.
+        code gate: frame size / aspect, black bars (reel: in most of the frames sampled twice per
+        second; horizontal: in every seek sample), black stretches, frozen picture, silence,
+        audio present.
     require_clean(report, what, waive=()) -> raises VPError("data") naming every failed check.
 
 Thresholds come from config `picture_qa` (vp.core.config DEFAULTS). `waive` lets the owner accept
@@ -93,6 +93,13 @@ def _even(v: float) -> int:
 _CROP_RE = re.compile(r"crop=(-?\d+):(-?\d+):(-?\d+):(-?\d+)")
 
 
+def _crop_rect(values: tuple[str, str, str, str], W: int, H: int) -> Rect | None:
+    w, h, x, y = map(int, values)
+    if w > 0 and h > 0 and x >= 0 and y >= 0 and x + w <= W and y + h <= H:
+        return Rect(x, y, w, h)
+    return None
+
+
 def _sample_points(start_ms: int, end_ms: int, n: int) -> list[int]:
     span = max(end_ms - start_ms, 1)
     return [int(start_ms + span * (i + 0.5) / n) for i in range(n)]
@@ -114,10 +121,9 @@ def crop_samples(path: str | os.PathLike, start_ms: int = 0, end_ms: int | None 
         found = _CROP_RE.findall(proc.stderr)
         if not found:
             continue
-        w, h, x, y = (int(v) for v in found[-1])
-        if w <= 0 or h <= 0 or x < 0 or y < 0 or x + w > W or y + h > H:
-            continue
-        rects.append(Rect(x, y, w, h))
+        rect = _crop_rect(found[-1], W, H)
+        if rect is not None:
+            rects.append(rect)
     return rects
 
 
@@ -214,6 +220,64 @@ def measure(path: str | os.PathLike, start_ms: int = 0, end_ms: int | None = Non
     area = snap(area, W, H, st)
     real = confirm_bars(path, start_ms, end_ms, W, H, area, st) if bars(W, H, area, st) else {}
     return keep_sides(area, W, H, real), len(samples)
+
+
+_REEL_BAR_FPS = "fps=2:start_time=0:eof_action=pass"
+_REEL_BAR_MAX_LUMA_SPREAD = 4  # central 80% of the strip, allowing slight encoding noise
+_REEL_STRIP_LUMA_RE = re.compile(
+    r"\[metadata@(top|bottom|left|right) @ [^\]]+\] lavfi\.signalstats\.(YLOW|YHIGH)=(\d+)"
+)
+
+
+def _reel_area(path: str | os.PathLike, start_ms: int, end_ms: int, W: int, H: int,
+               st: dict[str, Any]) -> tuple[Rect | None, int]:
+    # Limit input before sampling so the FPS filter cannot draw frames from the outro.
+    args = ["-ss", f"{start_ms / 1000:.3f}", "-t", f"{(end_ms - start_ms) / 1000:.3f}",
+            "-i", str(path), "-an"]
+    log = media.run_ffmpeg([
+        *args, "-vf", f"{_REEL_BAR_FPS},cropdetect=limit={st['crop_limit']}:round=2:skip=0:reset=1",
+        "-f", "null", "-",
+    ]).stderr
+    frames = [_crop_rect(values, W, H) for values in _CROP_RE.findall(log)]
+    measured = [rect for rect in frames if rect is not None]
+    area = combine(measured, W, H, "median")
+    if area is None:
+        return None, 0
+    candidates = bars(W, H, area, st)
+    if not candidates:
+        return Rect(0, 0, W, H), len(measured)
+
+    # Confirm each candidate on the same timeline, in a single decode for all strips.
+    graph = []
+    if len(candidates) > 1:
+        inputs = "".join(f"[in_{side}]" for side in candidates)
+        graph.append(f"[0:v]{_REEL_BAR_FPS},split={len(candidates)}{inputs}")
+    for side in candidates:
+        r = _strip(side, area, W, H)
+        source = f"[in_{side}]" if len(candidates) > 1 else f"[0:v]{_REEL_BAR_FPS},"
+        graph.append(f"{source}crop={r.w}:{r.h}:{r.x}:{r.y}:exact=1,"
+                     f"signalstats,metadata@{side}=print[out_{side}]")
+    maps = [arg for side in candidates for arg in ("-map", f"[out_{side}]")]
+    log = media.run_ffmpeg([
+        *args, "-filter_complex", ";".join(graph), *maps, "-f", "null", "-",
+    ]).stderr
+    lumas: dict[str, dict[str, list[int]]] = {
+        side: {"YLOW": [], "YHIGH": []} for side in candidates
+    }
+    for side, key, value in _REEL_STRIP_LUMA_RE.findall(log):
+        lumas[side][key].append(int(value))
+    frame_bars = [bars(W, H, rect, st) if rect is not None else {} for rect in frames]
+    confirmed = []
+    for side, thickness in candidates.items():
+        lows, highs = lumas[side]["YLOW"], lumas[side]["YHIGH"]
+        if len(lows) != len(frames) or len(highs) != len(frames):
+            raise VPError("data", f"could not confirm reel {side} bar across the sampled frames")
+        votes = sum(edges.get(side, 0) >= thickness and high <= float(st["bar_max_luma"])
+                    and high - low <= _REEL_BAR_MAX_LUMA_SPREAD
+                    for edges, low, high in zip(frame_bars, lows, highs))
+        if votes * 2 > len(frames):
+            confirmed.append(side)
+    return keep_sides(area, W, H, confirmed), len(measured)
 
 
 def active_area(path: str | os.PathLike, start_ms: int = 0, end_ms: int | None = None,
@@ -316,11 +380,14 @@ def inspect(path: str | os.PathLike, kind: str, span: tuple[int, int] | None = N
     if expect_size and ok and (W, H) != tuple(expect_size):
         checks["size"] = _check(False, [W, H], f"{W}x{H}, expected {expect_size[0]}x{expect_size[1]}")
 
-    # reel: strict (median of the samples — bars in most of the clip fail it). Horizontal: bars
+    # Reel: confirm bars on a majority of independently sampled frames. Horizontal: bars
     # present THROUGHOUT fail (union: the crop in S4 must have removed them); bars in only part of
     # the video (a Zoom layout switch, e.g. speaker 16:9 -> wide screen share) are reported as
     # `partial_bars` — per-scene reframing is v2, YouTube shows such parts pillarboxed anyway.
-    area, n_measured = measure(path, start, end, "median" if kind == "reel" else "union", st)
+    if kind == "reel":
+        area, n_measured = _reel_area(path, start, min(end, info["duration_ms"]), W, H, st)
+    else:
+        area, n_measured = measure(path, start, end, "union", st)
     if area is None:
         found: dict[str, int] = {}
         checks["bars"] = _check(False, "unmeasured", "picture area could not be measured (every "

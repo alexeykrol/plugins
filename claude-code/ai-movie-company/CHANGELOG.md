@@ -9,6 +9,112 @@ time of the release. The same line is on Elsa's band and in `vp version`. The bu
 are written by the release script (`scripts/stamp_build.py`), never by hand: a new entry starts
 under a plain `X.Y.Z` heading. Earlier headings keep their form.
 
+## 0.9.0 alpha — build 28 — 2026-11-24 17:53 UTC
+
+### Recording → reels
+
+- **Build locally from an approved edit.** `vp reel` builds one or all planned reels and reports
+  what passed the picture and sound checks. `vp long-plan` compiles the approved long or full
+  video, and `vp long-render` makes the MP4, subtitles, chapters and quality report. The builders
+  reuse finished work when the inputs still match and keep their files outside the recording
+  folder. These are terminal commands. The dialog does not call them yet.
+- **Original Zoom recordings in `vp reel`.** A reel is now built from a Zoom recording whose
+  picture and sound start at different moments (before, the build stopped). The medium shot fills
+  the frame the way the author's reels do — the speaker over a blurred, darkened background.
+  Quality control now catches black bars inside the frame. Every reel built this way opens with
+  a short audio fade, no click.
+- **Black bars in the usual recording route.** The check samples separate frames and looks for
+  bars in the majority of them. A hand crossing a bar briefly can no longer hide it from the check.
+
+### Captions and paid recognition
+
+- **The price before the yes.** Before sending sound to ElevenLabs for a transcription or caption
+  check, the dialog shows the quote for that recording. It shows the source recognition cost, the
+  allowance for checking finished reels and the total limit, as applicable. The same quote goes
+  to the engine after you say yes. One yes allows one request for the source sound. Reel checks
+  use their own quoted allowance. If a request may already have been charged, you see that warning
+  and the new quote before deciding whether to allow one retry. Live ElevenLabs billing has yet to
+  be verified.
+- **Approve a check for one reel.** An approval for one reel pays for that reel only.
+  `vp stage <job> S5 --check-only` checks captions on fresh reels in place and never renders.
+  A failed caption check stays failed until a new measurement or a waiver changes the result.
+- **Use the timing you already have.** The dialog first tries to recover saved word times locally,
+  including times bought in 0.8.8. A matching saved answer costs nothing to reuse. When only the
+  finished reels need checking, you can approve that on its own. If a check did not run, the dialog
+  says so and gives the reason when available. The local pause check cannot tell you whether a
+  subtitle file is shifted against continuous speech.
+- **Captions and their checks agree on when words appear.** Remotion and the render checks use
+  the same frame schedule. When a phrase is repeated, matching prefers the words spoken near the
+  caption's time. Preview, Studio and layers refresh their word timing when the timing inputs
+  change. The new schedule has yet to be checked in a real browser render.
+
+### Text → video
+
+- **Pick up the version you are working on.** `vp text status` shows what the selected version
+  still needs and the next step, from brief approval through rendering and CapCut export.
+- **See what you changed in CapCut.** After you save your edits, `vp capcut diff` compares that
+  version with the original export when a comparison is available. The dialog can tell you what
+  changed and ask why when the reason is unclear. The changes and recorded reasons stay with the
+  local version.
+
+### After an update
+
+- **Finished work stays finished.** Updating the plugin keeps unchanged renders and closed reviews.
+  Finished renders are recognised by their inputs and outputs, so copying or moving the job folder
+  preserves them. The improved caption display reaches an older reel the next time it is rendered.
+- **See what an edit will redo.** `vp run <job> --plan` shows what a run would do. The installed
+  engine changes nothing while making the plan. When you reopen a finished recording job, the
+  dialog checks for changes, tells you what the engine will redo and why, and asks before running.
+  If earlier work needs to finish first, the dialog tells you which later steps may need redoing.
+  If your edit needs no rebuild, the dialog tells you why. This dialog change has yet to be checked
+  live in Claude Desktop.
+- **See what the new look affects.** `vp design set` works out which finished videos need redoing
+  before saving the look and tells you which ones before any rebuild.
+- **Current limits.** Changing one subtitle line recuts every reel in the job. Waiving the first
+  local quality failure encodes that reel again. A change to an existing `remotion.gl` setting or
+  to a font file at the same path waits for the next redraw. An unnamed job's upload identity
+  depends on its folder name.
+
+### Status and projects
+
+- **See where to pick up.** `vp status` names the current step, what it waits for and what to do
+  next. The project list shows what each project waits for. A video made from text with a new
+  unfinished version no longer looks finished.
+- **The band above the prompt agrees with the status.** It takes its words from the same place as the
+  status answer, shows what a job waits for, and never says finished while work is running. Status no
+  longer says finished while a new version of a text video is being rendered: it shows the version in
+  work as running. While nothing can change — the job waits for you or is finished — the band asks the
+  engine up to once in two minutes instead of every ten seconds, and returns to the fast pace on any activity
+  in the dialog. The band has yet to be checked in Claude Desktop.
+- **Pick a folder or file on a Mac.** `vp pick folder` and `vp pick file` open the native chooser.
+  The dialog has yet to use it, and the chooser has yet to be checked on screen.
+- **Know what the plugin can make.** The dialog matches your request against the cases shipped
+  with the plugin. It tells you what is missing from a partial match, or says when none fits and
+  offers the closest case.
+
+### Safety and privacy
+
+- **Only sound goes to recognition.** ElevenLabs receives the audio track the cut uses, stripped
+  of tags and chapters. Exact caption timing leaves your subtitle file intact.
+- **Clear saved recognition separately.** `vp transcribe purge` asks before removing a project's
+  saved answers and generated raw response. It keeps the spending history. `vp projects forget`
+  removes the project from the list and leaves those answers on disk.
+- **Telemetry labels come from fixed lists.** Unknown labels are dropped or become `other`, and
+  undated events are dropped. An existing generated install ID stays the same on update. Under
+  the current terms, insight cards are neither recorded nor sent, and the plugin does not fetch
+  knowledge updates.
+
+### Under the hood
+
+- **Less reading of the same recording.** Checks in the same process share a cached fingerprint
+  for an unchanged file. Large reads can report progress. The local builders require verified
+  word times and explain why they stop when those times cannot be confirmed.
+- **Render diagnostics.** `vp doctor` shows the render setup. The new `render.gl` setting lets you
+  choose the Remotion graphics backend. `auto` keeps the existing default.
+- **Clearer failure reports.** Failed `vp run` and `vp stage` calls record a reason from a fixed
+  list. The daily telemetry summary counts distinct failures and shows how long completed steps
+  took.
+
 ## 0.8.8 alpha — build 27 — 2026-11-24 07:29 UTC
 
 - **Captions follow the voice.** When Elsa knows the time of every word (she transcribed the speech,

@@ -31,12 +31,25 @@ from pathlib import Path
 from typing import Any
 
 from ..adapters import media, picture
+from ..core.config import DEFAULTS, config_path, deep_merge
 from ..core.io import read_yaml, write_yaml
+from ..core.manifest import read_manifest
 from ..core.srt import read_srt, slice_cues, write_srt
 from ..core.timefmt import parse_time
 from .base import FULL, Ctx, StepSpec, VPError, item_kind
 
 FRAME_TOLERANCE = 1  # frames
+
+# The 0.8.8 key included the whole picture_qa overlay. Keep its defaults independent
+# of the defaults used by a new cut or render.
+PICTURE_KEY_DEFAULTS = {
+    "samples": 7, "sample_frames": 10, "crop_limit": 24, "bar_min_frac": 0.01,
+    "bar_max_luma": 20, "bar_confirm_points": 3,
+    "aspect_tolerance": 0.01, "black_min_s": 1.0, "black_pixel_threshold": 0.03,
+    "freeze_noise_db": -60, "freeze_min_s": 2.0,
+    "frozen_share_max": {"reel": 0.99, "long": None, "full": None},
+    "silence_db": -40.0, "silence_max_s": {"reel": 10.0, "long": None, "full": None},
+}
 
 
 def _to_ms(value: Any, field: str) -> int:
@@ -111,6 +124,44 @@ def waived_checks(ctx: Ctx) -> list[str]:
     return sorted(str(x) for x in doc.get("waive") or [])
 
 
+def written_key_config(config: dict[str, Any]) -> dict[str, Any] | None:
+    """Recover which values were written before load_config filled in today's defaults."""
+    home = config.get("vp_home")
+    if not home:
+        return None
+    path = config_path(Path(home))
+    written = read_yaml(path, default={}) if path.is_file() else None
+    return written if isinstance(written, dict) else None
+
+
+def key_overlay(live: Any, defaults: Any, written: Any) -> Any:
+    """Keep written settings and overrides, dropping values supplied only by current defaults."""
+    if not isinstance(live, dict) or not isinstance(defaults, dict):
+        return live
+    written = written if isinstance(written, dict) else {}
+    return {
+        name: key_overlay(value, defaults.get(name), written.get(name))
+        for name, value in live.items()
+        if name in written or name not in defaults or value != defaults[name]
+    }
+
+
+def picture_key_settings(ctx: Ctx) -> dict[str, Any]:
+    live = ctx.config.get("picture_qa") or {}
+    defaults = DEFAULTS["picture_qa"]
+    if defaults != PICTURE_KEY_DEFAULTS:
+        written = written_key_config(ctx.config)
+        if written is not None:
+            live = key_overlay(live, defaults, written.get("picture_qa"))
+    return deep_merge(PICTURE_KEY_DEFAULTS, live)
+
+
+def key_waivers(live: list[str], previous: dict[str, Any]) -> list[str]:
+    """Caption sync is independent of the draw, unless already keyed by the saved stage."""
+    include_caption_sync = "caption_sync" in (previous.get("waive") or [])
+    return [name for name in live if include_caption_sync or name != "caption_sync"]
+
+
 class S4Cut(StepSpec):
     id, deps, scope, version, gate = "S4", ("S3b",), "item", "2", None
 
@@ -123,8 +174,9 @@ class S4Cut(StepSpec):
         if rec["kind"] == "reel":
             crop = ctx.profile.get("reel_crop") or {}
             cfg["reel_crop"] = {"x_frac": float(crop.get("x_frac")), "w_frac": float(crop.get("w_frac"))}
-        cfg["picture_qa"] = picture.settings(ctx.config)
-        cfg["waive"] = waived_checks(ctx)
+        previous = (read_manifest(ctx.job, self.id, ctx.item) or {}).get("config") or {}
+        cfg["picture_qa"] = picture_key_settings(ctx)
+        cfg["waive"] = key_waivers(waived_checks(ctx), previous)
         return cfg
 
     def outputs(self, ctx: Ctx) -> list[Path]:

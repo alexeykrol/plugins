@@ -111,8 +111,9 @@ Problems come before the form, in the same voice:
 
 ### 2a. «Вернуться к проекту»
 
-`vp projects list --json` gives the projects with title, date and state, newest first. Show them
-as ONE form with `multiSelect: true` — the tool holds at most 4 options:
+`vp projects list --json` gives the projects with title, date, state and, when available,
+`position`, newest first. Show them as ONE form with `multiSelect: true` — the tool holds at most
+4 options:
 
 - 4 projects or fewer → all of them;
 - more → the 3 newest plus **«Показать ещё»** (description: «ещё N»); when that is picked, show
@@ -120,10 +121,10 @@ as ONE form with `multiSelect: true` — the tool holds at most 4 options:
 
 Each option: label — the title, description — the date and the state in plain words («ждёт вашего
 просмотра фрагментов», «черновики на YouTube», «эскизы утверждены, дальше голос», «готово: v2 в
-CapCut»). Several ticked → say the order in one line («Начнём с "Лекции 12", потом "Машина
-бесконечности"») and take them one by one. For each: a recording project → step 3, the
-"`status.yaml` exists" branch; a text project → the "Text path" of the `pipeline` skill, "Coming
-back".
+CapCut»). Use the row's `position.waiting_for.text`, when present, to say what it waits for. Several
+ticked → say the order in one line («Начнём с "Лекции 12", потом "Машина бесконечности"») and take
+them one by one. For a recording, use the selected folder in step 3. For a text job, run
+`vp status <job>` and follow "Coming back" in the `pipeline` skill.
 
 ### 2b. «Новый проект»
 
@@ -155,7 +156,7 @@ translation:
   with the reason, and the choice stays theirs: «Для первого раза советую репетицию: на YouTube
   ничего не уйдёт, ролики останутся у вас на компьютере — посмотрите, как я работаю, а канал
   подключим, когда результат понравится.» Then the form, the rehearsal first:
-  - **«Репетиция»** (Rehearsal) — description: «ничего не загружается, ролики — файлами на
+  - **«Репетиция»** (Rehearsal) — description: «на YouTube ничего не загружается, ролики — файлами на
     компьютере; советую для первого раза»;
   - connected (`vp youtube status` exit 0): **«Загружать на YouTube»** (Upload to YouTube) —
     description: «закрытыми черновиками на канал <name>, их видите только вы»; not connected:
@@ -176,15 +177,16 @@ What the answers do:
 - **«Подключить YouTube»** → read `${CLAUDE_PLUGIN_ROOT}/skills/connect/SKILL.md` and follow it
   from step 0 (test channel first, then the Google login screens — one small step per message, a
   screenshot when they hesitate). When it ends connected, come back here and go on.
-- **«Репетиция»** → say plainly: "In a rehearsal nothing is uploaded anywhere; you get local
-  video files to watch." A rehearsal is set for this job only: add `publisher: fake` to its
+- **«Репетиция»** → say plainly: "In a rehearsal, you get local video files to watch and nothing
+  goes to YouTube." An optional ElevenLabs upload is a separate choice with its own quote.
+  A rehearsal is set for this job only: add `publisher: fake` to its
   `request.yaml` (step 4). The choice is made: never ask to confirm it again later.
 - **«Загружать на YouTube»** → the real upload, as private drafts; nothing more to ask.
 - **Connected, but the person wants another channel** (from the test channel to the real one, or
   back) → the `connect` skill, step 0: a new login replaces the old channel, its @handle goes on
   the videos, and the next job uploads there.
 - If the plugin default is already rehearsal (doctor: publisher `fake`) → say: "Right now the plugin
-  is set to rehearsal: nothing will be uploaded." The default is the owner's setting; never change
+  is set to rehearsal: nothing will be uploaded to YouTube." The default is the owner's setting; never change
   `config.yaml`, even if asked.
 
 A rehearsal is advised once — for the first project, while the person has no finished video yet;
@@ -229,6 +231,13 @@ command, including on resume (the engine prints `job folder: …` when a run sta
 `vp status`). To the person name the folder once, by its name and where it lies, in plain words.
 Keep job notes in the job's own files through the engine, never in another project's memory.
 
+If the folder has `request.yaml` (check with Glob — do not run a command that fails), run
+`vp status <job> --json`. If `position.kind` is `text`,
+follow "Coming back" in the `pipeline` skill. For a recording whose `position.state` is past
+`new`, give the one-line update from that position and ask whether to continue it or start over
+in a new folder.
+For an unstarted recording, go on with the checks below and use the existing request in step 4.
+
 Then look in the folder (Glob, no failing commands) for:
 
 - a video (`.mp4` / `.mov` / `.mkv`);
@@ -239,8 +248,8 @@ Report in one line, plain words: "Found: video (1 h 12 min), subtitles, exact wo
 Several videos or subtitle files → ask which one.
 
 **Then the case and the road — aloud, before anything starts** (the `pipeline` skill, "The case
-and the road"; skipped only for a recording that was already started — the `status.yaml` branch
-below). `vp scenario detect <folder> --says "<their words>" --json`, then `vp scenario plan <id>
+and the road"; skipped for a recording that was already started and is being continued).
+`vp scenario detect <folder> --says "<their words>" --json`, then `vp scenario plan <id>
 --source-hours <H> --services auto --job <job folder> --json` (it remembers the scenario letter
 for the job), and ONE message: the case in their words, the road as 3–5 stops with the places
 where they will be asked, and «Верно?» — e.g. «Понимаю так: это запись лекции, из неё нужны
@@ -250,18 +259,12 @@ where they will be asked, and «Верно?» — e.g. «Понимаю так: 
 **«Не совсем»**, plus the tutorial button when `vp tutorial for --route recording --step S0
 --json` has an `offer` (the `pipeline` skill, "Tutorials").
 
-No `.srt` → not a stop: after «Да, идём» the speech is recognised first — follow "Recording
-without subtitles" of the `pipeline` skill, with `--video <file>` (the cost line and the two
-buttons «Расшифровать (≈ $X)» / «У меня есть субтитры»); come back here when the subtitles are in the
-job folder.
-
-**Before** any `vp status`, Glob the job folder for `status.yaml` and `request.yaml`:
-
-- `status.yaml` exists → this recording was already started: run `vp status <job>`, say in one line
-  where it stopped (see "Coming back" in the `pipeline` skill), and ask: continue it, or start over
-  in a new folder.
-- `request.yaml` exists without `status.yaml` → go to step 4 with the existing request.
-- neither → step 4.
+No `.srt` → after «Да, идём», follow "Recording without subtitles" of the `pipeline` skill.
+Get the quote with `vp transcribe estimate <job> --video <file> --json`. Show its price,
+coverage and any charge warning before the separate paid choice. Only after that approval run
+`vp transcribe run <job> --video <file> --quote <quote_id> --json`, with the same recognition
+options as the estimate and the skill's rules for retries and refusals. Return to step 4 after
+recognition or local subtitle import succeeds.
 
 ## 4. The task and the request
 

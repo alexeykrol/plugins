@@ -1,40 +1,19 @@
-"""`vp captions` — exact caption timing for a recording that came with subtitles only (BACKLOG
-"Caption sync", incident 2026-11-23).
+"""Exact caption timing for a recording with subtitles only.
 
-Burned captions of a reel light up word by word. A recording with an `.srt` and no word times
-gets a local estimate (vp.steps.s5_render: the pauses of the sound, whole phrases where that is
-not safe) — nothing leaves the computer for it. Exact timing needs the words heard in the sound,
-and that means sending the sound to the recogniser (ElevenLabs Scribe, the person's key, the
-person's money). So it is an offer, made once, and it happens only on the person's click:
+`vp captions plan --job JOB` quotes the recording's audio and the enabled reel checks.
+`vp captions exact --job JOB --quote ID` approves that quote and writes word times for S5
+in captions.words.json. The source subtitles remain the caption text.
+`vp captions keep --job JOB` records the person's decision to keep the current timing.
 
-  vp captions plan --job <folder> [--video F] [--json]    what the captions are timed by now,
-                                                          whether exact times can be had and for
-                                                          how much — nothing is sent
-  vp captions exact --job <folder> [--video F] [--language ru] [--json]
-                                                          the click: the recording's SOUND goes to
-                                                          the recogniser, the word times come back
-  vp captions keep --job <folder> [--json]                the other click: leave the captions as
-                                                          they are; the offer is not made again
-
-`exact` writes word times only: `<job>/captions.words.json` (the shape of `_cut.json`). The
-person's subtitles (`_cut.srt`) are never read for writing and never replaced, and `_cut.json` is
-not created: that file is an input of intake, retiming and selection, and a new one would make
-them run again. S5 alone reads `captions.words.json`, aligns it to the proofread text of each
-clip (the text on screen stays the proofread subtitles) and re-renders the reels. The answer is
-recorded in `<job>/captions.choice.yaml`; with `exact` in it the caption check of S5 may hear the
-finished reels with the same recogniser (`caption_qa.transcribe: auto`), so the price of the plan
-counts those too.
-
-Bookkeeping is code: the price is duration x the recogniser's price (vp.transcribe), the key
-comes from the common key store and is never printed, logged or written into the job folder, and
-the request is never repeated here (a request that timed out may already be paid). The raw
-answer is kept in `<job>/transcript.raw.json` (as `vp transcribe run` keeps it): a lost
-conversion is rebuilt without paying again.
+S5 uses a receipt from exact timing or source transcription for the paid caption check.
+`exact --retry --quote ID` approves one source retry on the original receipt.
+`exact --retry REEL --quote ID` approves one retry of that reel's sound within the existing receipt.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -42,9 +21,8 @@ from typing import Any, Callable
 
 from . import transcribe
 from .analysis import align_words
-from .core import progress
 from .core.errors import VPError
-from .core.io import now_iso, read_json, read_yaml, write_json, write_yaml
+from .core.io import now_iso, read_yaml, write_json, write_yaml
 from .core.lock import job_lock
 from .core.paths import Job, vp_home
 from .core.srt import read_srt
@@ -61,34 +39,94 @@ def choice(job: Job) -> dict[str, Any] | None:
     return data if isinstance(data, dict) and data.get("choice") in CHOICES else None
 
 
-def word_times(job: Job) -> str:
-    """Where a reel's captions get exact word times from: "recording" (`_cut.json`),
-    "captions" (`captions.words.json`) or "none"."""
-    if job.source_words.exists():
-        return "recording"
-    return "captions" if job.caption_words.exists() else "none"
+def word_times(job: Job, video: str | os.PathLike | None = None,
+               probe: Callable[[Path], dict[str, Any]] | None = None,
+               duration_s: float | None = None) -> str:
+    return timing(job, video, probe, duration_s)[0]
 
 
-def reels(job: Job) -> tuple[int | None, float]:
-    """(number of reels, their total length in seconds) from fragments.yaml; (None, 0) while the
-    fragments are not chosen yet."""
-    data = read_yaml(job.fragments_yaml, default=None)
-    frags = data.get("fragments") if isinstance(data, dict) else None
-    if not isinstance(frags, list):
-        return None, 0.0
-    n, total_ms = 0, 0
-    for f in frags:
-        if not isinstance(f, dict) or (f.get("type") or f.get("kind")) != "reel":
+def timing(job: Job, video: str | os.PathLike | None = None,
+           probe: Callable[[Path], dict[str, Any]] | None = None,
+           duration_s: float | None = None) -> tuple[str, str | None]:
+    kind, reason, _ = _timing_details(job, video, probe, duration_s)
+    return kind, reason
+
+
+def _timing_details(job: Job, video: str | os.PathLike | None,
+                    probe: Callable[[Path], dict[str, Any]] | None,
+                    duration_s: float | None = None) -> tuple[str, str | None, str | None]:
+    path = transcribe._video_path(job, video)
+    problem = None
+    for kind, timing_path in (("recording", job.source_words), ("captions", job.caption_words)):
+        if not timing_path.exists():
             continue
-        n += 1
+        doc = transcribe._document(timing_path)
+        if not doc:
+            problem = problem or "the word times of the recording could not be read"
+            continue
+        provenance, reason = transcribe._timing_validation(job, path, doc, kind, probe, duration_s)
+        if reason is None:
+            return kind, None, provenance
+        problem = problem or reason
+    # Some 0.8.8 jobs retained only the rendered reel's timing file.
+    for item in job.items() or ():
+        srt = job.clip_srt(item)
+        doc = transcribe._document(align_words.words_path(srt))
+        if doc.get("schema") != 1 or doc.get("word_times", "aligned") != "aligned":
+            continue
         try:
-            if "start_ms" in f:
-                total_ms += max(0, int(f["end_ms"]) - int(f["start_ms"]))
-            elif "in_ms" in f:
-                total_ms += max(0, int(f["out_ms"]) - int(f["in_ms"]))
-        except (KeyError, TypeError, ValueError):
-            pass
-    return n, total_ms / 1000
+            words, info = align_words.read_clip_words(srt, read_srt(srt))
+        except (ValueError, OSError, VPError):
+            continue
+        if words is not None:
+            return "clip", None, info.get("timing_provenance", transcribe.VERIFIED)
+        problem = problem or info.get("reason")
+    return "none", problem, None
+
+
+def _checks_only(job: Job, language: str | None, have: str, raw: dict | None) -> bool:
+    if raw is not None:
+        return True
+    if have == "none":
+        return False
+    meta_path = job.caption_choice if have != "recording" else job.root / transcribe.META_NAME
+    meta = transcribe._document(meta_path, yaml=True)
+    if "language_hint" in meta:
+        return transcribe.language_hint(job, language) == meta["language_hint"]
+    return language is None
+
+
+def reels(job: Job, config: dict[str, Any], info: dict[str, Any], *,
+          item: str | None = None) -> tuple[int | None, float, int]:
+    """Number of reels and summed upload span including frame-rounded cards."""
+    from .adapters.render import card_durations
+    from .core.ctx import Ctx
+    from .steps.base import item_kind
+    from .steps.s4_cut import fragment_record
+    from .steps.s5_render import caption_qa_settings
+
+    items = job.items()
+    if item is not None:
+        if item not in (items or []) or item_kind(Ctx(job, item, config)) != "reel":
+            raise VPError("data", f"unknown reel {item!r}")
+        items = [item]
+    elif items is None:
+        return None, 0.0, 0
+    else:
+        items = [name for name in items if item_kind(Ctx(job, name, config)) == "reel"]
+    if caption_qa_settings(config)["transcribe"] == "off" or look(job, config) == "none":
+        return len(items), 0.0, 0
+    fps = info.get("fps") or 25.0
+    intro, outro = card_durations(config, "reel")
+    card_frames = round(intro * fps / 1000) + round(outro * fps / 1000)
+    seconds = []
+    for item in items:
+        rec = fragment_record(Ctx(job, item, config))
+        end_ms = min(rec["end_ms"], round(info["duration_s"] * 1000))
+        if end_ms > rec["start_ms"]:
+            clip_frames = round((end_ms - rec["start_ms"]) * fps / 1000)
+            seconds.append((clip_frames + card_frames) / fps)
+    return len(items), round(sum(seconds), 6), sum(math.ceil(span) for span in seconds)
 
 
 def look(job: Job, config: dict[str, Any] | None = None) -> str:
@@ -107,58 +145,93 @@ def look(job: Job, config: dict[str, Any] | None = None) -> str:
 
 def plan(job: Job, video: str | os.PathLike | None = None,
          probe: Callable[[Path], dict[str, Any]] | None = None,
-         config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """What exact caption timing would take for this job — nothing is sent.
-
-    word_times   "recording" | "captions" | "none": exact word times already here, and from where
-    obtainable   they can be had from the recording's sound (it is there, has sound, not too long)
-    key          a recogniser key is connected
-    cost_usd     approximate price: the recording's sound + the caption check of the finished
-                 reels (`recording_s`, `reels_s`); 0 when a saved answer can be reused
-    offer        True only when asking makes sense: subtitles without word times, reels whose
-                 captions follow word times, a connected key, and no answer given before"""
-    wt = word_times(job)
-    n_reels, reels_s = reels(job)
+         config: dict[str, Any] | None = None, *, language: str | None = None,
+         retry_reel: str | None = None, item: str | None = None) -> dict[str, Any]:
+    """Quote this recording's exact timing and enabled reel checks without sending anything."""
+    from .design import finished_render_plan, job_config
+    transcribe.guard_inputs(job, *transcribe.quote_targets(job), video=video)
+    if retry_reel is not None:
+        try:
+            with job_lock(job) as got:
+                if not got:
+                    raise VPError("data", "the job is busy (another run holds job.lock): try again when it ends")
+                return _retry_reel(job, retry_reel)
+        except transcribe.RecognitionBlocked as exc:
+            return {**exc.result(), "offer": False, "retry_reel": retry_reel, "quote_id": None}
+    config = job_config(job) if config is None else config
+    wt, local_note = "none", None
     answered = choice(job)
     out: dict[str, Any] = {
         "word_times": wt, "subtitles": job.source_srt.exists(), "look": look(job, config),
-        "reels": n_reels, "choice": answered["choice"] if answered else None,
+        "reels": None, "choice": answered["choice"] if answered else None,
         "service": transcribe.SERVICE, "model": transcribe.MODEL_ID,
         "key": transcribe.key_status()["present"],
         "obtainable": False, "why_not": None, "saved_answer": False,
-        "recording_s": None, "reels_s": round(reels_s, 1), "cost_usd": None,
+        "recording_s": None, "reels_s": 0.0, "cost_usd": None,
+        "cost_source_usd": None, "cost_checks_max_usd": None, "quote_id": None,
         "price_usd_per_hour": transcribe.PRICE_USD_PER_HOUR, "price_source": transcribe.PRICE_SOURCE,
     }
     try:
-        est = transcribe.estimate(job, video, probe)
+        info = transcribe._recording_info(job, video, probe)
+        path = Path(info["video"])
+        # Large-file progress is a job write. Serialize it with exact, keep and the runner.
+        with job_lock(job) as got:
+            if not got:
+                raise VPError("data", "the job is busy (another run holds job.lock): try again when it ends")
+            with transcribe._hash_progress(job, path):
+                wt, local_note, provenance = _timing_details(job, video, probe, info["duration_s"])
+                hint = transcribe.language_hint(job, language)
+                raw = transcribe.local_response(job, path, "captions", hint, False, probe, info["duration_s"])
+                if provenance == transcribe.LEGACY_UNVERIFIED or (wt == "none" and raw
+                        and raw.get("timing_provenance") == transcribe.LEGACY_UNVERIFIED):
+                    out["timing_provenance"] = transcribe.LEGACY_UNVERIFIED
+                    local_note = transcribe.LEGACY_TIMING_NOTE
+                checks_only = item is not None or _checks_only(job, language, wt, raw)
+                out.update(word_times=wt, local_timing_note=local_note,
+                           recording_s=info["duration_s"])
+                with transcribe.source_quote(job, video, language, False, probe, config, "captions",
+                                             checks_only=checks_only, info=info, reel_item=item) as (quote, audio):
+                    if audio is None and not checks_only:
+                        out["why_not"] = f"the recording is longer than {transcribe.MAX_DURATION_S // 3600} h"
+                    else:
+                        out.update(quote, obtainable=True)
+                        if checks_only:
+                            out["saved_answer"] = item is None and raw is not None
+                        elif quote["source_blocked_note"]:
+                            out.update(obtainable=False, why_not=quote["source_blocked_note"])
+                if checks_only:
+                    try:
+                        transcribe.require_reel_receipt(job, quote["recording_sha256"], item)
+                    except transcribe.RecognitionBlocked as exc:
+                        out["reel_check_note"] = exc.msg
     except VPError as e:
         out["why_not"] = e.msg
-    else:
-        out["recording_s"] = est["duration_s"]
-        if est["too_long"]:
-            out["why_not"] = (f"the recording is longer than {transcribe.MAX_DURATION_S // 3600} h: "
-                              f"the recogniser takes at most that per file")
-        else:
-            out["obtainable"] = True
-            out["saved_answer"] = _saved_response(job, Path(est["video"])) is not None
-            sent_s = (0.0 if out["saved_answer"] else est["duration_s"]) + reels_s
-            out["cost_usd"] = transcribe.cost_usd(sent_s)
-    out["offer"] = bool(out["subtitles"] and wt == "none" and out["look"] in WORD_LOOKS
-                        and n_reels and out["obtainable"] and out["key"] and answered is None)
+    language_offer = language is not None or out.get("language_hint") is not None or out.get("charge_warning")
+    exact_offer = (out["subtitles"] and (wt == "none" or language_offer)
+                   and out["look"] in WORD_LOOKS and out["reels"]
+                   and (answered is None or local_note == transcribe.LOCAL_RECORDING_CHANGED
+                        or language_offer))
+    checks_offer = out.get("checks_only") and out.get("checks_seconds", 0) > 0 and out.get("reel_check_note")
+    if out.get("checks_only"):
+        out.update(finished_render_plan(job, config))
+        if item is not None:
+            for name in ("reels_pending_inputs", "reels_to_redo", "reels_ready_to_check"):
+                out[name] = [item] if item in out[name] else []
+            out["reel_checks"] = {item: out["reel_checks"][item]} if item in out["reel_checks"] else {}
+        pending, rebuilds, ready = (out["reels_pending_inputs"], out["reels_to_redo"], out["reels_ready_to_check"])
+        if item in pending:
+            checks_offer = False
+            out["why_not"] = f"{item} has earlier work pending; its render cannot be verified for checking yet."
+        elif item in rebuilds:
+            checks_offer = False
+            out["why_not"] = f"{item} needs a rebuild before its captions can be checked."
+        elif item is None and not ready and (pending or rebuilds):
+            checks_offer = False
+            out["why_not"] = "No finished reels are ready to check."
+    source_offer = out["subtitles"] if out.get("retry_source") else exact_offer
+    out["offer"] = bool(out["obtainable"] and out["key"] and
+                        (checks_offer if out.get("checks_only") else source_offer))
     return out
-
-
-def _saved_response(job: Job, video: Path) -> dict[str, Any] | None:
-    """The recogniser's saved answer for this very recording (transcript.raw.json), if any."""
-    raw = job.root / transcribe.RAW_NAME
-    try:
-        saved = read_json(raw, default=None) if raw.exists() else None
-        vid = transcribe._video_id(video)
-    except (ValueError, OSError):
-        return None
-    if isinstance(saved, dict) and saved.get("video_id") == vid and isinstance(saved.get("response"), dict):
-        return saved
-    return None
 
 
 def words_json(resp: dict[str, Any]) -> dict[str, Any]:
@@ -168,7 +241,7 @@ def words_json(resp: dict[str, Any]) -> dict[str, Any]:
     if not words:
         raise VPError("data", "no speech was recognised in the recording")
     return {"words": [{"word": w["text"], "start": round(w["start"] / 1000, 3),
-                       "end": round(w["end"] / 1000, 3)} for w in words],
+                       "end": round(w["end"] / 1000, 3), "provenance": w["provenance"]} for w in words],
             "language": resp.get("language_code"),
             "source": {"service": transcribe.SERVICE, "model": transcribe.MODEL_ID,
                        "transcription_id": resp.get("transcription_id")}}
@@ -176,9 +249,8 @@ def words_json(resp: dict[str, Any]) -> dict[str, Any]:
 
 def _match(job: Job, doc: dict[str, Any]) -> tuple[int, int]:
     """(matched, total): how many words of the person's subtitles were found in the word times."""
-    from .steps._s2_retime import load_words
     try:
-        found = align_words.align(read_srt(job.source_srt), load_words(doc))
+        found = align_words.align(read_srt(job.source_srt), align_words.source_words(doc))
     except (ValueError, OSError, VPError):
         return 0, 0
     return found.matched, found.total
@@ -186,64 +258,142 @@ def _match(job: Job, doc: dict[str, Any]) -> tuple[int, int]:
 
 def exact(job: Job, video: str | os.PathLike | None = None, language: str | None = None,
           urlopen: transcribe.Urlopen | None = None,
-          probe: Callable[[Path], dict[str, Any]] | None = None) -> dict[str, Any]:
-    """The person's click: get the recording's word times for the captions. Sends the sound (never
-    the picture) of the recording once, unless a saved answer for this recording is here. Writes
-    `captions.words.json`, `transcript.raw.json` and `captions.choice.yaml`; touches nothing else.
-    Holds the job lock, so it never writes under a running `vp run`."""
+          probe: Callable[[Path], dict[str, Any]] | None = None, *,
+          quote: str | None = None, retry: bool = False, retry_reel: str | None = None,
+          item: str | None = None) -> dict[str, Any]:
+    """Approve a shown quote, recover saved word times, or explicitly retry an ambiguous attempt."""
+    from .core.adoption import adopt
+    from .design import job_config
+
+    transcribe.guard_inputs(job, *transcribe.recognition_targets(job),
+                            job.caption_words, job.caption_choice, video=video)
     with job_lock(job) as got:
         if not got:
             raise VPError("data", "the job is busy (another run holds job.lock): try again when it ends")
-        return _exact_locked(job, video, language, urlopen, probe)
+        adopt(job)
+        try:
+            if retry_reel is not None:
+                if quote is None:
+                    raise transcribe.RecognitionBlocked(transcribe.NO_APPROVAL,
+                                                       "approve the price shown for this reel retry with --quote")
+                return _retry_reel(job, retry_reel, quote)
+            return _exact_locked(job, video, language, urlopen, probe, quote, retry, job_config(job), item)
+        except transcribe.RecognitionBlocked as exc:
+            return {**exc.result(), "words": None}
 
 
 def _exact_locked(job: Job, video: str | os.PathLike | None, language: str | None,
-                  urlopen: transcribe.Urlopen | None,
-                  probe: Callable[[Path], dict[str, Any]] | None) -> dict[str, Any]:
-    if not job.source_srt.exists():
-        raise VPError("data", "the job has no subtitles yet: `vp transcribe run` makes the "
-                              "subtitles and the word times together")
-    have = word_times(job)
-    if have != "none":
-        return {"word_times": have, "sent": False, "words": None,
-                "note": "the captions already have exact word times: nothing was sent"}
-    est = transcribe.estimate(job, video, probe)
-    if est["too_long"]:
-        raise VPError("data", f"the recording is longer than {transcribe.MAX_DURATION_S // 3600} h: "
-                              "ElevenLabs takes at most that per file")
-    vp = Path(est["video"])
-    language = language or (str(job.request().get("language") or "") or None)
-    vid = transcribe._video_id(vp)
-    saved = _saved_response(job, vp)
-    if saved is not None:
-        resp, created, sent = saved["response"], saved.get("created_at"), False
-    else:
-        key, _ = transcribe.find_key()
-        if not key:
-            raise VPError("auth", "NEED_KEY:elevenlabs — no ElevenLabs key yet: copy the key, then run "
-                                  "`vp keys set elevenlabs --from-clipboard`")
-        with progress.tracking(job.root, "captions", None, total=1, unit="bytes"), \
-                tempfile.TemporaryDirectory(prefix="vp-captions-") as tmp:
-            audio = transcribe._extract_audio(vp, Path(tmp))        # the sound only, never the picture
-            resp = transcribe.call_api(audio, key, language, False, urlopen)
-        created, sent = now_iso(), True
-        write_json(job.root / transcribe.RAW_NAME,
-                   {"service": transcribe.SERVICE, "model": transcribe.MODEL_ID, "created_at": created,
-                    "video_id": vid, "diarize": False, "response": resp})
-        _record_cost(job, est["duration_s"])
+                  urlopen: transcribe.Urlopen | None, probe: Callable[[Path], dict[str, Any]] | None,
+                  approved_quote: str | None, retry: bool, config: dict[str, Any],
+                  item: str | None = None) -> dict[str, Any]:
+    from .design import finished_render_plan
+
+    path = transcribe._video_path(job, video)
+    if not path.exists():
+        raise VPError("data", f"recording not found: {path.name}")
+    hint = transcribe.language_hint(job, language)
+    with transcribe._hash_progress(job, path):
+        if item is not None and approved_quote is None:
+            raise transcribe.RecognitionBlocked(transcribe.NO_APPROVAL,
+                                               "approve the price shown for this reel with --quote")
+        have, reason, provenance = _timing_details(job, video, probe)
+        if approved_quote is None and not retry:
+            if have != "none":
+                note = (transcribe.LEGACY_TIMING_NOTE if provenance == transcribe.LEGACY_UNVERIFIED
+                        else "the captions already have exact word times")
+                return {"word_times": have, "sent": False, "words": None,
+                        "timing_provenance": provenance, "note": note}
+            if reason in (transcribe.LOCAL_RECORDING_CHANGED, transcribe.LOCAL_UNVERIFIED):
+                raise transcribe.RecognitionBlocked(transcribe.NO_APPROVAL, reason)
+        raw = transcribe.local_response(job, path, "captions", hint, False, probe,
+                                        recover=approved_quote is None and not retry)
+        checks_only = item is not None or (_checks_only(job, language, have, raw)
+                                           and approved_quote is not None and not retry)
+        if raw is not None and have == "none" and approved_quote is None and not retry:
+            # Recover a lost converted file from the local response without extracting audio.
+            info = transcribe._recording_info(job, video, probe)
+            recording = transcribe.media_digest(path) if raw["timing_provenance"] == transcribe.VERIFIED else None
+            quote = {**info, "recording_sha256": recording,
+                     "audio_sha256": raw.get("audio_sha256"), "diarize": False, "language_hint": hint,
+                     "cost_usd": 0, "cost_source_usd": 0, "cost_checks_max_usd": 0, "charge_warning": None}
+            result, sent = {**raw, "created_at": raw.get("created_at"), "receipt_id": None}, False
+        else:
+            if not checks_only and not job.source_srt.exists():
+                raise VPError("data", "the job has no subtitles yet: `vp transcribe run` makes the "
+                                      "subtitles and the word times together")
+            with transcribe.source_quote(job, video, language, False, probe, config, "captions",
+                                         checks_only=checks_only, reel_item=item) as (quote, audio):
+                if checks_only:
+                    if approved_quote != quote["quote_id"]:
+                        raise transcribe.RecognitionBlocked(transcribe.NO_APPROVAL, transcribe.STALE_QUOTE)
+                    if not quote["checks_seconds"]:
+                        raise transcribe.RecognitionBlocked(transcribe.NO_APPROVAL, "there are no reel checks to approve")
+                    transcribe._approve(job, quote)
+                    if item is not None or have != "none" or raw is None:
+                        approved = f"reel check approved for {item}" if item is not None else "reel checks approved"
+                        return {"word_times": have, "sent": False, "words": None, "checks_only": True,
+                                "timing_provenance": provenance,
+                                "receipt_id": approved_quote, "covers": quote["covers"],
+                                "reel_scope": quote["reel_scope"],
+                                "note": f"{approved}. No source audio was sent."}
+                    result, sent = {**raw, "created_at": raw.get("created_at"), "receipt_id": approved_quote}, False
+                else:
+                    if audio is None:
+                        raise VPError("data", f"the recording is longer than {transcribe.MAX_DURATION_S // 3600} h")
+                    result, sent = transcribe.tracked_source_result(job, "captions", quote, audio,
+                                                                    approved_quote, urlopen, retry)
+    resp = result["response"]
+    meta = transcribe.result_metadata(quote, result, sent)
+    raw_path = job.root / transcribe.RAW_NAME
+    if sent or not raw_path.exists():
+        write_json(raw_path, {**meta, "response": resp})
+    if sent:
+        _record_cost(job, quote["source_seconds"])
     doc = words_json(resp)
     matched, total = _match(job, doc)
+    transcribe._bind_words(doc, meta)
     write_json(job.caption_words, doc)
-    res = {"choice": "exact", "at": now_iso(), "service": transcribe.SERVICE, "model": transcribe.MODEL_ID,
-           "created_at": created, "sent": sent, "duration_s": est["duration_s"],
-           "cost_usd_estimate": transcribe.cost_usd(est["duration_s"]) if sent else 0.0,
-           "price_source": transcribe.PRICE_SOURCE, "words": len(doc["words"]),
+    res = {"choice": "exact", "at": now_iso(), **meta, "words": len(doc["words"]),
            "matched": matched, "total": total, "language": resp.get("language_code")}
     write_yaml(job.caption_choice, res)
-    return {**res, "word_times": "captions", "file": job.rel(job.caption_words),
-            # fewer than half of the subtitle words found: S5 will not use these times and the
-            # captions stay at the local estimate — the caller must say so, not "done"
-            "usable": bool(total) and matched / total >= align_words.MIN_MATCH_SHARE}
+    checks_fields = ({"checks_only": True, "covers": quote["covers"], "reel_scope": quote["reel_scope"]}
+                     if quote.get("checks_only") else {})
+    return {**res, **checks_fields, "word_times": "captions", "file": job.rel(job.caption_words),
+            "usable": bool(total) and matched / total >= align_words.MIN_MATCH_SHARE,
+            **finished_render_plan(job, config)}
+
+
+def _retry_reel(job: Job, item: str, quote: str | None = None) -> dict[str, Any]:
+    from .core.ctx import Ctx
+    from .design import job_config
+    from .steps.base import item_kind
+    from .steps.s5_render import caption_qa_settings, caption_sync_report, cut_recording_digest, render_qa
+
+    ctx = Ctx(job, item, job_config(job))
+    if item_kind(ctx) != "reel" or caption_qa_settings(ctx.config)["transcribe"] == "off":
+        raise VPError("data", "paid caption checks are disabled for this item")
+    if not job.source_video.is_file():
+        # cut_recording_digest supplies the same provenance refusal used by S5.
+        cut_recording_digest(ctx)
+    with transcribe._hash_progress(job, job.source_video):
+        recording_sha256 = cut_recording_digest(ctx)
+    transcribe.require_reel_receipt(job, recording_sha256, item)
+    prior = (transcribe._document(caption_sync_report(job, item), yaml=True)
+             or transcribe._document(render_qa(job, item), yaml=True))
+    check = (prior.get("checks") or {}).get("caption_sync") or {}
+    if check.get("reason") == transcribe.RENDER_MISMATCH:
+        raise transcribe.RecognitionBlocked(transcribe.RENDER_MISMATCH, transcribe.RENDER_CHANGED)
+    render_digest = prior.get("render_sha256")
+    if not render_digest:
+        raise transcribe.RecognitionBlocked(transcribe.NO_APPROVAL,
+                                           "there is no verified S5 render for this reel retry")
+    render = job.render_mp4(item)
+    if not render.is_file():
+        raise transcribe.RecognitionBlocked(transcribe.RENDER_MISMATCH, transcribe.RENDER_CHANGED)
+    with transcribe._hash_progress(job, render), tempfile.TemporaryDirectory(prefix="vp-recognition-") as tmp:
+        audio = transcribe._verified_audio(render, Path(tmp), render_digest, transcribe.RENDER_CHANGED,
+                                          reason=transcribe.RENDER_MISMATCH)
+        return transcribe.reel_retry_quote(job, item, audio, recording_sha256, render_digest, quote)
 
 
 def _record_cost(job: Job, duration_s: float) -> None:
@@ -259,25 +409,45 @@ def _record_cost(job: Job, duration_s: float) -> None:
 def keep(job: Job) -> dict[str, Any]:
     """The person's "leave as is": recorded, so the offer is not made again. An earlier `exact`
     is not undone (its word times stay in use)."""
-    prev = choice(job)
-    if prev and prev["choice"] == "exact":
-        return {"choice": "exact", "note": "exact word times were already obtained: they stay in use"}
-    res = {"choice": "keep", "at": now_iso()}
-    write_yaml(job.caption_choice, res)
-    return res
+    from .core.adoption import adopt
+
+    transcribe.guard_inputs(job, job.lock_file, job.caption_choice)
+    with job_lock(job) as got:
+        if not got:
+            raise VPError("data", "the job is busy (another run holds job.lock): try again when it ends")
+        adopt(job)
+        prev = choice(job)
+        if prev and prev["choice"] == "exact":
+            return {"choice": "exact", "note": "the existing exact-timing choice was kept"}
+        res = {"choice": "keep", "at": now_iso()}
+        write_yaml(job.caption_choice, res)
+        return res
 
 
 # ---- CLI ---------------------------------------------------------------------------------------
 
 def _plan_lines(p: dict[str, Any]) -> list[str]:
+    if p.get("retry_reel"):
+        return [line for line in (p.get("charge_warning"), p.get("note") if not p["offer"] else None,
+                                  f"retry quote {p['quote_id']} for {p['retry_reel']}" if p.get("quote_id") else None)
+                if line]
     lines = [f"captions: word times {p['word_times']}, look {p['look']}, reels "
              f"{p['reels'] if p['reels'] is not None else 'not chosen yet'}"]
-    if p["obtainable"]:
-        lines.append(f"exact timing ≈ ${p['cost_usd']:.2f} ({p['service']} {p['model']}: recording "
-                     f"{p['recording_s']} s" + (" — saved answer, nothing to send" if p["saved_answer"] else "")
-                     + f" + reels {p['reels_s']} s)")
-    elif p["why_not"]:
-        lines.append(f"exact timing not possible: {p['why_not']}")
+    lines.extend(transcribe.recognition_quote_lines(p))
+    if p["obtainable"] and p.get("retry_source"):
+        lines.append(f"source retry quote {p['quote_id']} (approve with --retry --quote)")
+    elif p["obtainable"]:
+        lines.append(f"{'reel checks only' if p['checks_only'] else 'exact timing'} up to "
+                     f"${p['cost_usd']:.2f} ({p['service']} {p['model']})")
+        lines.append(f"source ${p['cost_source_usd']:.8g}, reel checks up to ${p['cost_checks_max_usd']:.8g}")
+        lines.append(transcribe.checks_rule(p))
+        if p["checks_seconds"]:
+            scope = p["reel_scope"]
+            lines.append("reel check scope: " + ("all reels" if scope == "all" else ", ".join(scope)))
+        lines.append(f"quote {p['quote_id']} for {p['recording']}")
+    if p["why_not"]:
+        lines.append(p["why_not"])
+    lines.extend(p[k] for k in ("local_timing_note", "reel_check_note") if p.get(k))
     lines.append(f"key: {'present' if p['key'] else 'missing'}; answer: {p['choice'] or 'none'}; "
                  f"offer: {'yes' if p['offer'] else 'no'}")
     return lines
@@ -293,26 +463,53 @@ def main(argv: list[str]) -> int:
         s.add_argument("--json", action="store_true")
         if name != "keep":
             s.add_argument("--video", help="the recording (default: the job's source video)")
-        if name == "exact":
+        if name != "keep":
             s.add_argument("--language", help="ISO 639-1/3 hint, e.g. ru (default: request.yaml "
                                               "`language`, else auto)")
+            s.add_argument("--item", help="limit a check-only quote to this reel")
+        if name == "plan":
+            s.add_argument("--retry", metavar="REEL", help="quote one retry of an ambiguous reel check")
+        if name == "exact":
+            s.add_argument("--quote", help="quote_id from the approved captions plan")
+            s.add_argument("--retry", nargs="?", const="", metavar="REEL",
+                           help="approve a retry of an ambiguous source request or a named reel")
     a = ap.parse_args(argv)
+    if a.cmd != "keep" and a.item is not None and a.retry is not None:
+        ap.error("--item and --retry are separate approval routes")
     job = Job(a.job)
     if a.cmd == "plan":
-        res = plan(job, a.video)
+        res = plan(job, a.video, language=a.language, retry_reel=a.retry, item=a.item)
         lines = _plan_lines(res)
     elif a.cmd == "keep":
         res = keep(job)
         lines = [f"KEPT the captions as they are ({res['choice']})"]
     else:
-        res = exact(job, a.video, a.language)
-        if not res.get("sent") and res.get("words") is None:
-            lines = [f"NOTHING SENT: {res['note']}"]
+        res = exact(job, a.video, a.language, quote=a.quote, retry=a.retry == "",
+                    retry_reel=a.retry or None, item=a.item)
+        if res.get("status") == "not_run":
+            lines = [f"RECOGNITION NOT COMPLETED: {res['note']}"]
+        elif not res.get("sent") and res.get("words") is None:
+            lines = [res["note"]]
         else:
             lines = [f"WORD TIMES {res['file']}: {res['words']} words, {res['matched']} of "
                      f"{res['total']} subtitle words found"
                      + ("" if res["sent"] else " (saved answer reused, nothing paid)")
                      + ("" if res["usable"] else " — too few to use: the captions stay as they are")]
+            reels, long_videos = res["reels_to_redo"], res["long_videos_to_redo"]
+            pending = res["reels_pending_inputs"] + res["long_videos_pending_inputs"]
+            if reels:
+                lines.append(f"These {len(reels)} finished reels will be redone: {', '.join(reels)}.")
+            if long_videos:
+                lines.append(f"These finished long videos will be redone: {', '.join(long_videos)}.")
+            if pending:
+                lines.append(f"Earlier edits need processing before the rebuild can be determined: {', '.join(pending)}.")
+            if not (reels or long_videos or pending):
+                lines.append("No finished videos will be redone.")
+    if a.cmd == "exact" and res.get("charge_warning"):
+        lines.append(res["charge_warning"])
+    if a.cmd == "exact" and res.get("timing_provenance") == transcribe.LEGACY_UNVERIFIED:
+        if transcribe.LEGACY_TIMING_NOTE not in lines:
+            lines.append(transcribe.LEGACY_TIMING_NOTE)
     if a.json:
         print(json.dumps(res, ensure_ascii=False, indent=1))
     else:

@@ -106,6 +106,7 @@ import {
   NOTICE_DISMISS,
   NO_BUILD,
   ON_STAGE,
+  POSITION_WORDS,
   releaseLabel,
   REMINDER_LATER,
   REMINDER_ON,
@@ -117,7 +118,6 @@ import {
   SPINNER_WORDS,
   STAGE_COMMANDS,
   START_FALLBACK,
-  STEP_WORDS,
   stepOfText,
   SWITCHED_OFF_NOTE,
   SWITCHED_OFF_TEXT,
@@ -184,6 +184,12 @@ let splashReply: string | undefined
 const START_DELAY_MS = 30
 /** How often the band looks at the engine's progress and moves its colour. */
 const TICK_MS = 2000
+/** Status is sampled on the band clock, immediately on a job or activity change. */
+const POSITION_MS = 10_000
+const POSITION_TIMEOUT_MS = 3000
+const POSITION_MAX_MS = 120_000
+const POSITION_UNCHANGED_READS = 3
+const POSITION_BACKOFF_FACTOR = 2
 /** How long after a session starts the channel is asked (the session settles first). */
 const CHANNEL_DELAY_MS = 1500
 /** How often a waiting notice is looked at again (each look may ask `vp busy`). */
@@ -196,6 +202,50 @@ const STORE_RESTART_SHOWN = 'restart-shown'
 const LIVE_FILE = 'progress-live.json'
 /** A mirror older than this belongs to a run that died: nothing is running. */
 const STALE_MS = 120_000
+
+type PositionSnapshot = {
+  state: string
+  engine: string | null
+  item: string | null
+  version: string | null
+  title: Partial<Record<DirectorLang, string>>
+  wait: string | null
+}
+
+type ProgressSignal = LiveProgress & { job: string; item: string | null; updated: number }
+
+/** The existing progress atom also retains the job and last position when its live bar is idle. */
+type BandProgress = LiveProgress & {
+  job: string
+  selectedAt: number
+  live: boolean
+  item: string | null
+  liveVersion: string | null
+  position: PositionSnapshot | null
+}
+
+type JobRun = { job: string; since: number; backgroundId?: string }
+const jobRuns = new Set<JobRun>()
+let statusInFlight = false
+type PositionPoll = {
+  job: string
+  live: boolean
+  due: number
+  interval: number
+  unchanged: number
+  key?: string
+  pace?: 'running' | 'waiting' | 'terminal'
+}
+let positionPoll: PositionPoll | undefined
+
+/** Bridge the progress writer's step IDs to the localized activity codes. */
+const LIVE_ACTIVITY: Readonly<Record<string, string>> = {
+  S0: 'intake', S1: 'proofread', S2: 'retime', S3a: 'select', S3b: 'review',
+  S4: 'cut', S5: 'cut_render', S5v: 'picture_check', S6a: 'on_screen_text', S6b: 'metadata',
+  S7: 'thumbnail', S8: 'upload', S9: 'package', S10: 'crosslinks', PUB: 'publish', S11: 'report',
+  render: 'render_text', master: 'mastering', preview: 'preview', transcribe: 'transcribe',
+  'verify recording': 'verify_recording', captions: 'exact_captions', extras: 'extras',
+}
 
 /** The pane beside the chat that shows a document to read and answer. */
 const DOC_PANE = 'doc'
@@ -458,33 +508,342 @@ async function pipelineHome($: EngineInterface): Promise<string | undefined> {
   return home === undefined || home === '' ? undefined : `${home}/.ai_video_pipeline`
 }
 
-/** The engine's running step, or null: no file, a broken one, or one of a run that died. */
-async function readProgress($: EngineInterface): Promise<LiveProgress | null> {
-  const home = await pipelineHome($)
+function asBandProgress(held: LiveProgress | null): BandProgress | null {
+  return held !== null && 'job' in held ? held as BandProgress : null
+}
 
-  if (home === undefined) {
-    return null
-  }
+function idleProgress(job: string, selectedAt: number): BandProgress {
+  return { job, selectedAt, step: '', live: false, item: null, percent: 0, etaS: null,
+    liveVersion: null, position: null }
+}
 
+function versionOf(value: unknown): string | null {
+  return typeof value === 'string' && /^v\d+$/.test(value) ? value : null
+}
+
+function progressVersion(step: string, item: string | null): string | null {
+  return step === 'render' || step === 'master' ? versionOf(item) : null
+}
+
+async function readProgress($: EngineInterface, path: string, at: number, job?: string): Promise<ProgressSignal | null> {
   try {
-    const held: unknown = JSON.parse(await $.fs.read(`${home}/${LIVE_FILE}`))
-
-    if (typeof held !== 'object' || held === null) {
-      return null
-    }
-    const rec = held as Record<string, unknown>
+    const rec = asRecord(JSON.parse(await $.fs.read(path)))
     const updated = typeof rec.updated_at === 'string' ? Date.parse(rec.updated_at) : NaN
+    const folder = job ?? rec.job
 
-    if (typeof rec.step !== 'string' || !Number.isFinite(updated) || (await $.clock.now()) - updated > STALE_MS) {
+    if (typeof folder !== 'string' || !folder.startsWith('/') || typeof rec.step !== 'string' ||
+        !Number.isFinite(updated) || at - updated > STALE_MS) {
       return null
     }
     const percent = typeof rec.percent === 'number' && Number.isFinite(rec.percent) ? rec.percent : 0
     const etaS = typeof rec.eta_s === 'number' && Number.isFinite(rec.eta_s) ? rec.eta_s : null
 
-    return { step: rec.step, percent: Math.min(Math.max(percent, 0), 100), etaS }
+    return {
+      job: folder, step: rec.step, updated, item: typeof rec.item === 'string' ? rec.item : null,
+      percent: Math.min(Math.max(percent, 0), 100), etaS,
+    }
   } catch {
     return null
   }
+}
+
+async function followProgress($: EngineInterface, at: number): Promise<void> {
+  const home = await pipelineHome($)
+  const mirror = home === undefined ? null : await readProgress($, `${home}/${LIVE_FILE}`, at)
+  const followed = asBandProgress(await read($, progress))
+  const local = followed !== null && followed.job !== mirror?.job
+    ? await readProgress($, `${followed.job}/progress.json`, at, followed.job)
+    : null
+  const backgroundTasks = await read($, background)
+
+  for (const run of jobRuns) {
+    if (run.backgroundId !== undefined && !backgroundTasks.some(task => task.id === run.backgroundId)) {
+      jobRuns.delete(run)
+    }
+  }
+  await update($, progress, current => {
+    const previous = asBandProgress(current)
+    // The mirror is shared. A different job can lead only if the dialog ran it and
+    // either the request or a later mirror update followed the last job selection.
+    const belongsToDialog = mirror !== null && [...jobRuns].some(run =>
+      run.job === mirror.job && mirror.updated >= Math.floor(run.since / 1000) * 1000 &&
+      (previous === null || run.since >= previous.selectedAt || mirror.updated > previous.selectedAt),
+    )
+    const signal = belongsToDialog || mirror?.job === previous?.job ? mirror : local
+    let next = previous
+
+    if (signal !== null && (belongsToDialog || signal.job === previous?.job)) {
+      const tracked = signal.job === previous?.job ? previous : idleProgress(signal.job, at)
+      const { step, item, percent, etaS } = signal
+
+      next = { ...tracked, step, item, percent, etaS, live: true,
+        liveVersion: progressVersion(step, item) ?? tracked.liveVersion }
+    } else if (previous?.live === true) {
+      next = { ...previous, live: false, step: '', item: null, percent: 0, etaS: null }
+    }
+
+    return JSON.stringify(next) === JSON.stringify(current) ? current : next
+  })
+}
+
+/** Recognize direct engine invocations, including those without a literal job argument. */
+function dialogEngine($: EngineInterface, command: string): (() => string) | null {
+  const prefix = command.trimStart().replace(/^(?:[A-Za-z_][\w]*=(?:"[^"\n]*"|'[^'\n]*'|[^\s;&|<>`]+)[ \t]+)*/, '')
+  const token = /[ \t]*("[^"\n]*"|'[^'\n]*'|[^\s'";&|<>`\\]+)(?=$|[\s;&|<>])/y
+  const word = () => {
+    const value = token.exec(prefix)?.[1] ?? ''
+
+    return value.startsWith('"') || value.startsWith("'") ? value.slice(1, -1) : value
+  }
+  const launcher = word()
+
+  if (['vp', 'scripts/vp', './scripts/vp', `${$.plugin.root}/scripts/vp`,
+    '$CLAUDE_PLUGIN_ROOT/scripts/vp', '${CLAUDE_PLUGIN_ROOT}/scripts/vp'].includes(launcher)) {
+    return word
+  }
+  if (/(?:^|\/)python(?:3(?:\.\d+)?)?$/.test(launcher)) {
+    const option = word()
+
+    if ((option === '-B' ? word() : option) === '-m' && word() === 'vp') {
+      return word
+    }
+  }
+
+  return null
+}
+
+/** Recognize literal job arguments in commands that select or run a job. */
+function dialogJob(word: () => string): { job: string; status: boolean } | null {
+  const commandName = word()
+  const verb = ['text', 'review', 'transcribe', 'captions', 'extras'].includes(commandName)
+    ? `${commandName} ${word()}` : commandName
+  const status = verb === 'status' || verb === 'text status'
+  const namedJob = verb === 'captions exact' || verb === 'extras install'
+
+  if (!status && !namedJob && !['run', 'stage', 'text render', 'text master', 'transcribe run', 'review preview'].includes(verb)) {
+    return null
+  }
+  let job = word()
+
+  if (namedJob) {
+    while (job.startsWith('--') && job !== '--job') {
+      job = word()
+    }
+    job = job === '--job' ? word() : ''
+  }
+  if (status && job === '--json') {
+    job = word()
+  }
+
+  return job.startsWith('/') && !/[$`\\*?\[\]]/.test(job)
+    ? { job: job.replace(/\/+$/, '') || '/', status }
+    : null
+}
+
+function toolNamesJob(input: unknown, job: string): boolean {
+  const path = job.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const namesJob = new RegExp(`(?:^|[\\s'"=(:,])${path}(?=$|[\\s/'");,:])`)
+  const folder = job === '/' ? job : `${job}/`
+  const containsPath = (value: unknown): boolean => {
+    if (typeof value !== 'string') {
+      return Object.values(asRecord(value)).some(containsPath)
+    }
+
+    return value.startsWith(job) ? value === job || value.startsWith(folder) : namesJob.test(value)
+  }
+
+  return containsPath(input)
+}
+
+async function followJob($: EngineInterface, job: string): Promise<void> {
+  const at = await $.clock.now()
+  await update($, progress, held => {
+    const current = asBandProgress(held)
+
+    return current?.job === job ? { ...current, selectedAt: at } : idleProgress(job, at)
+  })
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
+}
+
+function positionOf(value: unknown): PositionSnapshot | null {
+  const position = asRecord(value)
+  const { engine, state } = position
+
+  if (typeof state !== 'string') {
+    return null
+  }
+  const focus = asRecord(position.focus)
+  const title = asRecord(position.title)
+  const wait = asRecord(position.waiting_for).code
+
+  return {
+    state, engine: typeof engine === 'string' ? engine : null,
+    item: typeof focus.item === 'string' ? focus.item : null, version: versionOf(focus.version),
+    title: { ru: typeof title.ru === 'string' ? title.ru : undefined, en: typeof title.en === 'string' ? title.en : undefined },
+    wait: typeof wait === 'string' ? wait : null,
+  }
+}
+
+/** Poll with an existing interpreter: the regular launcher can bootstrap a missing environment. */
+async function statusPython($: EngineInterface): Promise<string | undefined> {
+  const explicit = (await $.env.get('VP_PYTHON'))?.trim()
+
+  if (explicit) {
+    return explicit
+  }
+  const venv = (await $.env.get('VP_VENV'))?.trim()
+
+  if (venv) {
+    return `${venv}/bin/python`
+  }
+  const home = (await $.env.get('HOME'))?.trim()
+  const runtime = (await $.env.get('VP_RUNTIME_DIR'))?.trim() || (await $.env.get('CLAUDE_PLUGIN_DATA'))?.trim() ||
+    (home ? `${home}/.ai_video_pipeline/runtime` : undefined)
+
+  if (runtime === undefined) {
+    return undefined
+  }
+  const venvs = (await $.fs.list(runtime))
+    .filter(one => one.kind === 'dir' && /^venv-3\.\d+$/.test(one.name))
+    .map(one => Number(one.name.slice('venv-3.'.length)))
+
+  return venvs.length === 0 ? undefined : `${runtime}/venv-3.${Math.max(...venvs)}/bin/python`
+}
+
+/** Record activity even if a read is in flight. Its completion will pick up the pending read. */
+async function requestPosition($: EngineInterface, activity?: (job: string) => boolean): Promise<void> {
+  if (!(await read($, onStage))) {
+    return
+  }
+  const at = await $.clock.now()
+  const held = asBandProgress(await read($, progress))
+
+  if (held === null) {
+    return
+  }
+  const { job, live } = held
+  if (positionPoll?.job !== job || activity?.(job) ||
+      (positionPoll.live !== live && (positionPoll.pace === 'running') !== live)) {
+    positionPoll = { job, live, due: at, interval: POSITION_MS, unchanged: 0 }
+  }
+  positionPoll.live = live
+  if (!statusInFlight && at >= positionPoll.due) {
+    void refreshPosition($, positionPoll, at)
+  }
+}
+
+function positionPace(raw: Record<string, unknown>, position: PositionSnapshot): PositionPoll['pace'] {
+  const action = asRecord(raw.next).action
+
+  if (position.state === 'running') {
+    return 'running'
+  }
+  if (position.state === 'waiting_person') {
+    return 'waiting'
+  }
+  if (position.state === 'done' || action === 'none' ||
+      (position.state === 'failed' && (action === undefined || action === null))) {
+    return 'terminal'
+  }
+
+  return undefined
+}
+
+function schedulePosition(poll: PositionPoll, at: number, key?: string): void {
+  const unchanged = key === undefined || key === poll.key
+
+  poll.unchanged = unchanged ? poll.unchanged + 1 : 0
+  poll.key = key ?? poll.key
+  if (poll.pace === 'terminal') {
+    poll.interval = POSITION_MAX_MS
+  } else if (poll.pace === 'running' || !unchanged) {
+    poll.interval = POSITION_MS
+  } else if (poll.pace === 'waiting' || poll.unchanged >= POSITION_UNCHANGED_READS) {
+    poll.interval = Math.min(poll.interval * POSITION_BACKOFF_FACTOR, POSITION_MAX_MS)
+  }
+  poll.due = at + poll.interval
+}
+
+async function refreshPosition($: EngineInterface, poll: PositionPoll, at: number): Promise<void> {
+  statusInFlight = true
+  const { job } = poll
+  let key: string | undefined
+
+  try {
+    const python = await statusPython($)
+
+    if (python === undefined) {
+      return
+    }
+    const argv = ['/usr/bin/env', 'VP_STATUS_READ_ONLY=1', `PYTHONPATH=${$.plugin.root}/src`,
+      python, '-B', '-m', 'vp', 'status', job, '--json']
+    const asked = await $.process.run(argv, { timeoutMs: POSITION_TIMEOUT_MS })
+
+    if (asked.exitCode !== 0 || asked.isStdoutTruncated) {
+      return
+    }
+    const answer = asRecord(JSON.parse(asked.stdout))
+    const raw = asRecord(answer.position)
+    const position = positionOf(raw)
+    const canonicalJob = answer.job_folder
+
+    if (positionPoll === poll && position !== null && typeof canonicalJob === 'string' && canonicalJob.startsWith('/')) {
+      key = JSON.stringify(position)
+      poll.pace = positionPace(raw, position)
+      // The CLI resolves the exact argument it was given, including symlinks and /var aliases.
+      await update($, progress, value => {
+        const current = asBandProgress(value)
+
+        return positionPoll === poll && current?.job === job &&
+          (canonicalJob !== job || JSON.stringify(current.position) !== key)
+          ? { ...current, job: canonicalJob, position }
+          : value
+      })
+      poll.job = canonicalJob
+    }
+  } catch {
+    // The previous position and the independent live progress stay visible.
+  } finally {
+    statusInFlight = false
+    if (positionPoll === poll) {
+      schedulePosition(poll, at, key)
+    } else if (positionPoll !== undefined) {
+      void requestPosition($).catch(() => undefined)
+    }
+  }
+}
+
+function bandPositionText(words: DirectorLang, held: BandProgress): string | null {
+  const { position } = held
+  const labels = POSITION_WORDS[words]
+  const labelFor = (code: string | null) => code !== null && Object.hasOwn(labels, code) ? labels[code] : null
+
+  if (held.live) {
+    const version = progressVersion(held.step, held.item)
+    const instance = held.item === null ? held.step : `${held.step}.${held.item}`
+    const matches = position?.state === 'running' && (version !== null
+      ? position.engine === held.step && position.version === version
+      : position.engine === instance || (position.engine === held.step && position.item === held.item))
+    const code = Object.hasOwn(LIVE_ACTIVITY, held.step) ? LIVE_ACTIVITY[held.step] : 'running'
+    const label = (matches ? position.title[words] : undefined) ?? labels[code]
+
+    return version === null ? label : `${label} · ${version}`
+  }
+  if (position === null || (held.liveVersion !== null && (position.version === null ||
+      Number(position.version.slice(1)) < Number(held.liveVersion.slice(1))))) {
+    return null
+  }
+  const label = labelFor(position.wait) ?? labelFor(position.state)
+
+  if (label === null) {
+    return null
+  }
+  const title = position.state === 'ready' || position.state === 'running' ? position.title[words] : undefined
+
+  return [label, title, position.version].filter(Boolean).join(' · ')
 }
 
 /** One beat of the band: its colour drifts within the warm range, the bar follows the engine. */
@@ -492,7 +851,8 @@ async function tick($: EngineInterface): Promise<void> {
   if (!(await read($, onStage))) {
     return
   }
-  const hue = warmHue((await $.clock.now()) / 1000)
+  const at = await $.clock.now()
+  const hue = warmHue(at / 1000)
 
   if (hue !== (await read($, tint))) {
     await update($, tint, () => hue)
@@ -502,12 +862,8 @@ async function tick($: EngineInterface): Promise<void> {
   } catch {
     // Bookkeeping only: the engine's bar is looked at all the same.
   }
-  const next = await readProgress($)
-  const now = await read($, progress)
-
-  if (JSON.stringify(next) !== JSON.stringify(now)) {
-    await update($, progress, () => next)
-  }
+  await followProgress($, at)
+  await requestPosition($)
 }
 
 /** One beat of the face: the next frame of her current mood. */
@@ -545,6 +901,7 @@ function stopTicker(): void {
   ticker = undefined
   faceClock?.cancel()
   faceClock = undefined
+  positionPoll = undefined
 }
 
 /** Sets the language of the interface words and keeps it for the next sessions. */
@@ -628,7 +985,12 @@ async function leave($: EngineInterface): Promise<boolean> {
   $.ui.status(undefined)
   stopTicker()
   isSplashDue = false
-  await update($, progress, () => null)
+  await update($, progress, value => {
+    const held = asBandProgress(value)
+
+    return held === null ? null : { ...idleProgress(held.job, held.selectedAt), position: held.position,
+      liveVersion: held.liveVersion }
+  })
 
   return true
 }
@@ -682,7 +1044,7 @@ async function noteLang($: EngineInterface, text: string, isAnswer: boolean): Pr
  */
 function queueStart($: EngineInterface, args: string): void {
   const fallback = () => {
-    $.prompt.submit({ text: START_FALLBACK }).catch(() => undefined)
+    submitPrompt($, { text: START_FALLBACK }).catch(() => undefined)
   }
 
   try {
@@ -692,6 +1054,13 @@ function queueStart($: EngineInterface, args: string): void {
   } catch {
     fallback()
   }
+}
+
+/** Prompts sent by the plugin bypass its own submit hook. */
+async function submitPrompt($: EngineInterface, args: { text: string; asUser?: boolean }) {
+  await requestPosition($, () => true).catch(() => undefined)
+
+  return $.prompt.submit(args)
 }
 
 /** /elsa: Elsa comes on stage and the guided start begins. */
@@ -1329,7 +1698,7 @@ async function sendDocChoice($: EngineInterface, label: string): Promise<void> {
   await update($, doc, now => (now === null ? now : { ...now, sent: label }))
 
   try {
-    await $.prompt.submit({ text: label, asUser: true })
+    await submitPrompt($, { text: label, asUser: true })
   } catch {
     // Not delivered: the buttons come back, so the person can press again or type.
     await update($, doc, now => (now === null || now.sent !== label ? now : { ...now, sent: null }))
@@ -1420,6 +1789,7 @@ async function pollChannel($: EngineInterface): Promise<void> {
       return
     }
     lastPollAt = await $.clock.now()
+    void $.process.run(vpArgv($, 'kpack', 'sync'), { timeoutMs: 10_000 }).catch(() => undefined)
 
     try {
       await $.process.run(vpArgv($, 'telemetry', 'flush', '--detach'), { timeoutMs: 15_000 })
@@ -1441,7 +1811,8 @@ async function pollChannel($: EngineInterface): Promise<void> {
 
 /** True while nothing runs: no turn, no document or question waiting, the engine idle. */
 async function isQuiet($: EngineInterface): Promise<boolean> {
-  if ((await read($, work)).isRunning || (await read($, mood)) === 'waiting' || (await read($, progress)) !== null) {
+  if ((await read($, work)).isRunning || (await read($, mood)) === 'waiting' ||
+      asBandProgress(await read($, progress))?.live === true) {
     return false
   }
   const held = await read($, doc)
@@ -1531,7 +1902,7 @@ async function noticeAnswer($: EngineInterface, label: string | null): Promise<v
 
   if (label !== null) {
     try {
-      await $.prompt.submit({ text: label, asUser: true })
+      await submitPrompt($, { text: label, asUser: true })
     } catch {
       // The person can say it in words.
     }
@@ -1550,7 +1921,7 @@ async function restartAnswer($: EngineInterface, version: string, label: string)
     await $.session.append({
       message: { type: 'user', content: [{ type: 'text', text: restartAskNote(version) }] },
     })
-    await $.prompt.submit({ text: label, asUser: true })
+    await submitPrompt($, { text: label, asUser: true })
   } catch {
     // The person can say it in words.
   }
@@ -1793,7 +2164,7 @@ async function sendActionChoice($: EngineInterface, label: string): Promise<void
   await update($, action, now => (now === null ? now : { ...now, sent: label }))
 
   try {
-    await $.prompt.submit({ text: label, asUser: true })
+    await submitPrompt($, { text: label, asUser: true })
   } catch {
     // Not delivered: the card comes back, so the person can press again or type.
     await update($, action, now => (now === null || now.sent !== label ? now : { ...now, sent: null }))
@@ -1848,7 +2219,7 @@ async function sendContinue($: EngineInterface): Promise<void> {
     await $.session.append({
       message: { type: 'user', content: [{ type: 'text', text: notes.join('\n\n') }] },
     })
-    await $.prompt.submit({ text, asUser: true })
+    await submitPrompt($, { text, asUser: true })
   } catch {
     // Not delivered: the card comes back, so the person can press again or type.
     await update($, welcome, now => now ?? held)
@@ -1984,6 +2355,8 @@ export const register: Register = on => {
   on('prompt.submit', async ($, e, next) => {
     let resumed: string[] = []
 
+    await requestPosition($, () => true).catch(() => undefined)
+
     if (e.origin.kind === 'task-notification') {
       try {
         await noteTaskNotification($, e.text)
@@ -2063,21 +2436,39 @@ export const register: Register = on => {
   on('tool.call', async ($, e, next) => {
     const input = e as unknown as Record<string, unknown>
     const isMain = e.agentId === undefined
+    let run: JobRun | undefined
 
     try {
+      const engine = e.tool === 'Bash' && typeof input.command === 'string' ? dialogEngine($, input.command) : null
+      const job = engine === null ? null : dialogJob(engine)
+
+      if (job?.status === true) {
+        await followJob($, job.job)
+      } else if (job !== null) {
+        run = { job: job.job, since: await $.clock.now() }
+        jobRuns.add(run)
+      }
+      await requestPosition($, followed => engine !== null || toolNamesJob(input, followed))
       await noteToolStart($, e.tool, input, isMain)
     } catch {
       // Bookkeeping only.
     }
     // The mod's own tool is answered here; every other call goes on to the engine.
-    const result =
-      e.tool === docToolName($.plugin.name)
+    let result: ToolCallResult
+    try {
+      result = e.tool === docToolName($.plugin.name)
         ? await showDocument($, input)
         : e.tool === `mcp__${$.plugin.name}__${ACTION_TOOL}`
           ? await showAction($, input)
           : e.tool === `mcp__${$.plugin.name}__${CLEAR_ACTION_TOOL}`
             ? await clearAction($)
             : await next(e)
+    } catch (error) {
+      if (run !== undefined) {
+        jobRuns.delete(run)
+      }
+      throw error
+    }
 
     try {
       await noteToolEnd($, e.tool, input, result, isMain)
@@ -2089,6 +2480,15 @@ export const register: Register = on => {
       await noteBackgroundTool($, e.tool, input, result)
     } catch {
       // Bookkeeping only.
+    }
+    if (run !== undefined) {
+      const id = asRecord(result.result).backgroundTaskId
+
+      if (result.deny === undefined && result.isError !== true && typeof id === 'string') {
+        run.backgroundId = id
+      } else {
+        jobRuns.delete(run)
+      }
     }
 
     return result
@@ -2326,17 +2726,22 @@ export const register: Register = on => {
     }
     const words = await read($, lang)
     const paper = bandColor(await read($, tint))
-    const running = await read($, progress)
+    const tracked = asBandProgress(await read($, progress))
+    const running = tracked?.live === true ? tracked : null
     const clockNow = await nowOf($)
     const turn = workBar(words, await read($, work), e.props.isWorking, clockNow)
     // The engine's bar leads; a turn's bar next; work left running after the turn only when neither shows.
     const behind = running === null && turn === null ? backgroundBar(words, await read($, background), clockNow) : null
     const release = `· v${releaseLabel(words, VERSION, await buildOf($))}`
     const { Progress, Text: LiveText } = $.ui.resolve(e)
+    const positionLine = tracked === null ? null : bandPositionText(words, tracked)
+    const restingPosition = running === null && positionLine !== null
+      ? <LiveText color={BAND_INK_SOFT}>{positionLine}</LiveText>
+      : null
     const engineBar =
       running === null ? null : (
         <Progress
-          label={STEP_WORDS[words][running.step] ?? running.step}
+          label={positionLine ?? POSITION_WORDS[words].running}
           value={running.percent}
           max={100}
           valueText={`${Math.round(running.percent)}% · ${etaText(words, running.etaS)}`}
@@ -2385,6 +2790,7 @@ export const register: Register = on => {
           </Box>
           {noticeRow}
           {engineBar}
+          {restingPosition}
           {turnBar}
           {behindBar}
         </Box>
@@ -2424,6 +2830,7 @@ export const register: Register = on => {
         </Box>
         {noticeRow}
         {engineBar}
+        {restingPosition}
         {turnBar}
         {behindBar}
       </Box>

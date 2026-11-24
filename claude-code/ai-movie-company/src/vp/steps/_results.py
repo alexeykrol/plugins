@@ -125,7 +125,10 @@ def results(job: Job, config: dict[str, Any] | None = None) -> dict[str, Any]:
             "render_path": str(render.resolve()) if render.exists() else None,
             "thumb_path": str(thumb.resolve()) if thumb.exists() else None,
             "publish_at": pub.get("published_at") or None})
-    return {"job": job.job_id, "publisher": kind, "items": items}
+    doc = {"job": job.job_id, "publisher": kind, "items": items}
+    if job.report_md.is_file():
+        doc["report"] = str(job.report_md)
+    return doc
 
 
 def text_table(doc: dict[str, Any]) -> str:
@@ -143,4 +146,6 @@ def text_table(doc: dict[str, Any]) -> str:
         when = f" at {r['publish_at']}" if r["publish_at"] and r["state"] == "scheduled" else ""
         lines.append(f"  {r['id']:<6} {r['kind'] or '-':<5} {dur:>7}  {state}{when}  "
                      f"{(r['title'] or '-')[:60]}  {where}")
+    if doc.get("report"):
+        lines.append(f"report: {doc['report']}")
     return "\n".join(lines)

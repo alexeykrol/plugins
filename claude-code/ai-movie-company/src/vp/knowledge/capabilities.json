@@ -222,7 +222,8 @@
         "Parakeet (local, later)"
       ],
       "status": "built",
-      "command": "vp transcribe run <job>"
+      "command": "vp transcribe estimate <job> --json",
+      "note": "Show the engine quote before approval. Then run vp transcribe run <job> --quote <quote_id> --json with the same recognition options."
     },
     "take_cleanup": {
       "code": "Ч",

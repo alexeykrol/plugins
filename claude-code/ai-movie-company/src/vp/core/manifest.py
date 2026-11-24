@@ -29,7 +29,7 @@ def hash_files(job: Job, paths: Iterable[str | Path]) -> dict[str, str]:
     for p in paths:
         rel = job.rel(p)
         if rel not in out:
-            out[rel] = sha256_file(job.abs(rel))
+            out[rel] = sha256_file(job.abs(rel), progress_root=job.root)
     return out
 
 
@@ -87,7 +87,7 @@ def check_fresh(spec: "StepSpec", ctx: "Ctx") -> Freshness:
     if m.get("config_hash") != sha256_obj(config):
         return Freshness(False, "config changed", inputs, config, m)
     for rel, sha in (m.get("outputs") or {}).items():
-        cur = sha256_file(job.abs(rel))
+        cur = sha256_file(job.abs(rel), progress_root=job.root)
         if cur == MISSING:
             return Freshness(False, f"output missing: {rel}", inputs, config, m)
         if cur != sha:

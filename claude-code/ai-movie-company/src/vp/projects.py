@@ -11,11 +11,11 @@ Registry format (bookkeeping only, written atomically):
 The list (`vp projects list`) is computed, never stored: title (request.yaml `title`, else
 `job_id`, else the folder name — "<parent>/<folder>" for ai_lms `_video` folders), kind
 (recording | text), date (local YYYY-MM-DD of the last activity) and last_activity (ISO; the
-newest of the registry touch and the job folder's top-level entries), folder, state; newest first:
-  in_work         — work started, nothing waits for the person
-  waiting_review  — the engine waits for the person (a dialog gate: review / approve)
-  done            — recording job: the report step (S11) finished; text job: a CapCut version
-                    was exported (further versions are still possible)
+newest of the registry touch and the job folder's top-level entries), folder, state, and a compact
+position when available; newest first:
+  in_work         — any other position, or the job could not be read
+  waiting_review  — the position waits for a person or for judgment
+  done            — the recording route or the selected text version is complete
   missing         — the folder no longer exists (shown only with --all)
 
 The summary (`vp projects summary`) answers one question for the dialog — is this the person's
@@ -39,12 +39,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from . import position
 from .core.io import now_iso, read_json, read_yaml, write_json
 from .core.paths import vp_home
 
 FILE = "projects.json"
 STATES = ("in_work", "waiting_review", "done", "missing")
-_WAIT = ("waiting_human", "waiting_judgment")
+_POSITION_STATE = {"waiting_person": "waiting_review", "waiting_judgment": "waiting_review",
+                   "done": "done"}
 
 
 def registry_path(home: Path | None = None) -> Path:
@@ -172,27 +174,11 @@ def last_activity(folder: Path, registry_at: str | None = None) -> float:
     return best
 
 
-def job_state(folder: Path, req: dict[str, Any] | None = None) -> str:
-    if not folder.is_dir():
-        return "missing"
-    req = _request(folder) if req is None else req
-    if job_kind(req) == "text":
-        from .text import stages_present
-        return "done" if stages_present(folder).get("capcut") else "in_work"
-    try:
-        st = read_yaml(folder / "status.yaml", default={}) or {}
-    except Exception:  # noqa: BLE001
-        st = {}
-    history = st.get("history") if isinstance(st, dict) else None
-    last: dict[tuple, str] = {}
-    for e in history or []:
-        if isinstance(e, dict):
-            last[(e.get("stage"), e.get("item"))] = str(e.get("state"))
-    if any(s in _WAIT for s in last.values()):
-        return "waiting_review"
-    if last.get(("S11", None)) == "done":
-        return "done"
-    return "in_work"
+def _project_position(folder: Path) -> dict[str, Any]:
+    current = position.of(folder)
+    return {**{key: current[key] for key in ("step", "title", "index", "total", "state",
+                                             "waiting_for", "next")},
+            "focus": {"version": (current["focus"] or {}).get("version")}}
 
 
 def job_has_video(folder: Path, req: dict[str, Any] | None = None) -> bool:
@@ -229,19 +215,34 @@ def list_projects(home: Path | None = None, include_missing: bool = False) -> li
     out = []
     for folder_s, rec in _load(home)["projects"].items():
         folder = Path(folder_s)
-        exists = folder.is_dir()
+        try:
+            exists = folder.is_dir()
+        except OSError:
+            exists = True  # An inaccessible path is different from a missing project.
         if not exists and not include_missing:
             continue
-        req = _request(folder) if exists else {}
+        req, current = {}, None
+        if exists:
+            try:
+                request = read_yaml(folder / "request.yaml", default={})
+                if isinstance(request, dict):
+                    req = request
+                    current = _project_position(folder)
+            except Exception:  # noqa: BLE001 - unreadable job data must not break the list
+                pass
         ts = last_activity(folder, rec.get("last_seen")) if exists else _parse(rec.get("last_seen"))
         at = _iso_from_ts(ts) if ts else None
-        out.append({"title": job_title(folder, req) if exists else rec.get("title") or folder.name,
-                    "folder": folder_s,
-                    "kind": job_kind(req) if exists else rec.get("kind") or "recording",
-                    "date": _local_day(at)[:10] if at else None,
-                    "last_activity": at,
-                    "state": job_state(folder, req) if exists else "missing",
-                    "_ts": ts})
+        state = _POSITION_STATE.get(current["state"], "in_work") if current else "in_work"
+        row = {"title": job_title(folder, req) if exists else rec.get("title") or folder.name,
+               "folder": folder_s,
+               "kind": job_kind(req) if exists else rec.get("kind") or "recording",
+               "date": _local_day(at)[:10] if at else None,
+               "last_activity": at,
+               "state": state if exists else "missing",
+               "_ts": ts}
+        if current is not None:
+            row["position"] = current
+        out.append(row)
     out.sort(key=lambda r: r["_ts"], reverse=True)
     for r in out:
         del r["_ts"]
@@ -291,16 +292,26 @@ def main(argv: list[str]) -> int:
             return 0
         if not rows:
             print("no projects yet")
+            print("next: Start a recording project by choosing the folder with your recording.")
             return 0
         for r in rows:
-            print(f"{_local_day(r['last_activity'])}\t{STATE_LABEL[r['state']]}\t{r['kind']}\t"
-                  f"{r['title']}\t{r['folder']}")
+            line = (f"{_local_day(r['last_activity'])}\t{STATE_LABEL[r['state']]}\t{r['kind']}\t"
+                    f"{r['title']}\t{r['folder']}")
+            if (current := r.get("position")) and r["state"] != "done":   # a finished job needs no step
+                title = (current["title"] or {}).get("en")
+                waiting = current["waiting_for"] if current["state"] == "waiting_person" else None
+                detail = " — ".join(part for part in (title, waiting and waiting["text"]) if part)
+                if detail:
+                    line += f"\t{detail}"
+            print(line)
         return 0
     if a.cmd == "summary":
         res = summary()
         print(json.dumps(res, ensure_ascii=False) if a.json else
               f"projects: {res['total']}, with a finished video: {res['with_video']}, "
               f"first project: {'yes' if res['first_project'] else 'no'}")
+        if not a.json and not res["total"]:
+            print("next: Start a recording project by choosing the folder with your recording.")
         return 0
     if a.cmd == "add":
         ok = touch(a.folder)
@@ -319,4 +330,10 @@ def main(argv: list[str]) -> int:
         return 0
     ok = forget(a.folder)
     print("FORGOTTEN" if ok else "NOT IN THE LIST")
+    from . import transcribe
+    from .core.paths import Job
+
+    job = Job(a.folder)
+    if transcribe.has_saved_recognition(job):
+        print(f"Saved recognition stays on this computer. To remove it, run {transcribe.purge_command(job)}")
     return 0

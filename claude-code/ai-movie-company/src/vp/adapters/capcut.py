@@ -902,7 +902,7 @@ def export_version(job_root: str | Path, version: str | None = None, *,
         res = capcut_project.write_version(
             builds, job_root=job_root, job_id=Job(job_root).job_id, title=str(title),
             root=Path(root) if root else drafts_root(), running=running, backup_dir=backup_dir,
-            cover=cover)
+            cover=cover, baseline_dir=vdir / capcut_project.WRITTEN_DIR)
         warnings = [w for w in [warning, res.get("note")] + list(inputs.get("plan_warnings") or [])
                     if w]
         record = {"version": v, "created_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -1027,6 +1027,9 @@ def main(argv: list[str]) -> int:
         return version_main(argv[1:])
     if argv and argv[0] == "library":
         return library_main(argv[1:])
+    if argv and argv[0] == "diff":
+        from . import capcut_diff
+        return capcut_diff.main(argv[1:])
     if argv and argv[0] not in ("export", "check") and not argv[0].startswith("-"):
         return version_main(argv)
     ap = argparse.ArgumentParser(
@@ -1046,6 +1049,7 @@ def main(argv: list[str]) -> int:
                    help="new version of a job = new timeline in its project, separate tracks: "
                         "vp capcut <job> [--version vN] — see `vp capcut version --help`")
     sub.add_parser("library", add_help=False, help="library items usable in capcut/layers.json")
+    sub.add_parser("diff", add_help=False, help="compare a written version with its saved CapCut edit")
     e = sub.add_parser("export", help="make a new CapCut project per finished clip")
     e.add_argument("job")
     e.add_argument("items", nargs="*", help="clip ids (default: all finished clips)")

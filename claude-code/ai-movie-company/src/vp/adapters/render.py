@@ -60,6 +60,7 @@ BRAND_DEFAULTS: dict[str, Any] = {
 }
 
 RENDER_DEFAULTS: dict[str, Any] = {
+    "gl": "auto",
     "cards": {
         "reel": {"intro_ms": 1500, "outro_ms": 1500},
         "long": {"intro_ms": 3000, "outro_ms": 4000},

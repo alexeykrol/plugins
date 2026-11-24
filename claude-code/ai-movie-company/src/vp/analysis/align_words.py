@@ -34,7 +34,7 @@ own sound are the only thing known locally (found by ffmpeg, vp.adapters.media.p
 What the pauses can and cannot do was measured on the 13 usable reels of the incident job
 (Whisper word times of the clips as the truth, 247 phrases): see `VOICED_TIGHT_MS`.
 
-A word is `(text, start_ms, end_ms)`, integer milliseconds. Imports only vp.core.
+A word is `(text, start_ms, end_ms)`, integer milliseconds.
 """
 from __future__ import annotations
 
@@ -42,6 +42,7 @@ import difflib
 import math
 import os
 import re
+from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -51,12 +52,14 @@ from ..core.srt import Cue
 
 Timed = tuple[str, int, int]
 
-SCHEMA = 1
+SCHEMA = 2
 WORDS_NAME = "clip.words.json"
 ESTIMATES = ("estimated_voiced", "estimated")     # `word_times` of a clip without real word times
+LEGACY_UNVERIFIED = "legacy_unverified"
 MAX_WORDS = 3               # words on one caption page
 MAX_CHARS = 18              # characters on one caption page (a longer single word stays alone)
-MATCH_SLACK_MS = 1000       # a recogniser word further than this from its cue is another word
+MATCH_SLACK_MS = 1000       # existing Caption sync alignment tolerance (0.8.8), also used
+                            # to prefer nearby occurrences in sync (review 2026-11-24, finding 5)
 MIN_MATCH_SHARE = 0.5       # below this share of matched words the recogniser's words are not
                             # those of this text: not used at all
 GUESS_MS_PER_CHAR = 80      # speaking pace assumed for a word the recogniser did not give
@@ -68,8 +71,7 @@ PAGE_MIN_MS = 150
 # QA gate (BACKLOG): the word on screen against the word in the sound
 SYNC_P90_MS = 300
 SYNC_MAX_MS = 800
-SYNC_MIN_WORDS = 3          # fewer compared words than this is no measurement
-SYNC_MIN_SHARE = 0.5        # so is a smaller share of the caption words
+
 
 # ---- no word times: what the pauses of the sound allow ------------------------------------------
 # How these were chosen (2026-11-23): the 13 usable wave-2 reels of the incident job (44–102 s
@@ -123,34 +125,56 @@ def norm(word: str) -> str:
     return re.sub(r"[\W_]+", "", str(word).lower().replace("ё", "е"), flags=re.UNICODE)
 
 
-def timed_words(words: Iterable[Any]) -> list[Timed]:
-    """Recogniser words in any of the engine's shapes -> [(text, start_ms, end_ms)], sorted.
-    Accepts (text, start, end) tuples, {"w"|"text"|"word", "start", "end"} dicts (ms) and objects
-    with `.text/.start_ms/.end_ms`. A token holding several words shares its time among them."""
-    out: list[Timed] = []
+def _timed_with_provenance(words: Iterable[Any], scale: int = 1, default: str = "measured"
+                           ) -> list[tuple[str, int, int, str]]:
+    out = []
     for w in words or ():
         if isinstance(w, dict):
             text, s, e = w.get("w", w.get("text", w.get("word", ""))), w.get("start"), w.get("end")
+            provenance = w.get("provenance", default)
         elif isinstance(w, (tuple, list)):
-            text, s, e = w[0], w[1], w[2]
+            text, s, e = w[:3]
+            provenance = w[3] if len(w) > 3 else default
         else:
             text, s, e = getattr(w, "text", ""), getattr(w, "start_ms", None), getattr(w, "end_ms", None)
-        if not isinstance(s, (int, float)) or not isinstance(e, (int, float)) or isinstance(s, bool):
+            provenance = getattr(w, "provenance", default)
+        if not all(type(t) in (float, int) and math.isfinite(t) for t in (s, e)):
             continue
-        s, e = int(round(s)), int(round(e))
+        if provenance not in ("measured", LEGACY_UNVERIFIED) or not 0 <= s <= e:
+            provenance = "inferred"
+        s, e = round(s * scale), round(e * scale)
         for tok in str(text or "").split():
-            out.append((tok, s, max(s, e)))
+            out.append((tok, s, max(s, e), provenance))
     out.sort(key=lambda x: (x[1], x[2]))
     return out
 
 
-def remap(words: Iterable[Any], start_ms: int, end_ms: int) -> list[Timed]:
+def timed_words(words: Iterable[Any]) -> list[Timed]:
+    """Engine word shapes with measured times, sorted and in milliseconds."""
+    return [(w, s, e) for w, s, e, p in _timed_with_provenance(words) if p == "measured"]
+
+
+def source_words(data: Any, *, legacy: bool = False) -> list[tuple[str, int, int, str]]:
+    """Read Whisper-style source words without losing the provenance of their seconds."""
+    if not isinstance(data, dict):
+        raise ValueError("word times must be an object")
+    source = data.get("source") or {}
+    # Earlier Scribe conversions filled missing times without marking them.
+    default = ("inferred" if not legacy and isinstance(source, dict) and source.get("service") == "elevenlabs"
+               else "measured")
+    groups = [data] + [seg for seg in data.get("segments") or () if isinstance(seg, dict)]
+    raw = (w for group in groups for w in group.get("words") or ())
+    return _timed_with_provenance(raw, scale=1000, default=default)
+
+
+def remap(words: Iterable[Any], start_ms: int, end_ms: int, *, allow_legacy: bool = False) -> list[Timed]:
     """Words of the source recording that sound inside [start_ms, end_ms), on the clip's time base
-    (0 = the clip start), clamped to the clip."""
+    (0 = the clip start), clamped to the clip. Legacy times may be used for display."""
     out: list[Timed] = []
     span = max(0, end_ms - start_ms)
-    for text, s, e in timed_words(words):
-        if e <= start_ms or s >= end_ms:
+    origins = ("measured", LEGACY_UNVERIFIED) if allow_legacy else ("measured",)
+    for text, s, e, origin in _timed_with_provenance(words):
+        if origin not in origins or e <= start_ms or s >= end_ms:
             continue
         out.append((text, max(0, s - start_ms), min(span, e - start_ms)))
     return out
@@ -165,6 +189,50 @@ def _keys(words: Sequence[str], tag: str) -> list[str]:
 def _blocks(a: Sequence[str], b: Sequence[str]) -> list[tuple[int, int, int]]:
     sm = difflib.SequenceMatcher(None, _keys(a, "a"), _keys(b, "b"), autojunk=False)
     return [(m.a, m.b, m.size) for m in sm.get_matching_blocks() if m.size]
+
+
+class _TimedMatcher(difflib.SequenceMatcher):
+    """Ordered spelling matches, with the cue's own neighbourhood and nearest occurrence first."""
+
+    def __init__(self, expected: Sequence[Timed], heard: Sequence[Timed], *, allow_drift: bool):
+        super().__init__(None, _keys([w[0] for w in expected], "a"),
+                         _keys([w[0] for w in heard], "b"), autojunk=False)
+        self.expected = expected
+        self.starts = [w[1] for w in heard]
+        self.allow_drift = allow_drift
+
+    def find_longest_match(self, alo=0, ahi=None, blo=0, bhi=None):
+        ahi = len(self.a) if ahi is None else ahi
+        bhi = len(self.b) if bhi is None else bhi
+        match = self._nearest_run(alo, ahi, blo, bhi, MATCH_SLACK_MS)
+        if self.allow_drift and match.size < 2:
+            # Keep measuring badly shifted captions, even when no nearby phrase matches.
+            return self._nearest_run(alo, ahi, blo, bhi, None)
+        return match
+
+    def _nearest_run(self, alo: int, ahi: int, blo: int, bhi: int, slack: int | None):
+        best = difflib.Match(alo, blo, 0)
+        best_cost = (0, 0)
+        previous: dict[int, tuple[int, tuple[int, int]]] = {}
+        for i in range(alo, ahi):
+            _, start, end = self.expected[i]
+            lo, hi = blo, bhi
+            if slack is not None:
+                lo = bisect_left(self.starts, start - slack, blo, bhi)
+                hi = bisect_right(self.starts, end + slack, lo, bhi)
+            indices = self.b2j.get(self.a[i], ())
+            current = {}
+            for j in indices[bisect_left(indices, lo):bisect_left(indices, hi)]:
+                size, (outside, distance) = previous.get(j - 1, (0, (0, 0)))
+                size += 1
+                voice = self.starts[j]
+                # Prefer the least drift from the interval, then the closest start when inside it.
+                cost = (outside + max(start - voice, voice - end, 0), distance + abs(start - voice))
+                current[j] = (size, cost)
+                if size > best.size or (size == best.size and cost < best_cost):
+                    best, best_cost = difflib.Match(i - size + 1, j - size + 1, size), cost
+            previous = current
+        return best
 
 
 def _share(words: Sequence[str], lo: int, hi: int) -> list[tuple[int, int]]:
@@ -215,6 +283,7 @@ class Alignment:
     cues: list[list[Timed]]
     matched: int            # words whose time is the recogniser's
     total: int
+    provenance: list[list[str]]
 
     @property
     def share(self) -> float:
@@ -239,28 +308,27 @@ def align(cues: Sequence[Cue], words: Iterable[Any], clip_ms: int | None = None)
     heard = timed_words(words)
     toks: list[tuple[int, str]] = [(ci, w) for ci, c in enumerate(cues) for w in (c.text or "").split()]
     times: list[tuple[int, int] | None] = [None] * len(toks)
-    for ia, ib, size in _blocks([w for _, w in toks], [w for w, _, _ in heard]):
+    expected = [(w, cues[ci].start_ms, cues[ci].end_ms) for ci, w in toks]
+    for ia, ib, size in _TimedMatcher(expected, heard, allow_drift=False).get_matching_blocks():
         for k in range(size):
-            cue = cues[toks[ia + k][0]]
             _, s, e = heard[ib + k]
-            if cue.start_ms - MATCH_SLACK_MS <= s <= cue.end_ms + MATCH_SLACK_MS:
-                times[ia + k] = (s, e)
+            times[ia + k] = (s, e)
     matched = sum(1 for t in times if t)
 
-    flat: list[list[Any]] = []          # [cue index, word, start, end]
+    flat: list[list[Any]] = []          # [cue index, word, start, end, provenance]
     pos = 0
     for ci, cue in enumerate(cues):
         n = len((cue.text or "").split())
         idx = list(range(pos, pos + n))
         pos += n
         if not any(times[i] for i in idx):
-            flat += [[ci, w, s, e] for w, s, e in estimate(cue)]
+            flat += [[ci, w, s, e, "inferred"] for w, s, e in estimate(cue)]
             continue
         k = 0
         while k < n:
             i = idx[k]
             if times[i]:
-                flat.append([ci, toks[i][1], *times[i]])
+                flat.append([ci, toks[i][1], *times[i], "measured"])
                 k += 1
                 continue
             run = k                                     # a run of unmatched words [run, k)
@@ -271,14 +339,17 @@ def align(cues: Sequence[Cue], words: Iterable[Any], clip_ms: int | None = None)
             hi = max(cue.end_ms, lo) if hi is None else max(hi, lo)
             gap_words = [toks[idx[j]][1] for j in range(run, k)]
             for w, (s, e) in zip(gap_words, _between(gap_words, lo, hi, lean_left=bool(run))):
-                flat.append([ci, w, s, e])
+                flat.append([ci, w, s, e, "inferred"])
 
     # monotonic starts, no overlaps, inside the clip
     last = 0
     for f in flat:
-        f[2] = max(0, f[2], last)
+        start = f[2]
+        f[2] = max(0, start, last)
         if clip_ms is not None:
             f[2] = min(f[2], clip_ms)
+        if f[2] != start:
+            f[4] = "inferred"
         last = f[2]
     for i, f in enumerate(flat):
         end = max(f[3], f[2])
@@ -288,9 +359,11 @@ def align(cues: Sequence[Cue], words: Iterable[Any], clip_ms: int | None = None)
             end = min(end, clip_ms)
         f[3] = max(end, f[2])
     out: list[list[Timed]] = [[] for _ in cues]
-    for ci, w, s, e in flat:
+    provenance: list[list[str]] = [[] for _ in cues]
+    for ci, w, s, e, origin in flat:
         out[ci].append((w, int(s), int(e)))
-    return Alignment(out, matched, len(toks))
+        provenance[ci].append(origin)
+    return Alignment(out, matched, len(toks), provenance)
 
 
 # ---- no word times: the pauses of the sound -----------------------------------------------------
@@ -523,18 +596,25 @@ def sync_report(shown: Sequence[Timed], heard: Iterable[Any], *, mode: str = "wo
     if mode == "mixed" and (phrase is None or len(phrase) != len(shown)):
         raise ValueError("mixed mode needs one phrase flag per shown word")
     whole = [mode == "phrase"] * len(shown) if mode != "mixed" else [bool(x) for x in phrase or ()]
-    heard_t = timed_words(heard)
+    heard_t = _timed_with_provenance(heard)
     errors: list[tuple[int, int]] = []          # (error, index in shown)
-    for ia, ib, size in _blocks([w for w, _, _ in shown], [w for w, _, _ in heard_t]):
+    expected = [(w, s + offset_ms, (e if static else s) + offset_ms)
+                for (w, s, e), static in zip(shown, whole)]
+    for ia, ib, size in _TimedMatcher(expected, heard_t, allow_drift=True).get_matching_blocks():
         if size < 2:
             continue
         for k in range(size):
             _, s, e = shown[ia + k]
-            voice = heard_t[ib + k][1] - offset_ms
+            _, start, _, provenance = heard_t[ib + k]
+            if provenance != "measured":
+                continue
+            voice = start - offset_ms
             err = max(s - voice, voice - e, 0) if whole[ia + k] else abs(s - voice)
             errors.append((int(err), ia + k))
     vals = sorted(v for v, _ in errors)
-    rep: dict[str, Any] = {"mode": mode, "words": len(shown), "compared": len(vals),
+    total = sum(bool(norm(w)) for w, _, _ in shown)
+    rep: dict[str, Any] = {"mode": mode, "words": total, "compared": len(vals),
+                           "coverage": len(vals) / total if total else 0.0,
                            "median_ms": None, "p90_ms": None, "max_ms": None, "worst": None}
     if vals:
         worst = max(errors)
@@ -548,15 +628,17 @@ def _s(ms: int) -> str:
 
 
 def sync_verdict(report: dict[str, Any], *, p90_ms: int = SYNC_P90_MS, max_ms: int = SYNC_MAX_MS,
-                 min_words: int = SYNC_MIN_WORDS, min_share: float = SYNC_MIN_SHARE) -> dict[str, Any]:
+                 min_words: int = 3, min_share: float = 0.5) -> dict[str, Any]:
     """The gate over a sync_report: {status: passed|failed|not_run, reason, ...report, limits}.
     Too few comparable words is `not_run` (no measurement), never `passed`."""
-    out = {**report, "limits": {"p90_ms": int(p90_ms), "max_ms": int(max_ms)}}
     n, total = int(report.get("compared") or 0), int(report.get("words") or 0)
-    if n < min_words or (total and n / total < min_share):
+    coverage = n / total if total else 0.0
+    out = {**report, "coverage": coverage, "limits": {"p90_ms": int(p90_ms), "max_ms": int(max_ms),
+                                                     "min_words": min_words, "min_coverage": min_share}}
+    if not n or n < min_words or coverage < min_share:
         return {**out, "status": "not_run",
-                "reason": f"the recognised speech matched too few caption words to measure "
-                          f"({n} of {total})"}
+                "reason": f"too few caption words matched measured speech times "
+                          f"({n} of {total}; at least {min_words} and {min_share:.0%} required)"}
     if report["p90_ms"] > p90_ms or report["max_ms"] > max_ms:
         return {**out, "status": "failed",
                 "reason": f"the captions are out of time with the voice: a word on screen is up to "
@@ -611,6 +693,8 @@ def voiced_verdict(report: dict[str, Any], *, lead_max_ms: int = LEAD_MAX_MS,
     out = {**report, "limits": {"lead_max_ms": int(lead_max_ms), "on_silence_max": float(on_silence_max)}}
     if not report.get("captions"):
         return {**out, "status": "not_run", "reason": "there are no captions to compare with the sound"}
+    if report.get("on_silence_share") is None:
+        return {**out, "status": "not_run", "reason": "no caption was visible long enough to measure"}
     if not report.get("pauses"):
         return {**out, "status": "not_run",
                 "reason": "no pauses were found in the sound, so there was nothing to compare the "
@@ -644,22 +728,103 @@ def _srt_hash(clip_srt: str | os.PathLike) -> str | None:
         return None
 
 
+def _clip_job(clip_srt: str | os.PathLike):
+    from ..core.paths import Job
+    path = Path(clip_srt).absolute()
+    if path.parent.parent.name == "clips":
+        return Job(path.parent.parent.parent), path.parent.name
+    if path.parent.name == "full":
+        return Job(path.parent.parent), "full"
+    return None, None
+
+
+def _write_sidecar(clip_srt: str | os.PathLike, doc: dict[str, Any], *, sidecar: Path | None = None,
+                   timing_inputs: str | None = None) -> Path:
+    from .. import transcribe
+    from ..core.errors import VPError
+    path = sidecar if sidecar is not None else words_path(clip_srt)
+    if path.resolve() == Path(clip_srt).resolve():
+        raise VPError("data", "the clip subtitle path resolves to its word-times output")
+    job, _ = _clip_job(clip_srt)
+    if job is not None:
+        transcribe.guard_inputs(job, path)
+    if timing_inputs is not None:
+        doc = {**doc, "timing_inputs": timing_inputs}
+    return write_json(path, doc)
+
+
+def _sidecar_timing_status(clip_srt: str | os.PathLike, data: dict[str, Any]) -> tuple[bool, str | None]:
+    from .. import transcribe
+    from ..core.manifest import read_manifest
+    from ..core.errors import VPError
+    from yaml import YAMLError
+    job, item = _clip_job(clip_srt)
+    if job is None:
+        return data.get("word_times") == LEGACY_UNVERIFIED, None
+    source = data.get("recording_sha256")
+    cut = data.get("cut_sha256")
+    try:
+        if source and transcribe.media_digest(job.source_video) != source:
+            return False, transcribe.LOCAL_RECORDING_CHANGED
+        if cut and transcribe.media_digest(job.cut_mp4(item)) != cut:
+            return False, "the cut changed; its saved word times were not used"
+        if data.get("word_times") == LEGACY_UNVERIFIED:
+            legacy_path = job.caption_words if data.get("source") == "caption_words" else job.source_words
+            timing = transcribe._document(legacy_path)
+            kind = "captions" if legacy_path == job.caption_words else "recording"
+            return True, transcribe.timing_status(job, job.source_video, timing, kind) if timing else None
+        if source or data.get("schema") != 1 or data.get("word_times", "aligned") != "aligned":
+            return False, None
+        # 0.8.8 sidecars recorded only the subtitle hash. Check the S4 identity and
+        # refuse a sidecar older than the cut that is now in this clip directory.
+        timing_path = job.caption_words if data.get("source") == "caption_words" else job.source_words
+        timing = transcribe._document(timing_path)
+        kind = "captions" if timing_path == job.caption_words else "recording"
+        provenance, reason = (transcribe._timing_validation(job, job.source_video, timing, kind)
+                              if timing else (None, None))
+        if reason:
+            return False, reason
+        manifest = read_manifest(job, "S4", item) or {}
+        expected_source = (manifest.get("inputs") or {}).get(job.rel(job.source_video))
+        expected_cut = (manifest.get("outputs") or {}).get(job.rel(job.cut_mp4(item)))
+        if expected_source and expected_cut:
+            if (transcribe.media_digest(job.source_video) != expected_source
+                    or transcribe.media_digest(job.cut_mp4(item)) != expected_cut
+                    or words_path(clip_srt).stat().st_mtime_ns < job.cut_mp4(item).stat().st_mtime_ns):
+                return False, transcribe.LOCAL_RECORDING_CHANGED
+            return provenance == LEGACY_UNVERIFIED, None
+        if timing and (timing.get("source") or {}).get("service") == transcribe.SERVICE:
+            return provenance == LEGACY_UNVERIFIED, None
+    except (OSError, ValueError, TypeError, AttributeError, VPError, YAMLError):
+        return False, transcribe.LOCAL_UNVERIFIED
+    return False, transcribe.LOCAL_UNVERIFIED
+
+
 def write_clip_words(clip_srt: str | os.PathLike, alignment: Alignment | None, source: str | None,
-                     reason: str | None = None) -> Path:
+                     reason: str | None = None, *, recording_sha256: str | None = None,
+                     cut_sha256: str | None = None, legacy_unverified: bool = False,
+                     sidecar: Path | None = None, timing_inputs: str | None = None) -> Path:
     """Write the word times of a clip next to its clip.srt, bound to that file's bytes.
     `alignment=None` records that there are none, with the reason (every phrase is then shown
     whole, and the file says why)."""
     doc: dict[str, Any] = {"schema": SCHEMA, "clip_srt_sha256": _srt_hash(clip_srt), "source": source}
+    if recording_sha256 and not legacy_unverified:
+        doc.update(recording_sha256=recording_sha256, cut_sha256=cut_sha256)
     if alignment is None:
         doc.update(word_times="estimated", cues=None, reason=reason or "no word times for this clip")
     else:
-        doc.update(word_times="aligned", matched=alignment.matched, total=alignment.total,
-                   cues=[[[w, s, e] for w, s, e in cue] for cue in alignment.cues])
-    return write_json(words_path(clip_srt), doc)
+        provenance = alignment.provenance
+        if legacy_unverified:
+            provenance = [[LEGACY_UNVERIFIED if origin == "measured" else origin for origin in cue]
+                          for cue in provenance]
+        doc.update(word_times=LEGACY_UNVERIFIED if legacy_unverified else "aligned",
+                   matched=alignment.matched, total=alignment.total, cues=alignment.cues, provenance=provenance)
+    return _write_sidecar(clip_srt, doc, sidecar=sidecar, timing_inputs=timing_inputs)
 
 
 def write_clip_estimate(clip_srt: str | os.PathLike, estimate: Estimate, word_times: str,
-                        reason: str, sound: dict[str, Any] | None = None) -> Path:
+                        reason: str, sound: dict[str, Any] | None = None, *,
+                        sidecar: Path | None = None, timing_inputs: str | None = None) -> Path:
     """Write what stands in for word times when the recording has none: `word_times` =
     "estimated_voiced" (placed by the pauses of the clip's sound, `estimate_voiced`) or
     "estimated" (the pauses are not known either, `whole_phrases`), which cues are shown whole,
@@ -669,20 +834,23 @@ def write_clip_estimate(clip_srt: str | os.PathLike, estimate: Estimate, word_ti
     doc: dict[str, Any] = {"schema": SCHEMA, "clip_srt_sha256": _srt_hash(clip_srt), "source": None,
                            "word_times": word_times, "reason": reason, "whole": list(estimate.whole),
                            "why": dict(estimate.why), "sound": sound,
-                           "cues": [[[w, s, e] for w, s, e in cue] for cue in estimate.cues]}
-    return write_json(words_path(clip_srt), doc)
+                           "cues": estimate.cues,
+                           "provenance": [["inferred"] * len(cue) for cue in estimate.cues]}
+    return _write_sidecar(clip_srt, doc, sidecar=sidecar, timing_inputs=timing_inputs)
 
 
-def read_clip_words(clip_srt: str | os.PathLike, cues: Sequence[Cue]) -> tuple[list[list[Timed]] | None, dict[str, Any]]:
+def read_clip_words(clip_srt: str | os.PathLike, cues: Sequence[Cue], *, sidecar: Path | None = None
+                    ) -> tuple[list[list[Timed]] | None, dict[str, Any]]:
     """(word times per cue | None, info) for a clip.srt.
 
-    info["word_times"]: "aligned" — the recording's word times; "estimated_voiced" — placed by
+    info["word_times"]: "aligned" — the recording's word times; "legacy_unverified" — matched by
+    recording duration only; "estimated_voiced" — placed by
     the pauses of the sound, with info["whole"] = the cues to show as whole phrases;
     "estimated" — nothing is known inside a phrase: every cue is shown whole. None — with the
     reason in info["reason"] — when there is no file, it records that the clip has no word
     times, it belongs to another text of clip.srt, or it does not hold exactly the words of
     `cues`: the caller then shows every phrase whole, and says so."""
-    path = words_path(clip_srt)
+    path = sidecar if sidecar is not None else words_path(clip_srt)
     try:
         data = read_json(path, default=None) if path.is_file() else None
     except ValueError:
@@ -690,10 +858,13 @@ def read_clip_words(clip_srt: str | os.PathLike, cues: Sequence[Cue]) -> tuple[l
     if data is None:
         return None, {"word_times": "estimated", "reason": "no word times for this clip"}
     bad = {"word_times": "estimated"}
-    if not isinstance(data, dict) or data.get("schema") != SCHEMA:
+    if not isinstance(data, dict) or data.get("schema") not in (1, SCHEMA):
         return None, {**bad, "reason": f"{WORDS_NAME} is not readable"}
     if data.get("clip_srt_sha256") != _srt_hash(clip_srt):
         return None, {**bad, "reason": f"{WORDS_NAME} was made for another text of the subtitles"}
+    legacy, timing_problem = _sidecar_timing_status(clip_srt, data)
+    if timing_problem:
+        return None, {**bad, "reason": timing_problem}
     if data.get("cues") is None:
         return None, {**bad, "reason": str(data.get("reason") or "no word times for this clip")}
     if not isinstance(data["cues"], list):
@@ -707,19 +878,33 @@ def read_clip_words(clip_srt: str | os.PathLike, cues: Sequence[Cue]) -> tuple[l
             if [w for w, _, _ in timed] != (cue.text or "").split():
                 raise ValueError("words")
             out.append(timed)
-        kind = str(data.get("word_times") or "aligned")
+        kind = LEGACY_UNVERIFIED if legacy else str(data.get("word_times") or "aligned")
         whole = sorted({int(i) for i in data.get("whole") or ()})
-        if kind not in ("aligned", *ESTIMATES) or any(not 0 <= i < len(cues) for i in whole):
+        if kind not in ("aligned", LEGACY_UNVERIFIED, *ESTIMATES) or any(not 0 <= i < len(cues) for i in whole):
             raise ValueError("kind")
     except (TypeError, ValueError):
         return None, {**bad, "reason": f"{WORDS_NAME} does not hold the words of the subtitles"}
-    if kind == "aligned":
-        return out, {"word_times": "aligned", "source": data.get("source"),
-                     "matched": data.get("matched"), "total": data.get("total")}
+    provenance = data.get("provenance")
+    if data.get("schema") == 1:
+        origin = "measured" if kind == "aligned" else LEGACY_UNVERIFIED if legacy else "inferred"
+        provenance = [[origin] * len(cue) for cue in out]
+    if (not isinstance(provenance, list) or len(provenance) != len(out)
+            or any(not isinstance(row, list) or len(row) != len(cue)
+                   or any(p not in ("measured", "inferred", LEGACY_UNVERIFIED)
+                          or (legacy and p == "measured") for p in row)
+                   for row, cue in zip(provenance, out))):
+        return None, {**bad, "reason": f"{WORDS_NAME} is missing word-time provenance"}
+    estimated = [sum(p == "inferred" and bool(norm(w)) for (w, _, _), p in zip(cue, row))
+                 for cue, row in zip(out, provenance)]
+    counts = {"estimated_cues": sum(n > 0 for n in estimated), "estimated_words": sum(estimated)}
+    if kind in ("aligned", LEGACY_UNVERIFIED):
+        timing = {"timing_provenance": LEGACY_UNVERIFIED} if legacy else {}
+        return out, {"word_times": kind, "source": data.get("source"), **counts, **timing,
+                     "matched": data.get("matched"), "total": data.get("total"), "cues": len(cues)}
     if kind == "estimated":                       # written without pauses: every phrase whole
         whole = list(range(len(cues)))
     return out, {"word_times": kind, "reason": str(data.get("reason") or "no word times for this clip"),
-                 "whole": whole}
+                 "whole": whole, **counts}
 
 
 def caption_info(info: dict[str, Any], n_cues: int) -> dict[str, Any]:
@@ -733,12 +918,15 @@ def caption_info(info: dict[str, Any], n_cues: int) -> dict[str, Any]:
     return out
 
 
-def clip_words_current(clip_srt: str | os.PathLike) -> bool:
-    """True when `clip.words.json` exists and was made for the present text of this clip.srt."""
-    path = words_path(clip_srt)
+def clip_words_current(clip_srt: str | os.PathLike, *, sidecar: Path | None = None,
+                       timing_inputs: str | None = None) -> bool:
+    """Check the subtitle bytes, timing provenance and any recorded design cache identity."""
+    path = sidecar if sidecar is not None else words_path(clip_srt)
     try:
         data = read_json(path, default=None) if path.is_file() else None
     except ValueError:
         return False
-    return isinstance(data, dict) and data.get("schema") == SCHEMA \
-        and data.get("clip_srt_sha256") == _srt_hash(clip_srt)
+    return (isinstance(data, dict) and data.get("schema") in (1, SCHEMA)
+            and data.get("clip_srt_sha256") == _srt_hash(clip_srt)
+            and (timing_inputs is None or data.get("timing_inputs") == timing_inputs)
+            and _sidecar_timing_status(clip_srt, data)[1] is None)

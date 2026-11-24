@@ -2,6 +2,7 @@ import {Composition, type CalculateMetadataFunction} from 'remotion';
 import {Bumper} from './Bumper';
 import {Cover} from './Cover';
 import {Main} from './Main';
+import {BuildCompositions} from './build/Compositions';
 import {DEFAULT_BRAND, DEFAULT_CAPTION_STYLE} from './theme';
 import type {BumperProps, CoverProps, Frame, MainProps} from './types';
 
@@ -76,6 +77,7 @@ export const RemotionRoot: React.FC = () => {
 				fps={25}
 				durationInFrames={1}
 			/>
+			<BuildCompositions />
 		</>
 	);
 };

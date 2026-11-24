@@ -78,6 +78,7 @@ DEFAULTS: dict[str, Any] = {
         "card_text_color": "#FFFFFF",
     },
     "render": {
+        "gl": "auto",
         "cards": {
             "reel": {"intro_ms": 1500, "outro_ms": 1500},
             "long": {"intro_ms": 3000, "outro_ms": 4000},
@@ -111,6 +112,7 @@ DEFAULTS: dict[str, Any] = {
     # `lead_max_ms` / `on_silence_max` are the limits of the local check `caption_voiced`
     # (captions against the pauses of the sound; nothing leaves the computer for it).
     "caption_qa": {"transcribe": "auto", "p90_ms": 300, "max_ms": 800,
+                   "min_words": 3, "min_share": 0.5,
                    "lead_max_ms": 1500, "on_silence_max": 0.5},
     # S5v visual check by the model (vp.steps.s5v_visual.DEFAULTS)
     "s5v": {"frames": 6},

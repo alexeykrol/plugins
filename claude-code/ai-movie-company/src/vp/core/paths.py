@@ -8,7 +8,8 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .io import read_yaml
+from .errors import VPError
+from .io import read_yaml, sha256_obj
 
 FULL = "full"  # item id of the full video
 
@@ -17,6 +18,37 @@ def vp_home() -> Path:
     """Pipeline home: env VP_HOME, default ~/.ai_video_pipeline. Not created here."""
     env = os.environ.get("VP_HOME")
     return Path(env).expanduser() if env else Path.home() / ".ai_video_pipeline"
+
+
+class BuildPaths:
+    """Write locations for local builders, isolated from all recording inputs."""
+
+    def __init__(self, job: Job, watched_roots: list[str]):
+        self.home = vp_home().resolve()
+        source = job.source_video
+        self.protected = (job.root, source.parent.resolve(), source.resolve().parent,
+                          *(Path(root).expanduser().resolve() for root in watched_roots))
+        self.root = self.home / "work" / sha256_obj(str(job.root))
+        self.require_unwatched(self.root)
+        if self.root.is_relative_to(Path(__file__).resolve().parents[3]):
+            raise VPError("data", f"local build work root must be outside the repository: {self.root}")
+        self.destination(self.root)
+
+    def require_unwatched(self, path: Path) -> Path:
+        try:
+            resolved = path.resolve()
+        except (OSError, RuntimeError) as exc:
+            raise VPError("data", f"cannot resolve local build destination: {path}") from exc
+        for root in self.protected:
+            if resolved.is_relative_to(root):
+                raise VPError("data", f"local build destination is inside a recording folder or watched root: {resolved} (under {root})")
+        return resolved
+
+    def destination(self, path: Path) -> Path:
+        resolved = self.require_unwatched(path)
+        if resolved != path or not resolved.is_relative_to(self.root):
+            raise VPError("data", f"local build destination must stay in the work root without symlink aliases: {path}")
+        return resolved
 
 
 class Job:
@@ -72,6 +104,10 @@ class Job:
     def fragments_errors(self) -> Path: return self.root / "fragments.errors.yaml"
     @property
     def fragments_yaml(self) -> Path: return self.root / "fragments.yaml"
+    @property
+    def reels_yaml(self) -> Path: return self.root / "reels.yaml"
+    @property
+    def long_plan_yaml(self) -> Path: return self.root / "long-plan.yaml"
     @property
     def uploads_yaml(self) -> Path: return self.root / "uploads.yaml"
     @property

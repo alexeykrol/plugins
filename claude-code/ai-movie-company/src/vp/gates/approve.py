@@ -180,6 +180,9 @@ def set_decision(job: Job, item: str, decision: str, publish: str | None,
         append_approval(job, [entry])
         print(f"OK {item}: {decision}" + (f" publish {entry['publish']}" if "publish" in entry else "")
               + f" (package {current[:12]})")
+        from ..position import approval_complete, run_command
+        if approval_complete(job):
+            print(f"next: Run the job again ({run_command(job)}).")
         return RC_OK
     return guarded(lambda: locked(job, body))
 
