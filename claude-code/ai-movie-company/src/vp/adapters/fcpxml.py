@@ -280,7 +280,10 @@ def main(argv: list[str]) -> int:
     e.add_argument("--out", help="folder for the exports (default: <job>/exports/edit)")
     e.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
-    res = export_job(a.job, a.items or None, Path(a.out).expanduser() if a.out else None, a.baked_cards)
+    from .. import runsignal
+    with runsignal.step(a.job, "fcpxml_export"):       # run signal: route, step, outcome only
+        res = export_job(a.job, a.items or None, Path(a.out).expanduser() if a.out else None,
+                         a.baked_cards)
     if a.json:
         print(json.dumps(res, ensure_ascii=False, indent=1))
         return 0

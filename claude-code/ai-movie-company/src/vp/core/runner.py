@@ -27,7 +27,7 @@ from . import progress
 from .errors import (EXIT_CONSENT_REQUIRED, ConsentRequired, Inconclusive, JudgmentPending, Skip,
                      VPError, WaitingHuman, WaitingQuota)
 from .graph import Graph, Instance, StepSpec
-from .io import now_iso, parse_iso
+from .io import now_iso, parse_iso, read_yaml
 from .lock import holder, job_lock
 from .lock import unlock as _unlock
 from .log import scrub
@@ -48,6 +48,25 @@ def prepare_config(job: Job, config: dict[str, Any] | None) -> dict[str, Any]:
     if "profile" not in cfg:
         cfg = resolve_job_config(cfg, job.request(), job.design())
     return cfg
+
+
+def _recording_route(job: Job, cfg: dict[str, Any],
+                     whole_recording: str | None = None) -> dict[str, Any]:
+    fragments = read_yaml(job.fragments_yaml, default=None)
+    whole = fragments.get("whole_recording") if isinstance(fragments, dict) else None
+    saved = whole.get("kind") if isinstance(whole, dict) else None
+    if not job.fragments_yaml.exists():
+        saved = ((read_manifest(job, "S3a") or {}).get("config") or {}).get("whole_recording")
+    if saved in ("full", "reel"):
+        if whole_recording and whole_recording != saved:
+            raise VPError("data", f"the single clip is already set to {saved}; use a new job folder "
+                                  f"for --whole-recording {whole_recording}")
+        return {**cfg, "whole_recording": saved}
+    if whole_recording:
+        if any(p.exists() for p in (job.fragments_yaml, job.fragments_proposed, job.fragments_review)):
+            raise VPError("data", "fragment selection has already started; use a new job folder "
+                                  "for --whole-recording")
+    return {**cfg, "whole_recording": whole_recording}
 
 
 def make_ctx(job: Job, config: dict[str, Any], services: dict[str, Any] | None = None,
@@ -193,9 +212,11 @@ class Runner:
     def _run_recorded(self, inst: Instance, spec: StepSpec, ctx: Ctx, fr: Any,
                       items: list[str] | None) -> str:
         """Telemetry of one step instance: its start, then how it ended and how long it took."""
-        from .. import telemetry
-        # allowlisted fields only (vp.telemetry.sanitize_event): no job, folder, item or free text
-        telemetry.record("step", event="start", step=inst.step)
+        from .. import runsignal, telemetry
+        # allowlisted fields only (vp.telemetry.sanitize_event): no job, folder, item or free text;
+        # `job` = the route, the scenario letter and the job's random run number (vp.runsignal)
+        job = runsignal.fields(self.job.root)
+        telemetry.record("step", event="start", step=inst.step, **job)
         t0 = time.monotonic()
         outcome = "crashed"
         try:
@@ -209,7 +230,8 @@ class Runner:
                              duration_s=round(time.monotonic() - t0, 3),
                              error_kind=meta.get("kind") if last.get("state") in
                              ("failed", "abandoned") else None,
-                             gate=meta.get("gate"))
+                             gate=meta.get("gate"), **job)
+            runsignal.after_recording_step(self.job, inst.step, outcome)
 
     def _run_tracked(self, inst: Instance, spec: StepSpec, ctx: Ctx, fr: Any,
                      items: list[str] | None) -> str:
@@ -353,15 +375,19 @@ def _load_default_steps() -> list[StepSpec]:
 
 def run(job: Job, *, steps: Iterable[StepSpec] | None = None, config: dict[str, Any] | None = None,
         services: dict[str, Any] | None = None, factories: dict[str, Callable] | None = None,
-        out: Out = print, sleep: Callable[[float], None] | None = None) -> int:
-    """`python -m vp run <job>`. Returns the exit code (0 done/gate/locked, 2 failed, 3 internal,
+        out: Out = print, sleep: Callable[[float], None] | None = None,
+        whole_recording: str | None = None) -> int:
+    """`python -m vp run <job> [--whole-recording [full|reel]]`.
+
+    Returns the exit code (0 done/gate/locked, 2 failed, 3 internal,
     5 consent-required)."""
     with job_lock(job) as got:
         if not got:
             out("LOCKED")
             return EXIT_OK
+        out(f"job folder: {job.root}")
         try:
-            cfg = prepare_config(job, config)
+            cfg = _recording_route(job, prepare_config(job, config), whole_recording)
             specs = list(steps) if steps is not None else _load_default_steps()
         except VPError as e:
             out(f"ERROR {e}")
@@ -388,7 +414,7 @@ def run_stage(job: Job, stage: str, item: str | None = None, *, force: bool = Fa
             out(f"reset {stage}{'.' + item if item else ''}")
             return EXIT_OK
         try:
-            cfg = prepare_config(job, config)
+            cfg = _recording_route(job, prepare_config(job, config))
             specs = list(steps) if steps is not None else _load_default_steps()
         except VPError as e:
             out(f"ERROR {e}")
@@ -411,7 +437,7 @@ def status_report(job: Job) -> str:
     """Human-readable summary of status.yaml: current state + last state of each instance."""
     st = Status(job)
     data = st.load()
-    lines = [f"job: {job.job_id}",
+    lines = [f"job: {job.job_id}", f"job folder: {job.root}",
              f"current: {data.get('current_stage')} {data.get('current_state')}"]
     h = holder(job)
     if h is not None:

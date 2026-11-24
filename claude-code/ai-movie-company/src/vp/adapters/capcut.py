@@ -767,6 +767,7 @@ def write_draft(tl: ClipTimeline, name: str, root: Path | None = None,
     backup = register(root, build_root_entry(tpl, meta),
                       backup_dir or vp_home() / "capcut" / "backups")
     return {"item": tl.item, "folder": str(folder), "name": folder.name,
+            "assets_folder": str(folder / MEDIA_DIR),
             "cues": len(timeline_cues(tl, opener)), "duration_ms": total_ms(tl, opener),
             "canvas": f"{tl.canvas_w}x{tl.canvas_h}",
             "opener": None if not opener else {"duration_ms": opener.duration_ms,
@@ -860,6 +861,7 @@ def export_version(job_root: str | Path, version: str | None = None, *,
     timeline is written, then <job>/capcut/vN/export.json records what went in. On any failure the
     reserved folder is removed and the project is left as it was."""
     from . import capcut_project
+    from ..asks import VERSION_REMINDER
     job_root = Path(job_root).expanduser().resolve()
     if not (job_root / "request.yaml").is_file():
         raise VPError("data", f"no job in {job_root} (request.yaml missing)")
@@ -907,6 +909,7 @@ def export_version(job_root: str | Path, version: str | None = None, *,
                   "kind": "text" if is_text else "recording",
                   "project": {"folder": res["folder"], "name": res["name"],
                               "created": res["created"],
+                              "assets_folder": str(Path(res["folder"]) / MEDIA_DIR),
                               "main_timeline_id": res["main_timeline_id"]},
                   "timelines": res["timelines"],
                   # one row per timeline, same keys as before (older readers)
@@ -927,7 +930,7 @@ def export_version(job_root: str | Path, version: str | None = None, *,
         raise
     from ..projects import safe_touch
     safe_touch(job_root)
-    return {**record, "folder": str(vdir)}
+    return {**record, "folder": str(vdir), "asks_reminder": VERSION_REMINDER}
 
 
 def export_job(job_root: str | Path, items: list[str] | None = None, root: Path | None = None,
@@ -979,19 +982,25 @@ def version_main(argv: list[str]) -> int:
     a = ap.parse_args(argv)
     vols = {k: getattr(a, k) for k in ("voice_volume", "music_volume", "music_lift")
             if getattr(a, k) is not None}
-    res = export_version(a.job, a.version, video=a.video, music=a.music, label=a.label,
-                         root=Path(a.drafts).expanduser() if a.drafts else None, **vols)
+    from .. import runsignal
+    with runsignal.step(a.job, "capcut_export"):       # run signal: route, step, outcome only
+        res = export_version(a.job, a.version, video=a.video, music=a.music, label=a.label,
+                             root=Path(a.drafts).expanduser() if a.drafts else None, **vols)
     if a.json:
         print(json.dumps(res, ensure_ascii=False, indent=1))
         return 0
     pr = res["project"]
     print(f"{'CREATED PROJECT' if pr['created'] else 'PROJECT'}\t{pr['name']}\t{pr['folder']}")
+    if pr.get("assets_folder"):
+        print(f"assets: {pr['assets_folder']}")
     for t in res["timelines"]:
         tracks = "; ".join(f"{x['name'] or x['type']} ({x['segments']})" for x in t["tracks"])
         print(f"ADDED TIMELINE {res['version']}\t{t['name']}\ttracks: {tracks}")
     for w in res.get("warnings") or []:
         print(f"  WARNING: {w}")
     print(f"version record: {res['folder']}/export.json")
+    if res.get("asks_reminder"):
+        print(res["asks_reminder"])
     print("Open CapCut: the project's timeline list shows the new version next to the earlier ones.")
     return 0
 
@@ -1053,7 +1062,11 @@ def main(argv: list[str]) -> int:
             is_running: bool | None = capcut_running()
         except VPError:
             is_running = None
-        res = {"running": is_running, "installed_version": capcut_version(),
+        installed = capcut_version()
+        # `installed`: is CapCut on this Mac at all — asked at the START of the text route, so
+        # a missing CapCut is said before the work, not as an error at the last step
+        res = {"running": is_running, "installed": installed is not None,
+               "installed_version": installed,
                "drafts": str(drafts_root()),
                "drafts_exists": drafts_root().is_dir(),
                "format": load_template()["source"]}
@@ -1078,13 +1091,17 @@ def main(argv: list[str]) -> int:
         if res.get("orphans_error"):
             print(f"drafts check: {res['orphans_error']}")
         return 0
-    res = export_job(a.job, a.items or None, root=Path(a.drafts).expanduser() if a.drafts else None,
-                     opener=a.opener, dissolve_ms=int(round(max(0.0, a.dissolve) * 1000)))
+    from .. import runsignal
+    with runsignal.step(a.job, "capcut_export"):       # run signal: route, step, outcome only
+        res = export_job(a.job, a.items or None,
+                         root=Path(a.drafts).expanduser() if a.drafts else None,
+                         opener=a.opener, dissolve_ms=int(round(max(0.0, a.dissolve) * 1000)))
     if a.json:
         print(json.dumps(res, ensure_ascii=False, indent=1))
     else:
         for r in res:
             print(f"CREATED {r['name']}\t{r['folder']}\t{r['cues']} subtitles\t{r['canvas']}")
+            print(f"assets: {r['assets_folder']}")
             if r.get("warning"):
                 print(f"  WARNING: {r['warning']}")
             if r.get("opener"):

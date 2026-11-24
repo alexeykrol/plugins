@@ -530,6 +530,45 @@ def import_srt(job: Job, src: str | os.PathLike, force: bool = False) -> dict[st
     return {"srt": job.rel(dst), "cues": len(cues), "duration_ms": srt_duration_ms(cues)}
 
 
+# ---- word times of any media file (render QA) --------------------------------------------------
+
+class ScribeTranscriber:
+    """The same recogniser as `vp transcribe run`, for one media file and with nothing written
+    into the job: the word times of what is actually in the sound. Used by the render QA to check
+    burned captions against the voice (vp.steps.s5_render). It sends the file's sound to
+    ElevenLabs and costs money, so the caller decides when it may run (`caption_qa.transcribe`).
+
+      available() -> (bool, reason)      is there a key; the reason is plain words when not
+      words(path, language=None) -> [(text, start_ms, end_ms)]
+    """
+
+    name = SERVICE
+
+    def __init__(self, urlopen: Urlopen | None = None, costs: Any = None):
+        self.urlopen = urlopen
+        self.costs = costs
+
+    def available(self) -> tuple[bool, str]:
+        key, _ = find_key()
+        return (True, "") if key else (False, "no ElevenLabs key is set")
+
+    def words(self, path: str | os.PathLike, language: str | None = None) -> list[tuple[str, int, int]]:
+        key, _ = find_key()
+        if not key:
+            raise VPError("auth", "NEED_KEY:elevenlabs — no ElevenLabs key")
+        with tempfile.TemporaryDirectory(prefix="vp-transcribe-") as tmp:
+            audio = _extract_audio(Path(path), Path(tmp))      # the sound only, never the picture
+            resp = call_api(audio, key, language, False, self.urlopen)
+        secs = resp.get("audio_duration_secs")
+        if self.costs is not None and isinstance(secs, (int, float)):
+            try:
+                self.costs.add("api", provider=SERVICE, op="caption_check", model=MODEL_ID,
+                               usd=round(float(secs) / 3600 * PRICE_USD_PER_HOUR, 4), estimate=True)
+            except OSError:
+                pass    # bookkeeping; the answer is already here
+        return [(w["text"], int(w["start"]), int(w["end"])) for w in response_words(resp)]
+
+
 # ---- CLI ---------------------------------------------------------------------------------------
 
 def _print(res: dict[str, Any], as_json: bool, lines: list[str]) -> None:

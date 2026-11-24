@@ -47,9 +47,9 @@ def _max_links(ctx: Ctx) -> int:
 
 def numbering(ctx: Ctx) -> dict[int, str]:
     """Number -> item: 0 = full recording, 1..n fragments in recording order."""
-    items = [i for i in series_items(ctx.job) if i != FULL]
-    out = {0: FULL}
-    for n, it in enumerate(items, 1):
+    items = series_items(ctx.job)
+    out = {0: FULL} if FULL in items else {}
+    for n, it in enumerate((i for i in items if i != FULL), 1):
         out[n] = it
     return out
 
@@ -125,17 +125,18 @@ def _title_for_line(ctx: Ctx, item: str) -> str:
 def build_lines(ctx: Ctx, nums: dict[int, str], links: list[dict[str, Any]],
                 ids: dict[str, str]) -> dict[str, list[dict[str, Any]]]:
     """Per source item: ordered link records {to, kind, url, line, auto}."""
-    info = fragment_info(ctx.job)
-    man = read_yaml(ctx.job.render_manifest(FULL), default={}) or {}
-    intro = int(man.get("intro_ms") or 0)
     out: dict[str, list[dict[str, Any]]] = {it: [] for it in nums.values()}
-    for it in nums.values():
-        if it == FULL:
-            continue
-        t_ms = int((info.get(it) or {}).get("start_ms") or 0) + intro
-        url = platform_video_url(ctx.publisher, ids[FULL], t_ms or None)
-        line = f"Полная запись (с {fmt_clock(t_ms)}): {_title_for_line(ctx, FULL)} — {url}"
-        out[it].append({"to": FULL, "kind": "full", "url": url, "line": line, "auto": True})
+    if FULL in out:
+        info = fragment_info(ctx.job)
+        man = read_yaml(ctx.job.render_manifest(FULL), default={}) or {}
+        intro = int(man.get("intro_ms") or 0)
+        for it in out:
+            if it == FULL:
+                continue
+            t_ms = int((info.get(it) or {}).get("start_ms") or 0) + intro
+            url = platform_video_url(ctx.publisher, ids[FULL], t_ms or None)
+            line = f"Полная запись (с {fmt_clock(t_ms)}): {_title_for_line(ctx, FULL)} — {url}"
+            out[it].append({"to": FULL, "kind": "full", "url": url, "line": line, "auto": True})
     for ln in links:
         src, dst = nums[ln["from"]], nums[ln["to"]]
         url = platform_video_url(ctx.publisher, ids[dst])
@@ -187,9 +188,12 @@ class S10Crosslinks(StepSpec):
         missing = [it for it in nums.values() if it not in ids]
         if missing:
             raise VPError("data", f"S10: not uploaded yet: {missing}")
-        prompt = PROMPT_PATH.read_text(encoding="utf-8")
-        raw = ctx.judge.run(TASK, prompt, {"items": items_text(ctx, nums)}, "output.json", ctx)
-        links = parse_links(raw, nums, _max_links(ctx))
+        standalone_reel = len(nums) == 1 and 0 not in nums
+        links = []
+        if not standalone_reel:
+            prompt = PROMPT_PATH.read_text(encoding="utf-8")
+            raw = ctx.judge.run(TASK, prompt, {"items": items_text(ctx, nums)}, "output.json", ctx)
+            links = parse_links(raw, nums, _max_links(ctx))
         per_item = build_lines(ctx, nums, links, ids)
 
         pub = ctx.publisher

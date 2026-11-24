@@ -1,6 +1,6 @@
 """Command line: python -m vp <command> ... (BUILD §4).
 
-  run <job>                                  run the pipeline until done / gate / failure
+  run <job> [--whole-recording [full|reel]]  run the pipeline until done / gate / failure
   status <job>                               print status summary
   stage <job> <id> [--item X] [--force] [--reset]
   unlock <job>                               remove a stale job.lock
@@ -20,11 +20,16 @@
                                              project, a track per layer (capcut/layers.json);
                                              <job>/capcut/vN, never overwritten
   capcut library [--json]                    library items layers.json can name
-  projects list|add|scan|forget [--json]     jobs the person worked on: vp.projects:main
-  text new|status|estimate|timeline|approve  text-only jobs: vp.text:main
+  projects list|summary|add|scan|forget [--json]  jobs the person worked on; `summary` says
+                                             whether this is the first project: vp.projects:main
+  tutorial list|for|set|offer|check          tutorials at the moment of need (T01–T08: a video
+                                             link or a short card for the chat): vp.tutorials:main
+  text new|status|estimate|timeline|timing|approve  text-only jobs: vp.text:main
   check picture <video> [--json]             black/frozen picture + frame sheet: vp.check:main
   transcribe estimate|run|import|key ...     recording without subtitles -> _cut.srt + _cut.json
                                              (ElevenLabs Scribe): vp.transcribe:main
+  captions plan|exact|keep --job <job>       exact caption timing for a recording with subtitles
+                                             only (word times by the person's click): vp.captions:main
   journal note|show                          dialog journal: vp.journal:main
   feedback pack [--reveal]                   journal + notes + doctor + versions -> one file in
                                              ~/Movies/AI Movie Company/Feedback
@@ -58,6 +63,9 @@
                                              Cmd+Q by hand): vp.app:main
   update auto status|on|off | decline | reminder due|shown | check
                                              plugin auto-update switch and reminders: vp.update:main
+  version [--json] [--lang en|ru]            the release line — version, stage, build, release
+                                             time ("0.8.8 alpha · build 57 · 2026-11-23 22:40 UTC"):
+                                             vp.buildinfo:main
 
   shots detect|list|describe-set <job> ...   shots of a folder of videos, keyframes, descriptions
                                              (capability К): vp.analysis.scenes:main
@@ -127,9 +135,12 @@ SUBCOMMAND_MAINS = {
     "busy": "vp.busy:main",
     "app": "vp.app:main",
     "update": "vp.update:main",
+    "version": "vp.buildinfo:main",
     "transcribe": "vp.transcribe:main",
+    "captions": "vp.captions:main",
     # scenario tree (route, steps, services, cost): vp.scenarios — keep this block together
     "scenario": "vp.scenarios:main",
+    "tutorial": "vp.tutorials:main",
     # material without speech, music, raw takes (SCENARIOS К, Б, М, Ч)
     "shots": "vp.analysis.scenes:main",
     "beats": "vp.analysis.beats:main",
@@ -150,19 +161,22 @@ SUBCOMMAND_MAINS.update(MEDIA_COMMANDS)
 # commands that may run long (render, upload, export, install): a busy marker while they run,
 # except the quick sub-commands listed in QUICK_SUBCOMMANDS
 BUSY_COMMANDS = {"run", "stage", "resolve-upload", "approve-ingest", "capcut", "resolve", "fcpxml",
-                 "extras", "design", "check", "transcribe",
+                 "extras", "design", "check", "transcribe", "captions",
                  "stock", "images", "shots", "montage", "takes", "voice", "music", "text"}
 QUICK_SUBCOMMANDS = {("extras", "status"), ("extras", "check"), ("extras", "decide"),
                      ("text", "new"), ("text", "status"), ("text", "approve"),
-                     ("text", "estimate"), ("text", "timeline"), ("voice", "samples"),
+                     ("text", "estimate"), ("text", "timeline"), ("text", "timing"),
+                     ("voice", "samples"),
                      ("capcut", "check"), ("capcut", "version"), ("capcut", "library"), ("design", "show"),
                      ("design", "set"), ("design", "layers"),
                      ("transcribe", "estimate"), ("transcribe", "key"),
+                     ("captions", "plan"), ("captions", "keep"),
                      ("stock", "search"), ("images", "estimate"),
                      ("voice", "list"), ("voice", "estimate"), ("music", "estimate"),
                      ("shots", "list"), ("shots", "describe-set"), ("takes", "set")}
-# the channel's own commands are neither recorded nor followed by a flush (the mod calls them)
-SILENT_COMMANDS = {"telemetry", "messages", "busy", "progress", None}
+# the channel's own commands are neither recorded nor followed by a flush (the mod calls them);
+# `version` only reads two files of the plugin (the installer and the release script ask it too)
+SILENT_COMMANDS = {"telemetry", "messages", "busy", "progress", "version", None}
 # commands the mod runs in EVERY session (the channel, reminders, restart): they do not make the
 # session Elsa's for the prompt journal (vp.journal.mark_session); any other command does
 NOT_ELSA_COMMANDS = SILENT_COMMANDS | {"update", "app"}
@@ -235,6 +249,9 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("run", "status", "unlock", "approve-ingest", "judge-pending"):
         s = sub.add_parser(name)
         s.add_argument("job")
+        if name == "run":
+            s.add_argument("--whole-recording", nargs="?", const="full", choices=("full", "reel"),
+                           help="make one full video or vertical reel from the entire recording")
     s = sub.add_parser("stage")
     s.add_argument("job")
     s.add_argument("step")
@@ -247,7 +264,8 @@ def build_parser() -> argparse.ArgumentParser:
     for name in ("learn", "knowledge", "review", "approve", "doctor", "youtube", "results",
                  "progress", "capcut", "resolve", "fcpxml", "asks", "design", "projects", "text",
                  "check", "journal", "feedback", "consent", "guard", "mode", "telemetry",
-                 "messages", "busy", "update", "transcribe", "scenario",
+                 "messages", "busy", "update", "version", "transcribe", "captions", "scenario",
+                 "tutorial",
                  "shots", "beats", "montage", "takes") + tuple(MEDIA_COMMANDS):
         s = sub.add_parser(name, add_help=False)
         s.add_argument("rest", nargs=argparse.REMAINDER)
@@ -326,7 +344,8 @@ def _dispatch(raw: list[str]) -> int:
         safe_touch(args.job)          # K3: every job worked on is listed by `vp projects list`
     try:
         if cmd == "run":
-            return runner.run(Job(args.job))
+            return runner.run(Job(args.job), whole_recording=args.whole_recording,
+                              out=lambda line: print(line, flush=True))
         if cmd == "status":
             print(runner.status_report(Job(args.job)))
             return 0

@@ -372,11 +372,12 @@ def inspect(path: str | os.PathLike, kind: str, span: tuple[int, int] | None = N
 
 
 def apply_waivers(report: dict[str, Any], waive: Iterable[str] = ()) -> dict[str, Any]:
-    """Mark owner-waived checks; `ok` and `failures` then ignore them (kept visible as `waived`)."""
+    """Mark owner-waived checks; `ok` and `failures` then ignore them (kept visible as `waived`).
+    A check that did not run carries `ok: None` (never True): neither a failure nor a pass."""
     waive = set(waive or ())
-    waived = [n for n, c in report["checks"].items() if not c["ok"] and n in waive]
+    waived = [n for n, c in report["checks"].items() if c["ok"] is False and n in waive]
     failures = [f"{n}: {c['detail']}" for n, c in report["checks"].items()
-                if not c["ok"] and n not in waive]
+                if c["ok"] is False and n not in waive]
     return {**report, "ok": not failures, "failures": failures, "waived": waived}
 
 

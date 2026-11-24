@@ -74,7 +74,9 @@ def render_report(ctx: Ctx) -> str:
     lines = [f"# Отчёт vp: {ctx.job.job_id}", ""]
     if fake:
         lines += [REHEARSAL_BANNER, ""]
-    lines += [f"Роликов: {len(rows)} (фрагментов {sum(1 for r in rows if r['item'] != FULL)} + полное видео). "
+    breakdown = f" (фрагментов {len(rows) - 1} + полное видео)" if any(
+        r["item"] == FULL for r in rows) else ""
+    lines += [f"Роликов: {len(rows)}{breakdown}. "
               f"Опубликовано{rh}: {n['published']}, запланировано{rh}: {n['scheduled']}, отклонено: {n['rejected']}, "
               f"с нарушениями: {n['violations']}, возвращено на одобрение: {n['revoked']}, "
               f"отложено: {n['deferred']}, не загружено: {n['not_uploaded']}, без решения: {n['waiting']}.",

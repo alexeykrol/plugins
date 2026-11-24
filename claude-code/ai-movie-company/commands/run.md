@@ -13,8 +13,12 @@ Launcher (use exactly this prefix for every engine command; judgment is done by 
 VP_JUDGE=manual CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" "${CLAUDE_PLUGIN_ROOT}/scripts/vp" <command> ...
 ```
 
-Start `... run "$ARGUMENTS"` in the background and follow the skill's loop: progress lines,
-judgment tasks with the `judge` skill, the fragment review gate (S3b), then the ready-videos gate
+Resolve the job folder to an absolute path, name it in the first job message, and use it as the
+working directory for job commands. Keep job notes in its own files through the engine. Start
+`... run "<absolute job folder>"` in the background, adding `--whole-recording` or
+`--whole-recording reel` for the confirmed single-video route. Follow the skill's loop with progress
+lines, judgment tasks with the `judge` skill, the fragment review gate (S3b) when selecting clips,
+then the ready-videos gate
 (S9: the table of videos with links or local paths, one publish question). All rules of the skill
 apply — who is speaking, talking to the user, decisions belong to the director, boundaries.
 

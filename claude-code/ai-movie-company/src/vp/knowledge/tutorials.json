@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "about": "Tutorials T01-T08 (docs/tutorials/, learning track U1-U3). Which tutorial belongs to which moment is data; whether one was already answered is state under VP_HOME (vp.tutorials). `when`: steps of vp.telemetry.ROUTE_STEPS BEFORE which the tutorial is offered. `moments`: moments outside the routes (closed list below). `only_if`: conditions checked by code (closed list below). `url`: https, or empty while the video is not produced - then the card is said in the chat instead. Cards are 2-4 sentences (what happens now, why, one example) and must be true of the product as shipped; where a brief and the product disagree, the product wins. `script` is the brief in the source repository (not shipped).",
+  "labels": {
+    "video": {"ru": "Показать, как это выглядит ({duration})", "en": "Show me how it looks ({duration})"},
+    "card": {"ru": "Расскажите коротко, как это будет", "en": "Tell me briefly how it goes"},
+    "skip": {"ru": "Понятно, идём дальше", "en": "Got it, let's go on"}
+  },
+  "moments": {
+    "install": "the invitation, before Elsa is installed - never offered by Elsa herself",
+    "first_project": "the first «Новый проект» of a person who has no finished video yet",
+    "stuck": "the first hitch: a hand step failed, «не понимаю», a dead end",
+    "elevenlabs_key": "right before the first step that needs the ElevenLabs key (the connect skill)",
+    "long_work": "right before the first long background work"
+  },
+  "conditions": {
+    "first_project": "no registered project holds a finished video yet (vp projects summary)",
+    "no_elevenlabs_key": "no ElevenLabs key is saved on this computer (vp keys status)"
+  },
+  "tutorials": [
+    {
+      "id": "T01",
+      "title": {"ru": "Установка: одна ссылка и Enter", "en": "Install: one link and Enter"},
+      "after": {"ru": "пройти установку, ничего не закрывая самому", "en": "get through the install without closing anything yourself"},
+      "when": [],
+      "moments": ["install"],
+      "only_if": [],
+      "duration_s": 80,
+      "url": "",
+      "script": "docs/tutorials/t01-install.md",
+      "card": {
+        "ru": "Установка идёт сама: вы открываете ссылку из приглашения и нажимаете Enter, дальше Claude всё ставит. По дороге он спросит разрешение выполнить команду, а Mac может предложить «Установить инструменты разработчика» — это бесплатный набор от Apple: соглашайтесь и ждите, иногда минут пятнадцать. Закрывать Claude руками не нужно: он перезапустится сам, и в поле ввода уже будет набрано «Эльза, привет!» — останется нажать Enter.",
+        "en": "The install runs by itself: you open the link from the invitation and press Enter, and Claude sets everything up. On the way it asks permission to run a command, and the Mac may offer to install Apple's developer tools — a free set from Apple: agree and wait, sometimes about fifteen minutes. Never close Claude by hand: it restarts by itself, and \"Elsa, hi!\" is already typed in the prompt — just press Enter."
+      }
+    },
+    {
+      "id": "T02",
+      "title": {"ru": "Как мы работаем: один круг", "en": "How we work: one loop"},
+      "after": {"ru": "назвать круг: задание → показ → «что не так» → снова → CapCut", "en": "name the loop: task → show → \"what is wrong\" → again → CapCut"},
+      "when": [],
+      "moments": ["first_project"],
+      "only_if": ["first_project"],
+      "duration_s": 95,
+      "url": "",
+      "script": "docs/tutorials/t02-pattern.md",
+      "card": {
+        "ru": "Работаем по одному кругу, он одинаковый для любого ролика: вы говорите, с чем пришли и чего хотите, я называю дорогу и работаю, потом останавливаюсь и показываю — эскизы, голоса, фрагменты. Вы говорите как есть, что не так («скучно», «крупнее», «не тот голос»), я переделываю и показываю снова — пока не станет хорошо. Без вашего решения я дальше не иду, а финал можно доделать руками в CapCut.",
+        "en": "We work in one loop, the same for any video: you say what you brought and what you want, I name the road and work, then I stop and show — sketches, voices, fragments. You say plainly what is wrong (\"boring\", \"bigger\", \"not that voice\"), I redo it and show again — until it is good. I never go on without your decision, and the final can be finished by hand in CapCut."
+      }
+    },
+    {
+      "id": "T03",
+      "title": {"ru": "Застряли? Спросите Эльзу", "en": "Stuck? Ask Elsa"},
+      "after": {"ru": "задать вопрос словами, прислать снимок экрана, нажать «Не получается»", "en": "ask in your own words, send a screenshot, press \"It does not work\""},
+      "when": [],
+      "moments": ["stuck"],
+      "only_if": [],
+      "duration_s": 70,
+      "url": "",
+      "script": "docs/tutorials/t03-ask-elsa.md",
+      "card": {
+        "ru": "Застряли — спросите меня прямо здесь, своими словами: «зачем это?», «что сейчас происходит?», «где сейчас?». Я сначала отвечу, а потом вернусь к тому, на чём мы остановились, — работа от вопроса не собьётся. Если непонятно, что на экране, нажмите у меня «Пришлю снимок экрана»: я сама открою панель снимка и скажу, какую кнопку в ней нажать, а картинку останется перетащить в чат — покажу, куда нажать.",
+        "en": "Stuck — ask me right here, in your own words: \"what is this for?\", \"what is happening now?\", \"where are we?\". I answer first and then return to where we stopped — a question never derails the work. If what is on the screen is unclear, press my \"I'll send a screenshot\" button: I open the screenshot panel myself and say which button to press in it, and you drag the picture into the chat — I will show where to click."
+      }
+    },
+    {
+      "id": "T04",
+      "title": {"ru": "Из текста — видео", "en": "From a text to a video"},
+      "after": {"ru": "довести текст до ролика в чате", "en": "take a text all the way to a video in the chat"},
+      "when": [{"route": "text", "step": "brief"}],
+      "moments": [],
+      "only_if": [],
+      "duration_s": 95,
+      "url": "",
+      "script": "docs/tutorials/t04-text-to-video.md",
+      "card": {
+        "ru": "Из вашего текста я сделаю ролик с голосом, музыкой и анимацией, а сам текст не переписываю — ни слова без вашего согласия. Решать вы будете четыре раза: план (бриф), эскизы каждой сцены, голос и музыка; пока вы не утвердили эскизы, я ничего не озвучиваю. Готовое видео придёт сюда же, в чат, а правки говорите словами, например «во второй сцене крупнее»: сделаю новую версию, прежняя останется.",
+        "en": "From your text I make a video with voice, music and animation, and I never rewrite the text — not a word without your consent. You decide four times: the plan (the brief), a sketch of every scene, the voice and the music; until you approve the sketches I voice nothing. The finished video comes right here into the chat, and changes are said in words, e.g. \"bigger in the second scene\": I make a new version and the earlier one stays."
+      }
+    },
+    {
+      "id": "T05",
+      "title": {"ru": "Голос: подключаем ElevenLabs", "en": "Voice: connecting ElevenLabs"},
+      "after": {"ru": "подключить ключ, не вставляя его в чат", "en": "connect the key without pasting it into the chat"},
+      "when": [{"route": "text", "step": "voice"}],
+      "moments": ["elevenlabs_key"],
+      "only_if": ["no_elevenlabs_key"],
+      "duration_s": 90,
+      "url": "",
+      "script": "docs/tutorials/t05-voice-key.md",
+      "card": {
+        "ru": "Голос, музыку и расшифровку речи делает сервис ElevenLabs, и ему нужен ключ — пропуск в ваш аккаунт у него; он один на всё и подключается один раз. Я поведу по одному шагу: войти на elevenlabs.io, создать ключ и нажать рядом с ним «Copy». В чат ключ не вставляйте — я заберу его из буфера обмена сама, и храниться он будет только на вашем компьютере. Для начала подойдёт бесплатный тариф, но музыку через ключ дают только на платном.",
+        "en": "Voice, music and speech recognition are made by the ElevenLabs service, and it needs a key — a pass to your account there; one key for everything, connected once. I lead you one step at a time: sign in at elevenlabs.io, create a key and press \"Copy\" next to it. Do not paste the key into the chat — I take it from the clipboard myself, and it is kept only on your computer. The free plan is enough to start, but music through the key is on paid plans only."
+      }
+    },
+    {
+      "id": "T06",
+      "title": {"ru": "Финал — в CapCut", "en": "The final is in CapCut"},
+      "after": {"ru": "открыть проект, найти дорожки, попросить новую версию", "en": "open the project, find the tracks, ask for a new version"},
+      "when": [{"route": "text", "step": "capcut_export"}, {"route": "recording", "step": "capcut_export"}],
+      "moments": [],
+      "only_if": [],
+      "duration_s": 95,
+      "url": "",
+      "script": "docs/tutorials/t06-capcut-final.md",
+      "card": {
+        "ru": "Проект CapCut — это ваш ролик в разобранном виде: картинка и субтитры лежат отдельными дорожками (в ролике из текста — ещё голос по фразам и музыка), каждую можно двигать и менять руками. Чтобы открыть проект, нужен CapCut (сам ролик я делаю и без него), а на время сборки он должен быть закрыт — закрою его сама, если разрешите. Ваши прежние проекты и правки я не трогаю: каждая новая сборка ложится рядом, а не поверх.",
+        "en": "A CapCut project is your video taken apart: the picture and the subtitles lie on separate tracks (in a video from a text — also the voice phrase by phrase and the music), and each can be moved and changed by hand. To open the project you need CapCut (the video itself I make without it), and it must be closed while I build — I close it myself if you let me. I never touch your earlier projects and edits: every new build lands next to them, not over them."
+      }
+    },
+    {
+      "id": "T07",
+      "title": {"ru": "Из записи — короткие ролики", "en": "From a recording to short reels"},
+      "after": {"ru": "запустить запись в репетиции и отвечать на фрагменты", "en": "start a recording as a rehearsal and answer on the fragments"},
+      "when": [{"route": "recording", "step": "S0"}],
+      "moments": [],
+      "only_if": [],
+      "duration_s": 95,
+      "url": "",
+      "script": "docs/tutorials/t07-recording-to-reels.md",
+      "card": {
+        "ru": "Из длинной записи я сделаю короткие ролики; если субтитров нет — расшифрую речь (это платно, цену назову заранее). Потом спрошу, чего вы хотите от записи, прочитаю её целиком — это самая долгая часть — и покажу фрагменты по одному, честно говоря, где каждый слаб. У вас три ответа: «Принять», «Отклонить», «Поправить границы»; на причинах отказа я учусь выбирать под вас. Для первого раза советую репетицию: на YouTube ничего не загружается, ролики остаются на компьютере.",
+        "en": "From a long recording I make short reels; with no subtitles I recognise the speech first (paid — I name the price before). Then I ask what you want from the recording, read all of it — the longest part — and show the fragments one by one, saying honestly where each is weak. You have three answers: \"Accept\", \"Reject\", \"Adjust boundaries\"; from the reasons for a reject I learn to pick for you. For a first time I advise a rehearsal: nothing is uploaded to YouTube, the videos stay on your computer."
+      }
+    },
+    {
+      "id": "T08",
+      "title": {"ru": "Долго? Это нормально", "en": "Taking long? That is normal"},
+      "after": {"ru": "не бросить долгий шаг и вернуться к проекту", "en": "not give up on a long step, and come back to the project"},
+      "when": [{"route": "recording", "step": "S1"}, {"route": "text", "step": "approve_sketches"}],
+      "moments": ["long_work"],
+      "only_if": [],
+      "duration_s": 90,
+      "url": "",
+      "script": "docs/tutorials/t08-long-work-and-return.md",
+      "card": {
+        "ru": "Сейчас будет долгая часть: она идёт в фоне, а я примерно раз в минуту пишу, что делаю и сколько уже сделано; Claude в это время не закрывайте — свернуть окно можно, закрыть нельзя: работа оборвётся. Ждать молча не обязательно — спрашивайте о чём угодно, работа от этого не остановится; давно нет строк — напишите «где сейчас?». Если прервёмся, ничего не пропадёт: работа сохраняется после каждого шага — напишите «Эльза» и нажмите «Вернуться к проекту».",
+        "en": "A long part comes now: it runs in the background, and about once a minute I write what I am doing and how much is done; keep Claude open meanwhile — you can minimise the window, but closing it stops the work. You need not wait in silence — ask anything, the work does not stop; no lines for a while — write \"where are we?\". If we are interrupted nothing is lost: the work is saved after every step — write \"Elsa\" and press \"Back to the project\"."
+      }
+    }
+  ]
+}

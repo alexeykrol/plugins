@@ -8,7 +8,8 @@ Two sources, both JSON lines on the person's disk, nothing sent anywhere:
   * tagged notes — `vp journal note`, written by the director when something happens worth
     learning from: `deadend` (stuck, an error, gave up, irritation, "не понимаю"), `surprise`
     (a request the plugin did not foresee — a new scenario), `feedback` (the person's opinion).
-    With a job: <job>/journal.jsonl; without (`-`): the global day file.
+    With a job: <job>/journal.jsonl; without (`-`, or a folder that has no request.yaml yet):
+    the global day file, with the folder name when supplied.
 
 `vp feedback pack` gathers the last 14 days (global journal + notes of every registered project +
 `vp doctor` + versions) into ONE Markdown file to send to the owner:
@@ -128,7 +129,10 @@ def _append(path: Path, rec: dict[str, Any]) -> Path:
 
 
 def note(job: str | None, kind: str, text: str, now: datetime | None = None) -> dict[str, Any]:
-    """Append a tagged event; job-scoped when `job` is a job folder, else global ('-' / None)."""
+    """Append a tagged event; job-scoped when `job` is a job folder, else global ('-' / None).
+    A folder that is not a job yet (no request.yaml — e.g. a recording that only has
+    fragments.yaml) never loses the note: it goes to the global day file with the folder name
+    (test signals 2026-11-21, m2)."""
     if kind not in NOTE_KINDS:
         raise VPError("data", f"kind must be one of {', '.join(NOTE_KINDS)}")
     text = redact((text or "").strip())
@@ -138,13 +142,13 @@ def note(job: str | None, kind: str, text: str, now: datetime | None = None) -> 
         text = text[:MAX_NOTE] + " […]"
     now = now or _now()
     rec: dict[str, Any] = {"at": now.isoformat(timespec="seconds"), "kind": kind, "text": text}
-    if job and job != "-":
-        folder = Path(job).expanduser().resolve()
-        if not (folder / "request.yaml").is_file():
-            raise VPError("data", f"no job in {folder} (request.yaml missing); use '-' for a global note")
+    folder = Path(job).expanduser().resolve() if job and job != "-" else None
+    if folder is not None and (folder / "request.yaml").is_file():
         rec["job"] = str(folder)
         path = _append(folder / JOB_FILE, rec)
     else:
+        if folder is not None:
+            rec["job"] = folder.name
         path = _append(journal_dir() / f"{now.strftime('%Y-%m-%d')}.jsonl", rec)
     # local only (owner, alpha 2026-11-20): a note is free text about the person; it is never
     # sent automatically — it goes into `vp feedback pack`, which the person sends themselves
@@ -236,17 +240,6 @@ def digest_lines(evts: list[dict[str, Any]], limit: int = 200) -> list[str]:
 
 # ---- feedback pack -------------------------------------------------------------------------
 
-def _plugin_version() -> str | None:
-    for root in Path(__file__).resolve().parents:
-        p = root / ".claude-plugin" / "plugin.json"
-        if p.is_file():
-            try:
-                return str(json.loads(p.read_text(encoding="utf-8")).get("version"))
-            except (OSError, ValueError):
-                return None
-    return None
-
-
 def _cmd_version(cmd: list[str]) -> str:
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
@@ -258,7 +251,12 @@ def _cmd_version(cmd: list[str]) -> str:
 
 def versions() -> dict[str, str]:
     from .adapters import capcut, media
-    return {"plugin": _plugin_version() or "unknown",
+    from . import buildinfo
+    info = buildinfo.read()
+    # the release line as the person sees it, then the build and the release time as stored
+    return {"plugin": buildinfo.label(info),
+            "build": str(info.build) if info.build is not None else "unknown",
+            "released": info.released or "unknown",
             "python": sys.version.split()[0],
             "os": f"{platform.system()} {platform.release()} ({platform.machine()})",
             "ffmpeg": _cmd_version([media.FFMPEG, "-hide_banner", "-version"]),

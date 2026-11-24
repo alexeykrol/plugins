@@ -1,5 +1,5 @@
 """Ctx — everything a step gets (BUILD §3): job, item, config, judge, publisher, notifier,
-renderer, log, costs.
+renderer, transcriber, log, costs.
 
 Services are created lazily on first access from the config, so a step that never touches
 YouTube never imports the Google client. Tests pass ready objects instead.
@@ -16,19 +16,21 @@ from .errors import VPError, with_retries
 from .log import Logger
 from .paths import Job
 
-_SERVICES = ("judge", "publisher", "notifier", "renderer")
+_SERVICES = ("judge", "publisher", "notifier", "renderer", "transcriber")
 
 
 class Ctx:
     """Execution context of one step instance.
 
     Attributes: job (Job), item (str | None), config (dict; resolved per job, has `profile`),
-    log (Logger), costs (CostJournal); lazy properties judge, publisher, notifier, renderer.
+    log (Logger), costs (CostJournal); lazy properties judge, publisher, notifier, renderer,
+    transcriber (word times of a media file for the caption check; see vp.transcribe).
     """
 
     def __init__(self, job: Job, item: str | None = None, config: dict[str, Any] | None = None,
                  *, judge: Any = None, publisher: Any = None, notifier: Any = None,
-                 renderer: Any = None, log: Logger | None = None, costs: CostJournal | None = None,
+                 renderer: Any = None, transcriber: Any = None, log: Logger | None = None,
+                 costs: CostJournal | None = None,
                  factories: dict[str, Callable[["Ctx"], Any]] | None = None,
                  _shared: dict[str, Any] | None = None):
         self.job = job
@@ -40,7 +42,7 @@ class Ctx:
         # shared service cache: instances created once per run, shared by all item contexts
         self._shared = _shared if _shared is not None else {}
         for name, obj in (("judge", judge), ("publisher", publisher), ("notifier", notifier),
-                          ("renderer", renderer)):
+                          ("renderer", renderer), ("transcriber", transcriber)):
             if obj is not None:
                 self._shared[name] = obj
         self._factories = dict(DEFAULT_FACTORIES)
@@ -59,6 +61,8 @@ class Ctx:
     def notifier(self) -> Any: return self._service("notifier")
     @property
     def renderer(self) -> Any: return self._service("renderer")
+    @property
+    def transcriber(self) -> Any: return self._service("transcriber")
 
     @property
     def publisher_kind(self) -> str:
@@ -160,9 +164,15 @@ def _make_renderer(ctx: Ctx) -> Any:
     raise VPError("data", f"unknown renderer {kind!r}")
 
 
+def _make_transcriber(ctx: Ctx) -> Any:
+    from ..transcribe import ScribeTranscriber
+    return ScribeTranscriber(costs=ctx.costs)
+
+
 DEFAULT_FACTORIES: dict[str, Callable[[Ctx], Any]] = {
     "judge": _make_judge,
     "publisher": _make_publisher,
     "notifier": _make_notifier,
     "renderer": _make_renderer,
+    "transcriber": _make_transcriber,
 }

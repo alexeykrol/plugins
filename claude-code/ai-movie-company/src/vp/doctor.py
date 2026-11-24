@@ -1,5 +1,7 @@
 """`doctor` — is this machine ready to run the pipeline? Read-only except a probe file in VP_HOME.
 
+First line: the plugin's release line (`INFO plugin: 0.8.8 alpha · build 57 · 2026-11-23 22:40
+UTC`, vp.buildinfo) — which build this report is about.
 Checks: Python version, virtualenv, dependencies importable, ffmpeg/ffprobe (+ the `subtitles`
 filter from libass and `drawtext`), VP_HOME writable, config sanity (publisher, notifier, judge).
 Secret contents are never read or printed: for credential files only "exists / missing" is shown,
@@ -57,6 +59,8 @@ def checks(home: Path | None = None) -> list[tuple[str, str, str]]:
     res: list[tuple[str, str, str]] = []
     add = lambda lvl, name, detail: res.append((lvl, name, detail))  # noqa: E731
 
+    from . import buildinfo
+    add("INFO", "plugin", buildinfo.label())
     v = sys.version_info
     add("OK" if (v.major, v.minor) >= MIN_PY else "FAIL", "python",
         f"{v.major}.{v.minor}.{v.micro} at {sys.executable} (need >= {MIN_PY[0]}.{MIN_PY[1]})")

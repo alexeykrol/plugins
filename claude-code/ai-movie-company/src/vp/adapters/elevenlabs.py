@@ -612,7 +612,9 @@ def voice_main(argv: list[str] | None = None, *, opener: Any = None) -> int:
                                 f"≈ {res['credits_estimate']} credits ≈ ${res['cost_estimate_usd']:.3f}"])
             return 0
         only = [x for x in (a.only or "").split(",") if x.strip()]
-        res = scenes(a.job, a.voice, only, a.model, a.language, a.force, opener=opener)
+        from .. import runsignal
+        with runsignal.step(a.job, "voice"):           # run signal: the text route's voice stage
+            res = scenes(a.job, a.voice, only, a.model, a.language, a.force, opener=opener)
         _emit(res, a.json, [f"voiced: {', '.join(res['voiced']) or '—'}"
                             + (f"; already there: {', '.join(res['skipped'])}" if res["skipped"] else ""),
                             f"≈ {res['characters']} credits ≈ ${res['cost_estimate_usd']:.3f}"])
@@ -646,8 +648,10 @@ def music_main(argv: list[str] | None = None, *, opener: Any = None) -> int:
             _emit(res, a.json, [f"{a.seconds:g} s of music ≈ {res['credits']} credits ≈ "
                                 f"${res['usd']:.2f} (paid ElevenLabs plans only)"])
             return 0
-        res = make_music(a.job, _read_text_arg(a, "prompt_file", "prompt") or "", a.seconds, a.out,
-                         a.model, not a.vocals, a.force, opener=opener)
+        from .. import runsignal
+        with runsignal.step(a.job, "music"):           # run signal: the text route's music stage
+            res = make_music(a.job, _read_text_arg(a, "prompt_file", "prompt") or "", a.seconds,
+                             a.out, a.model, not a.vocals, a.force, opener=opener)
         _emit(res, a.json, [f"saved: {res['file']} ({res['seconds']:g} s)",
                             f"≈ {res['credits_estimate']} credits ≈ ${res['cost_estimate_usd']:.3f}"])
         return 0

@@ -326,6 +326,47 @@ def silences(src: str | os.PathLike, noise_db: float = -40.0, min_s: float = 0.5
     return out
 
 
+_MEAN_VOLUME = re.compile(r"mean_volume:\s*(-?[\d.]+)\s*dB")
+_PAUSE_START = re.compile(r"silence_start:\s*(-?[\d.]+)")      # the first one may be just below 0
+SOUND_FLOOR_DB = -70.0    # a mean level below this is no sound at all (digital silence is -91 dB)
+PAUSE_NOISE_MIN_DB, PAUSE_NOISE_MAX_DB = -60.0, -20.0
+
+
+def pauses(src: str | os.PathLike, below_mean_db: float, min_ms: int, start_ms: int = 0,
+           end_ms: int | None = None) -> dict[str, Any]:
+    """Pauses in the sound of [start_ms, end_ms) of a media file, found locally: stretches of at
+    least `min_ms` where the sound stays `below_mean_db` under the mean level of that same
+    stretch of the file. The threshold follows the file, so a quiet recording and a loud render
+    of it give the same pauses. Two audio-only decode passes (volumedetect, then silencedetect).
+
+    Returns {"mean_db", "noise_db", "span_ms", "pauses": [(start_ms, end_ms)]} with times counted
+    from `start_ms`. Raises VPError(data) when there is no sound to measure."""
+    span = ["-ss", _sec(start_ms)] if start_ms else []
+    if end_ms is not None:
+        span += ["-t", _sec(max(0, end_ms - start_ms))]
+    head = [*span, "-i", str(src), "-vn", "-map", "0:a:0"]
+    m = _MEAN_VOLUME.search(run_ffmpeg([*head, "-af", "volumedetect", "-f", "null", "-"]).stderr)
+    if not m:
+        raise VPError("data", "the sound level could not be measured")
+    mean_db = float(m.group(1))
+    if mean_db < SOUND_FLOOR_DB:
+        raise VPError("data", "there is no sound to find the pauses in")
+    noise_db = min(PAUSE_NOISE_MAX_DB, max(PAUSE_NOISE_MIN_DB, mean_db - float(below_mean_db)))
+    err = run_ffmpeg([*head, "-af", f"silencedetect=n={noise_db:.1f}dB:d={min_ms / 1000:.3f}",
+                      "-f", "null", "-"]).stderr
+    total = (end_ms - start_ms) if end_ms is not None else max(0, probe(src)["duration_ms"] - start_ms)
+    starts = [float(x) for x in _PAUSE_START.findall(err)]
+    ends = [float(x) for x in _SILENCE_END.findall(err)]
+    out: list[tuple[int, int]] = []
+    for k, s in enumerate(starts):
+        a = max(0, int(round(s * 1000)))
+        b = min(total, int(round(ends[k] * 1000))) if k < len(ends) else total
+        if b > a:
+            out.append((a, b))
+    return {"mean_db": round(mean_db, 1), "noise_db": round(noise_db, 1), "span_ms": int(total),
+            "pauses": out}
+
+
 def available() -> bool:
     """True if ffmpeg and ffprobe are on PATH."""
     return shutil.which(FFMPEG) is not None and shutil.which(FFPROBE) is not None

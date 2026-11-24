@@ -24,8 +24,8 @@ export type Frame = {
 };
 
 export type CaptionStyle = {
-	/** word: the current word lights up (timing estimated by code when only phrase times exist);
-	 *  phrase: the whole page appears at once. */
+	/** word: the current word lights up (a phrase the pipeline could not time word by word is
+	 *  shown whole, without a lit word); phrase: the whole page appears at once. */
 	highlight: 'word' | 'phrase';
 	/** Text size as a fraction of the frame width. */
 	fontFrac: number;

@@ -11,9 +11,10 @@ the default. What Remotion draws, what ffmpeg still does:
   thumbnail   Remotion still (Cover) 1280×720; palette fallback when the PNG is ≥ 2 MB.
 
 Counting stays in code (llm-as-component): this module turns subtitle cues into Remotion
-`Caption` JSON (word times estimated by word length when only phrase times exist), decides the
-caption pages, the card frame counts and every duration. The compositions in `<plugin>/remotion/`
-only draw what the props say.
+`Caption` JSON (real word times from `clip.words.json` when the recording has them; without them
+the words are placed by the pauses of the sound where that is safe and every other phrase is shown
+whole — a visible, logged fallback), decides the caption pages, the card frame counts and every
+duration. The compositions in `<plugin>/remotion/` only draw what the props say.
 
 Layers for editors (contract `docs/LAYERS.md`): a final render also leaves
 `clips/<id>/layers/` — `intro.mp4`, `outro.mp4` and `layers.yaml` with their places on the final
@@ -47,6 +48,7 @@ except ImportError:  # pragma: no cover - not on macOS/Linux
 from ..core import progress
 from ..core.errors import VPError
 from ..core.io import write_yaml
+from ..analysis import align_words
 from ..core.srt import Cue, read_srt
 from . import media
 from .render import KINDS, THUMB_H, THUMB_W, FfmpegRenderer, card_durations, readable_text_color, video_info
@@ -98,78 +100,76 @@ def remotion_settings(config: dict[str, Any] | None) -> dict[str, Any]:
 
 # ---- captions: cues -> Remotion Caption JSON (code, deterministic) -----------------------------
 
-def _words(text: str) -> list[str]:
-    return " ".join((text or "").split()).split(" ") if (text or "").strip() else []
+JOIN_GAP_MS = 400   # a gap this short between two words of a page is closed: the highlight moves
+                    # from word to word without blinking; a longer gap is a pause and stays one
 
 
-def cue_word_times(cue: Cue) -> list[tuple[str, int, int]]:
-    """Split a cue into words with times. Only phrase times are known, so each word gets a share
-    of the cue proportional to its length + 1 (a stand-in for syllables). Integer ms, contiguous,
-    the last word ends exactly at the cue end."""
-    words = _words(cue.text)
-    if not words:
-        return []
-    weights = [len(w) + 1 for w in words]
-    total = sum(weights)
-    span = max(0, cue.end_ms - cue.start_ms)
-    out, acc = [], 0
-    for i, (w, wt) in enumerate(zip(words, weights)):
-        start = cue.start_ms + round(span * acc / total)
-        acc += wt
-        end = cue.end_ms if i == len(words) - 1 else cue.start_ms + round(span * acc / total)
-        out.append((w, start, end))
-    return out
+def cue_word_times(cue: Cue, timed: list[tuple[str, int, int]] | None = None) -> list[tuple[str, int, int]]:
+    """Words of a cue with times. `timed` = the real word times of this cue (aligned from the
+    recogniser's words, vp.analysis.align_words) — returned as they are. Without them only the
+    phrase time is known, so each word gets a share of the cue proportional to its length + 1
+    (a stand-in for syllables): integer ms, contiguous, the last word ends exactly at the cue
+    end. That estimate is the fallback; a caller that used it must say so (see
+    RemotionRenderer.caption_info)."""
+    if timed is not None:
+        return [(str(w), int(s), int(e)) for w, s, e in timed]
+    return align_words.estimate(cue)
 
 
-# Short function words that must not end a caption page when the phrase goes on ("в", "у",
-# "и", "the"): a page ending on a preposition reads as a broken sentence.
-_CLINGING = re.compile(r"^[\w\-]{1,2}$|^(?:без|для|про|над|под|при|что|как|the|and|for|with|from)$",
-                       re.I | re.UNICODE)
+# Paging lives with the alignment (one implementation for captions and caption-page cues).
+_clings = align_words.clings
+_pages = align_words.pages
 
 
-def _clings(word: str) -> bool:
-    return bool(_CLINGING.match(word)) and not re.search(r"[.,!?;:…»\")]$", word)
-
-
-def _pages(words: list[str], max_words: int, max_chars: int) -> list[list[int]]:
-    """Word indices of one cue split into pages (greedy by words/characters), then a clinging
-    last word moves to the next page."""
-    pages: list[list[int]] = []
-    page: list[int] = []
-    chars = 0
-    for i, w in enumerate(words):
-        if page and (len(page) >= max_words or chars + 1 + len(w) > max_chars):
-            pages.append(page)
-            page, chars = [], 0
-        chars += len(w) + (1 if page else 0)
-        page.append(i)
-    if page:
-        pages.append(page)
-    for n in range(len(pages) - 1):
-        while len(pages[n]) > 1 and _clings(words[pages[n][-1]]):
-            pages[n + 1].insert(0, pages[n].pop())
-    return pages
-
-
-def captions_from_cues(cues: Iterable[Cue], *, max_words: int = 3, max_chars: int = 18) -> list[dict[str, Any]]:
+def captions_from_cues(cues: Iterable[Cue], *, max_words: int = 3, max_chars: int = 18,
+                       word_times: list[list[tuple[str, int, int]]] | None = None,
+                       whole: Iterable[int] | None = None) -> list[dict[str, Any]]:
     """Remotion `Caption[]` (@remotion/captions): one entry per word, leading space on every word
     that does not open a page, `pageBreakAfter` on the last word of each page. A page never
     crosses a cue; inside a cue it holds ≤ max_words words and ≤ max_chars characters (one long
     word may exceed it alone; a short preposition moved to the next page may add one word).
-    Times are clip-relative ms; cues must not overlap."""
+    Times are clip-relative ms; cues must not overlap.
+
+    `word_times` = word times, one list per cue (same order). Then every word starts when it
+    is said, and a pause inside the phrase starts a new page. Without it the times are estimated
+    from the phrase time (`cue_word_times`) — kept for callers that ask for it; the renderer
+    itself never draws that estimate (see RemotionRenderer.captions).
+
+    `whole` = indices of the cues to show as a whole phrase: one page with every word of the
+    cue, each carrying the cue's own time and `"phrase": true` (the composition knows such a
+    page by the shared time: no word lights up, a long phrase is set smaller). Nothing inside
+    such a cue is timed, so nothing in it can drift."""
     if max_words < 1 or max_chars < 1:
         raise VPError("data", "captions: max_words and max_chars must be ≥ 1")
+    cues = list(cues)
+    if word_times is not None and len(word_times) != len(cues):
+        raise VPError("internal", "captions: word times do not match the cues")
+    as_phrase = {int(i) for i in whole or ()}
     out: list[dict[str, Any]] = []
     last_end = None
-    for cue in cues:
-        words = cue_word_times(cue)
+    for n, cue in enumerate(cues):
+        real = word_times is not None
+        if n in as_phrase:
+            words = [(w, cue.start_ms, cue.end_ms) for w in (cue.text or "").split()]
+        else:
+            words = cue_word_times(cue, word_times[n] if real else None)
         if not words:
             continue
         if last_end is not None and cue.start_ms < last_end:
             raise VPError("data", f"captions: cue {cue.id} overlaps the previous one")
-        for page in _pages([w for w, _, _ in words], max_words, max_chars):
+        if n in as_phrase:
+            for k, (w, s, e) in enumerate(words):
+                out.append({"text": (" " + w) if k else w, "startMs": s, "endMs": e,
+                            "timestampMs": (s + e) // 2, "confidence": None, "phrase": True})
+            out[-1]["pageBreakAfter"] = True
+            last_end = cue.end_ms
+            continue
+        for page in align_words.paged(words, max_words, max_chars,
+                                      align_words.PAUSE_BREAK_MS if real else None):
             for k, i in enumerate(page):
                 w, s, e = words[i]
+                if real and k + 1 < len(page) and 0 < words[page[k + 1]][1] - e < JOIN_GAP_MS:
+                    e = words[page[k + 1]][1]
                 out.append({"text": (" " + w) if k else w, "startMs": s, "endMs": e,
                             "timestampMs": (s + e) // 2, "confidence": None})
             out[-1]["pageBreakAfter"] = True
@@ -177,18 +177,68 @@ def captions_from_cues(cues: Iterable[Cue], *, max_words: int = 3, max_chars: in
     return out
 
 
+PAGE_HOLD_MS = 350   # how long a page stays after its last word when the next is not due yet.
+                     # Must equal HOLD_MS in remotion/src/Captions.tsx (a unit test compares).
+
+
+def caption_pages(captions: list[dict[str, Any]], hold_ms: int = PAGE_HOLD_MS) -> list[dict[str, Any]]:
+    """The pages the composition draws from caption JSON, as the viewer sees them:
+    [{"start", "end" (on screen until), "whole" (a phrase shown at once: no word lights up),
+    "tokens": [caption, ...]}]. Mirrors remotion/src/Captions.tsx."""
+    groups: list[list[dict[str, Any]]] = []
+    cur: list[dict[str, Any]] = []
+    for c in captions:
+        cur.append(c)
+        if c.get("pageBreakAfter"):
+            groups.append(cur)
+            cur = []
+    if cur:
+        groups.append(cur)
+    out = []
+    for i, g in enumerate(groups):
+        span = (g[0]["startMs"], g[0]["endMs"])
+        # several words sharing one time = a whole phrase for the composition: no hold after it
+        # (one word alone is drawn as any one-word page, held like the others)
+        shared = len(g) > 1 and all((t["startMs"], t["endMs"]) == span for t in g)
+        end = g[-1]["endMs"] + (0 if shared else hold_ms)
+        if i + 1 < len(groups):
+            end = min(end, groups[i + 1][0]["startMs"])
+        out.append({"start": int(g[0]["startMs"]), "end": int(max(end, g[0]["startMs"])),
+                    "whole": all(t.get("phrase") for t in g), "tokens": g})
+    return out
+
+
+CLIP_END_SLACK_MS = 100  # S4 accepts a cut one frame shorter than its fragment: the last cue
+                          # may end that much after the picture; such an end is cut at the clip end
+
+
+def _fit_clip(captions: list[dict[str, Any]], clip_ms: int) -> list[dict[str, Any]]:
+    """Captions ending within CLIP_END_SLACK_MS after the clip are cut at its end (never moved).
+    Anything further out stays as it is and fails `caption_violations`."""
+    for c in captions:
+        if clip_ms < c["endMs"] <= clip_ms + CLIP_END_SLACK_MS:
+            c["endMs"] = clip_ms
+            c["startMs"] = min(c["startMs"], clip_ms)
+            c["timestampMs"] = (c["startMs"] + c["endMs"]) // 2
+    return captions
+
+
 def caption_violations(captions: list[dict[str, Any]], clip_ms: int) -> list[str]:
     """Code checks of the caption JSON: ordered, non-negative, inside the clip, non-empty words."""
     bad = []
     prev_end = 0
+    prev: dict[str, Any] | None = None
     for i, c in enumerate(captions):
         if not str(c.get("text", "")).strip():
             bad.append(f"{i}:empty")
-        if c["startMs"] < prev_end or c["endMs"] < c["startMs"]:
+        # the words of a phrase shown whole share one time: the same span inside a page is in order
+        same = prev is not None and not prev.get("pageBreakAfter") \
+            and (c["startMs"], c["endMs"]) == (prev["startMs"], prev["endMs"])
+        if (c["startMs"] < prev_end and not same) or c["endMs"] < c["startMs"]:
             bad.append(f"{i}:order")
         if c["endMs"] > clip_ms + 1:
             bad.append(f"{i}:after_clip")
-        prev_end = c["endMs"]
+        prev_end, prev = c["endMs"], c
     return bad
 
 
@@ -519,6 +569,7 @@ class RemotionRenderer(FfmpegRenderer):
         self.rs = remotion_settings(self.config)
         self.workspace = workspace or RemotionWorkspace(self.config)
         self.timings: dict[str, float] = {}
+        self.caption_info: dict[str, Any] = {}     # how the last captions() timed the words
 
     # ---- props -----------------------------------------------------------------------------
     def brand_props(self) -> dict[str, Any]:
@@ -542,15 +593,61 @@ class RemotionRenderer(FfmpegRenderer):
                 "yFrac": float(c["y_frac"]), "plate": bool(c["plate"])}
 
     def captions(self, clip_srt: str | os.PathLike, clip_ms: int) -> list[dict[str, Any]]:
+        """Caption JSON of a clip. The times inside a phrase come from `clip.words.json` next to
+        the clip.srt (written by S5: the recording's word times, or the words placed by the
+        pauses of the sound, with the phrases that must be shown whole). Without a valid one
+        nothing is known inside a phrase, so every phrase is shown whole for its own time — the
+        words of a phrase are never spread by their letters here. What happened is in
+        `self.caption_info`."""
         c = self.rs["captions"]
         if c.get("highlight") == "none":
+            self.caption_info = {"word_times": "none"}
             return []
-        caps = captions_from_cues(read_srt(clip_srt), max_words=int(c["max_words"]),
-                                  max_chars=int(c["max_chars"]))
+        cues = read_srt(clip_srt)
+        limits = {"max_words": int(c["max_words"]), "max_chars": int(c["max_chars"])}
+        timed, info = align_words.read_clip_words(clip_srt, cues)
+        if timed is not None:
+            caps = _fit_clip(captions_from_cues(cues, word_times=timed, whole=info.get("whole"), **limits),
+                             clip_ms)
+            if not caption_violations(caps, clip_ms):
+                self.caption_info = align_words.caption_info(info, len(cues))
+                return caps
+            info = {"word_times": "estimated", "reason": "the word times do not fit the clip"}
+        caps = _fit_clip(captions_from_cues(cues, whole=range(len(cues)), **limits), clip_ms)
         bad = caption_violations(caps, clip_ms)
         if bad:
             raise VPError("data", f"captions invalid: {bad[:5]}")
+        self.caption_info = align_words.caption_info(
+            {"word_times": "estimated", "reason": info.get("reason")}, len(cues))
         return caps
+
+    def caption_timeline(self, clip_srt: str | os.PathLike, clip_ms: int) -> dict[str, Any]:
+        """What the viewer is shown, for the caption checks (vp.steps.s5_render):
+
+          mode    "word" — every word has its own time; "phrase" — every phrase is shown whole;
+                  "mixed" — some of each; "none" — no captions are burned
+          words   [(text, start_ms, end_ms)]: a word with its own time, or with its phrase's
+          phrase  one flag per word: it belongs to a phrase shown whole
+          onsets  the moments something new appears (a word lighting up, a page, a whole phrase)
+          shows   [(start_ms, end_ms)] a caption page is on screen
+        plus `self.caption_info` (how the words were timed)."""
+        caps = self.captions(clip_srt, clip_ms)
+        hl = self.rs["captions"].get("highlight")
+        if hl == "none":
+            return {"mode": "none", **self.caption_info, "words": [], "phrase": [], "onsets": [], "shows": []}
+        words, flags, onsets, shows = [], [], [], []
+        for page in caption_pages(caps):
+            shows.append((page["start"], page["end"]))
+            onsets.append(page["start"])
+            if hl == "word" and not page["whole"]:
+                # a token without time (a dash between two stretches of sound) never lights up
+                onsets += [int(t["startMs"]) for t in page["tokens"][1:] if t["endMs"] > t["startMs"]]
+            for t in page["tokens"]:
+                words.append((t["text"].strip(), int(t["startMs"]), int(t["endMs"])))
+                flags.append(bool(page["whole"]))
+        mode = "phrase" if words and all(flags) else "mixed" if any(flags) else "word"
+        return {"mode": mode, **self.caption_info, "words": words, "phrase": flags,
+                "onsets": sorted(set(onsets)), "shows": shows}
 
     # ---- remotion calls -----------------------------------------------------------------
     def _render(self, comp: str, props: dict[str, Any], out: Path, tmp: Path, public: Path | None,

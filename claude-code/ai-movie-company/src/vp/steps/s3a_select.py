@@ -29,7 +29,7 @@ from ..core.srt import read_srt, srt_duration_ms
 from ..knowledge.prompt_builder import brief_template_hash, build_prompt, template_hash
 from ..knowledge.store import KnowledgeStore
 from . import _fragments as F
-from .base import Ctx, StepSpec, VPError
+from .base import Ctx, Skip, StepSpec, VPError
 
 OUTPUT_KEYS = ("start_quote", "end_quote", "title", "thesis", "why", "applied", "score")
 REQUIRED_KEYS = ("start_quote", "end_quote", "title", "thesis", "why", "score")
@@ -170,6 +170,8 @@ class S3aSelect(StepSpec):
         return [ctx.job.subtitles_srt, ctx.job.source_words, ctx.job.job_yaml]
 
     def config(self, ctx: Ctx) -> dict:
+        if ctx.config.get("whole_recording"):
+            return {"whole_recording": ctx.config["whole_recording"]}
         store = self._store(ctx)
         v = store.active_version()
         p = ctx.profile
@@ -189,6 +191,8 @@ class S3aSelect(StepSpec):
         return [ctx.job.fragments_proposed]
 
     def run(self, ctx: Ctx) -> dict:
+        if ctx.config.get("whole_recording"):
+            raise Skip("the whole recording was requested")
         store = self._store(ctx)
         version = store.active_version()
         kv = store.load_version(version)

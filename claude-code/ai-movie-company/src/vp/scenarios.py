@@ -24,7 +24,10 @@ CLI:
   vp scenario list [--json]
   vp scenario detect <job-folder|file> [--says "<the person's words>"] [--no-probe] [--json]
   vp scenario plan <id> [--minutes N] [--source-hours H] [--images K] [--ai-video-seconds S]
-                        [--services auto|none|<group>,...] [--assume-built] [--kind K] [--json]
+                        [--services auto|none|<group>,...] [--assume-built] [--kind K]
+                        [--job <job-folder>] [--json]
+                        --job: the scenario letter is remembered for that job (<job>/run.json,
+                        vp.runsignal) — its step events then say which scenario they belong to
   vp scenario matrix [--json] [--write <file.md>]
   vp scenario services [--json]          what `--services auto` sees on this machine
   vp scenario check [--json]             data validity (exit 2 on problems)
@@ -69,7 +72,7 @@ READABLE_TEXT = (".txt", ".md")
 SKIP_DIRS = {"clips", "stages", "package", "full", "exports", "capcut", "voice", "sketches", "layers",
              "renders", "render", "judge", "node_modules", "__pycache__", "out", "public"}
 SKIP_FILES = {"request.yaml", "status.yaml", "job.yaml", "script.md", "brief.md", "report.md", "asks.md",
-              "asks.yaml", "approvals.yaml", "design.yaml", "journal.jsonl", "job.lock"}
+              "asks.yaml", "approvals.yaml", "design.yaml", "journal.jsonl", "job.lock", "run.json"}
 MAX_FILES = 2000
 MAX_DEPTH = 3
 MAX_PROBES = 10
@@ -848,6 +851,7 @@ def main(argv: list[str]) -> int:
     a.add_argument("--services", default="auto")
     a.add_argument("--assume-built", action="store_true")
     a.add_argument("--kind")
+    a.add_argument("--job", help="the job folder this plan is for: remembers the scenario letter there")
     a.add_argument("--json", action="store_true")
     a = sub.add_parser("matrix")
     a.add_argument("--json", action="store_true")
@@ -876,6 +880,9 @@ def main(argv: list[str]) -> int:
                      ai_video_seconds=args.ai_video_seconds, present=present, assume_built=args.assume_built,
                      kind=args.kind)
             p["services_detected"] = present
+            if args.job:
+                from . import runsignal
+                p["scenario_stored"] = runsignal.set_scenario(args.job, p["scenario"])
             _print(p, args.json, _plan_text)
             return 0
         if args.cmd == "matrix":

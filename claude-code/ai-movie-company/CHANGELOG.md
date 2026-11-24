@@ -2,6 +2,40 @@
 
 All notable changes to ai-movie-company. Versions follow [semver](https://semver.org/).
 
+From the release after 0.8.7 on, a release heading reads
+`X.Y.Z alpha — build N — YYYY-MM-DD HH:MM UTC`: the version, the stage of the product (`alpha`
+during the test period), a build number that grows by one with every release, and the date and
+time of the release. The same line is on Elsa's band and in `vp version`. The build and the time
+are written by the release script (`scripts/stamp_build.py`), never by hand: a new entry starts
+under a plain `X.Y.Z` heading. Earlier headings keep their form.
+
+## 0.8.8 alpha — build 27 — 2026-11-24 07:29 UTC
+
+- **Captions follow the voice.** When Elsa knows the time of every word (she transcribed the speech,
+  or you pressed «Уточнить титры по голосу»), the highlighted word in a reel is set by the voice,
+  not guessed. When there is only your subtitle file, a phrase is shown whole for its own time,
+  with no highlighted word — so captions no longer run ahead of or behind the speech inside a
+  phrase. Two new checks in `render.qa.yaml`: `caption_sync` (against recognized words) and
+  `caption_voiced` (local: no captions on silence). When captions were not checked against the
+  voice, Elsa says so; she offers the exact timing once, with the price, only when the ElevenLabs
+  key is connected (`vp captions plan|exact|keep`).
+- **Elsa teaches inside the work.** The first time you meet a step she offers a short explanation
+  («Расскажите коротко, как это будет»), and never twice. The start button is «Видеозапись»; the
+  button names of the gates are fixed and the same everywhere; she checks that CapCut is installed
+  before she builds a project for it; `vp tutorial`, `vp projects summary`, `vp capcut check`.
+- **A short recording as one video.** For a short recording Elsa offers «Один ролик целиком» /
+  «Вертикальный ролик целиком» / «Всё равно выбрать фрагменты» (`vp run <job> --whole-recording`).
+- **Fewer small reasons to quit.** Questions that wait for your answer no longer go stale after a
+  new version; `vp text timing <job>` shows how long a version took; the CapCut export names the
+  folder with the project's media; `vp run` and `vp status` name the job folder.
+- **Version line.** The band and `vp version` show the version, the stage (`alpha`), the build
+  number and the release time: `0.8.8 alpha · build 27`. The band says just «Эльза на связи».
+- **Privacy.** Step events may carry the route, the scenario letter and a random run number of a
+  job; none of the three leaves your Mac under the current terms — only under a later version that
+  names them and that you accepted. `vp telemetry show` says which it is.
+- **Recording without subtitles** is named in the plugin description: Elsa transcribes the speech
+  herself, with the price first.
+
 ## 0.8.7 — 2026-11-21
 
 - **You always see that Elsa is working.** While she thinks: a live bar and «Эльза думает · 1:42»

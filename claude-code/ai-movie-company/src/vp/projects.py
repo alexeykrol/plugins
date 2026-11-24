@@ -18,7 +18,14 @@ newest of the registry touch and the job folder's top-level entries), folder, st
                     was exported (further versions are still possible)
   missing         — the folder no longer exists (shown only with --all)
 
+The summary (`vp projects summary`) answers one question for the dialog — is this the person's
+first project? — from facts on disk, never from the model's memory: `with_video` counts the
+registered jobs that already hold a finished video (text job: a render in `renders/`; recording
+job: a rendered clip `clips/<id>/render.mp4` or the full video), `first_project` is true while
+that count is zero. A job started and dropped before any video does not end the "first project".
+
 CLI:  vp projects list [--json] [--all] [--limit N]
+      vp projects summary [--json]
       vp projects add <folder> [--json]
       vp projects scan <folder> [--depth N] [--json]
       vp projects forget <folder>
@@ -188,6 +195,36 @@ def job_state(folder: Path, req: dict[str, Any] | None = None) -> str:
     return "in_work"
 
 
+def job_has_video(folder: Path, req: dict[str, Any] | None = None) -> bool:
+    """A finished video of the job exists on disk (text: a render; recording: a rendered clip)."""
+    if not folder.is_dir():
+        return False
+    req = _request(folder) if req is None else req
+    try:
+        if job_kind(req) == "text":
+            from .text import renders
+            return bool(renders(folder))
+        if (folder / "full" / "render.mp4").is_file():
+            return True
+        clips = folder / "clips"
+        return clips.is_dir() and any((d / "render.mp4").is_file() for d in clips.iterdir()
+                                      if d.is_dir())
+    except OSError:
+        return False
+
+
+def summary(home: Path | None = None) -> dict[str, Any]:
+    """{"total", "with_video", "first_project"} over the registered jobs that still exist."""
+    total = with_video = 0
+    for folder_s in _load(home)["projects"]:
+        folder = Path(folder_s)
+        if not folder.is_dir():
+            continue
+        total += 1
+        with_video += 1 if job_has_video(folder) else 0
+    return {"total": total, "with_video": with_video, "first_project": with_video == 0}
+
+
 def list_projects(home: Path | None = None, include_missing: bool = False) -> list[dict[str, Any]]:
     out = []
     for folder_s, rec in _load(home)["projects"].items():
@@ -231,6 +268,9 @@ def main(argv: list[str]) -> int:
     ls.add_argument("--json", action="store_true")
     ls.add_argument("--all", action="store_true", help="also folders that no longer exist")
     ls.add_argument("--limit", type=int, default=0)
+    sm = sub.add_parser("summary", help="how many jobs, how many with a finished video; "
+                                        "first_project = none has one yet")
+    sm.add_argument("--json", action="store_true")
     ad = sub.add_parser("add", help="register a job folder")
     ad.add_argument("folder")
     ad.add_argument("--json", action="store_true")
@@ -255,6 +295,12 @@ def main(argv: list[str]) -> int:
         for r in rows:
             print(f"{_local_day(r['last_activity'])}\t{STATE_LABEL[r['state']]}\t{r['kind']}\t"
                   f"{r['title']}\t{r['folder']}")
+        return 0
+    if a.cmd == "summary":
+        res = summary()
+        print(json.dumps(res, ensure_ascii=False) if a.json else
+              f"projects: {res['total']}, with a finished video: {res['with_video']}, "
+              f"first project: {'yes' if res['first_project'] else 'no'}")
         return 0
     if a.cmd == "add":
         ok = touch(a.folder)

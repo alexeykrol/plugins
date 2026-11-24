@@ -159,11 +159,25 @@ class Job:
         """request.yaml source.words, default <job>/_cut.json (optional, read-only)."""
         return self._source("words", "_cut.json")
 
+    @property
+    def caption_words(self) -> Path:
+        """<job>/captions.words.json — word times of the recording obtained for the captions only
+        (`vp captions exact`), in the shape of `_cut.json`. Read by S5 alone: unlike
+        `source_words` it is no input of proofreading or selection, and the person's subtitles
+        stay the text."""
+        return self.root / "captions.words.json"
+
+    @property
+    def caption_choice(self) -> Path:
+        """<job>/captions.choice.yaml — the person's answer to the offer of exact caption timing
+        (`vp captions exact|keep`): the offer is made once."""
+        return self.root / "captions.choice.yaml"
+
     # ---- items ----------------------------------------------------------------------------
     def items(self) -> list[str] | None:
-        """Item ids = fragment ids of fragments.yaml + "full"; None while fragments.yaml is absent.
+        """Item ids = fragment ids of fragments.yaml + "full"; None before fragments.yaml exists.
 
-        fragments.yaml format: {fragments: [{id: ..., ...}, ...]}.
+        When whole_recording.kind is `reel`, its only fragment is the whole source.
         """
         data = read_yaml(self.fragments_yaml, default=None)
         if data is None:
@@ -176,6 +190,9 @@ class Job:
                 raise ValueError(f"fragments.yaml: bad or duplicate id {fid!r}")
             self.item_dir(fid)  # validates
             ids.append(fid)
+        whole = data.get("whole_recording") if isinstance(data, dict) else None
+        if isinstance(whole, dict) and whole.get("kind") == "reel":
+            return ids
         return ids + [FULL]
 
     # ---- relative paths -------------------------------------------------------------------

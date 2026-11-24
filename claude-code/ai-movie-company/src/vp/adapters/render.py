@@ -304,6 +304,14 @@ class FfmpegRenderer(Renderer):
         return out
 
     # ---- interface -----------------------------------------------------------------------
+    def caption_timeline(self, clip_srt, clip_ms: int) -> dict[str, Any]:
+        """What the viewer is shown, for the caption check (vp.steps.s5_render): this renderer
+        burns each subtitle whole, so every word is on screen for its phrase's time (mode
+        "phrase"; nothing is timed word by word, so nothing is estimated)."""
+        from ..core.srt import read_srt
+        words = [(w, c.start_ms, c.end_ms) for c in read_srt(clip_srt) for w in c.text.split()]
+        return {"mode": "phrase", "word_times": "phrase", "words": words}
+
     def render_clip(self, cut_mp4, clip_srt, design_texts, kind, out_mp4) -> dict[str, int]:
         from . import media
         from ..core.errors import VPError

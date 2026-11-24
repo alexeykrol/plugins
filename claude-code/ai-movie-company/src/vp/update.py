@@ -23,7 +23,9 @@ never two within MIN_GAP. State: <VP_HOME>/update.json.
 CLI:  vp update auto status|on|off [--json] [--marketplace M]
       vp update decline                     the person said «Не сейчас» to the offer
       vp update reminder due|shown [--json]  due = time has come AND the engine is idle
-      vp update check [--json]              running version vs the newest installed on disk
+      vp update check [--json]              running version vs the newest installed on disk; both
+                                            with their release line (vp.buildinfo: stage, build,
+                                            release time)
 """
 from __future__ import annotations
 
@@ -256,8 +258,17 @@ def _vkey(v: str) -> tuple[int, ...] | None:
 
 def check(plugin_root: Path | None = None, running: str | None = None) -> dict[str, Any]:
     """The running version against the newest folder of the plugin in Claude's cache. A newer one
-    there = downloaded by an update, loads on the next start of Claude."""
+    there = downloaded by an update, loads on the next start of Claude.
+
+    `running` / `installed_newest` stay plain X.Y.Z (they are compared and kept as keys); the line a
+    person is shown is `running_label` / `installed_newest_label` ("0.9.0 alpha · build 58 ·
+    2026-11-24 10:00 UTC"), and `installed_newest_build` carries its parts for the mod, which words
+    the line in the person's language."""
+    from dataclasses import replace
+
+    from . import buildinfo
     from .telemetry import plugin_version
+    mine = buildinfo.read()
     running = running or plugin_version()
     if plugin_root is None:
         _, plugin_root = _running_from()
@@ -269,8 +280,15 @@ def check(plugin_root: Path | None = None, running: str | None = None) -> dict[s
         if versions:
             newest = max(versions)[1]
     rk, nk = _vkey(running), _vkey(newest) if newest else None
+    # the folder's name is the version Claude loads; its build.json says the rest
+    theirs = replace(buildinfo.read(plugin_root / newest), version=newest) \
+        if plugin_root is not None and newest else None
     return {"running": running, "installed_newest": newest,
-            "restart_needed": bool(rk and nk and nk > rk)}
+            "restart_needed": bool(rk and nk and nk > rk),
+            "running_label": buildinfo.label(replace(mine, version=running)),
+            "installed_newest_label": buildinfo.label(theirs) if theirs else None,
+            "installed_newest_build": {"stage": theirs.stage, "build": theirs.build,
+                                       "released": theirs.released} if theirs else None}
 
 
 # ---- CLI ------------------------------------------------------------------------------------------
@@ -316,6 +334,6 @@ def main(argv: list[str]) -> int:
         return 0
     res = check()
     print(json.dumps(res) if a.json else
-          (f"restart needed: {res['running']} -> {res['installed_newest']}" if res["restart_needed"]
-           else f"running {res['running']}, nothing newer installed"))
+          (f"restart needed: {res['running_label']} -> {res['installed_newest_label']}"
+           if res["restart_needed"] else f"running {res['running_label']}, nothing newer installed"))
     return 0

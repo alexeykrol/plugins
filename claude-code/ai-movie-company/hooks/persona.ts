@@ -12,12 +12,6 @@ export const NAME: Record<DirectorLang, string> = {
   en: 'Elsa',
 }
 
-/** The role, dim after the name on the band. */
-export const ROLE: Record<DirectorLang, string> = {
-  ru: '(режиссёр монтажа)',
-  en: '(editing director)',
-}
-
 /** The dim words after the name on the band. */
 export const ON_STAGE: Record<DirectorLang, string> = {
   ru: 'на связи',
@@ -73,17 +67,80 @@ export const SPINNER_WORDS: Record<DirectorLang, readonly string[]> = {
 export const ACCENT = '#b4532a'
 
 /**
- * The release on the band, after the name. A unit test holds both to
- * .claude-plugin/plugin.json and to the top heading of CHANGELOG.md.
+ * The release line, shown wherever the person sees the version (the band, the update notice):
+ * "0.8.8 alpha · build 57 · 2026-11-23 22:40 UTC".
+ *
+ * The version is the manifest's: a unit test holds VERSION to .claude-plugin/plugin.json and to the
+ * top heading of CHANGELOG.md. The stage, the build number and the time of the release are read
+ * from build.json in the plugin's folder, which only scripts/stamp_build.py writes (never a hand,
+ * never a model). The engine words the same line in src/vp/buildinfo.py (`vp version`); a unit test
+ * holds the two to the same words.
  */
-export const VERSION = '0.8.7'
-export const RELEASED = '2026-11-21'
+export const VERSION = '0.8.8'
 
-/** The release date as the person reads it. */
-export function releasedText(words: DirectorLang): string {
-  const [year, month, day] = RELEASED.split('-')
+/** The closed list of stages. `release` shows no word; the word stays English in every language. */
+export const STAGES = ['alpha', 'beta', 'release'] as const
+export type Stage = (typeof STAGES)[number]
+export const DEFAULT_STAGE: Stage = 'alpha'
+export const QUIET_STAGE: Stage = 'release'
 
-  return words === 'ru' ? `${day}.${month}.${year}` : RELEASED
+/** What build.json says; null where it does not (no file, a broken one, an install older than it). */
+export type BuildInfo = {
+  stage: Stage
+  build: number | null
+  /** UTC, as the stamp writes it: "2026-11-23T22:40:00Z". */
+  released: string | null
+}
+
+/** No build.json: the line is the version and the default stage alone ("X.Y.Z alpha"). */
+export const NO_BUILD: BuildInfo = { stage: DEFAULT_STAGE, build: null, released: null }
+
+/** The word before the build number. */
+export const BUILD_WORD: Record<DirectorLang, string> = {
+  ru: 'сборка',
+  en: 'build',
+}
+
+/** Between the parts of the release line. */
+export const RELEASE_SEP = ' · '
+
+const RELEASED_FORM = /^(\d{4})-(\d\d)-(\d\d)T(\d\d):(\d\d)(?::\d\d)?Z$/
+
+/** build.json as read (or the engine's `installed_newest_build`), each field checked on its own. */
+export function buildInfoOf(held: unknown): BuildInfo {
+  if (typeof held !== 'object' || held === null) {
+    return NO_BUILD
+  }
+  const rec = held as Record<string, unknown>
+
+  return {
+    stage: STAGES.find(one => one === rec.stage) ?? DEFAULT_STAGE,
+    build: typeof rec.build === 'number' && Number.isInteger(rec.build) && rec.build > 0 ? rec.build : null,
+    released: typeof rec.released === 'string' && RELEASED_FORM.test(rec.released) ? rec.released : null,
+  }
+}
+
+/**
+ * The release line as the person reads it: "0.8.8 alpha · build 57 · 2026-11-23 22:40 UTC"
+ * (ru: "0.8.8 alpha · сборка 57 · 23.11.2026 22:40 UTC"). What is not known is left out.
+ */
+export function releaseLabel(words: DirectorLang, version: string, info: BuildInfo): string {
+  const parts = [info.stage === QUIET_STAGE ? version : `${version} ${info.stage}`]
+
+  if (info.build !== null) {
+    parts.push(`${BUILD_WORD[words]} ${info.build}`)
+  }
+  const at = info.released === null ? null : RELEASED_FORM.exec(info.released)
+
+  if (at !== null) {
+    const [, year, month, day, hour, minute] = at
+
+    parts.push(
+      words === 'ru' ? `${day}.${month}.${year} ${hour}:${minute} UTC` : `${year}-${month}-${day} ${hour}:${minute} UTC`,
+    )
+  }
+
+  return parts.join(RELEASE_SEP)
 }
 
 /**
@@ -532,6 +589,7 @@ export const NOTICE_DISMISS: Record<DirectorLang, string> = {
  * Claude herself (`vp app restart-claude`) when the person presses RESTART_NOW.
  */
 export function updateReadyText(words: DirectorLang, version: string): string {
+  // `version` is the new release's whole line (releaseLabel): version, stage, build, time.
   return words === 'ru'
     ? `Вышла новая версия ${version}. Она заработает после перезапуска Claude — я перезапущу сама, нажмите кнопку ниже`
     : `Version ${version} is out. It starts working once Claude restarts — I will restart it myself, press the button below`

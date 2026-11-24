@@ -3,10 +3,10 @@
 Nothing the person asked may silently get lost: every request goes into the ledger in the
 person's own words and carries a status until it is done — or the reason why not is written.
 
-  asks add <job|-> --text "..."                     record a request; prints its id (A1, A2, ...).
+  asks add <job|-> --text "..." [--decision]        record a request or agreed decision; prints its id.
                                                     The same text as a still-open ask -> the
                                                     existing id, nothing new is written.
-  asks set <job|-> <id> --status S [--note ...] [--evidence ...] [--agreed]
+  asks set <job|-> <id> --status S [--note ...] [--evidence ...] [--agreed] [--replaced-by <id>]
                                                     change the status; S is one of STATUSES.
   asks list <job|-> [--open]                        one line per ask: id, status, text.
 
@@ -17,6 +17,7 @@ appended, nothing ever deleted); asks.md next to it is regenerated after every w
 Rules (code, not judgment): `done` needs --evidence (a file, a step, a fact that shows it);
 `not_done` and `dropped` need --note with the reason; `dropped` also needs --agreed — the note
 must say that the person agreed to drop it.
+`superseded` needs --replaced-by with another ask in the same ledger.
 """
 from __future__ import annotations
 
@@ -31,10 +32,13 @@ from .core.io import atomic_write, now_iso, read_yaml, write_yaml
 from .core.paths import Job, vp_home
 from .gates._common import RC_OK, Refused, guarded
 
-STATUSES = ("open", "in_progress", "done", "not_done", "dropped")
-CLOSED = ("done", "dropped")  # everything else is still owed to the person
+STATUSES = ("open", "in_progress", "done", "not_done", "dropped", "superseded")
+CLOSED = ("done", "dropped", "superseded")  # everything else is still owed to the person
 LABELS = {"open": "открыто", "in_progress": "в работе", "done": "выполнено",
-          "not_done": "не выполнено", "dropped": "снято по согласию"}
+          "not_done": "не выполнено", "dropped": "снято по согласию",
+          "superseded": "заменено"}
+VERSION_REMINDER = ("Review the asks for this version with vp asks list <job> --open "
+                    "and record status changes with vp asks set.")
 
 
 class Ledger:
@@ -84,19 +88,23 @@ def _next_id(asks: list[dict[str, Any]]) -> str:
     return f"A{max(nums, default=0) + 1}"
 
 
-def add(ledger: Ledger, text: str, at: str | None = None) -> tuple[str, bool]:
-    """Record a request verbatim. Returns (id, created); an identical still-open ask -> its id."""
+def add(ledger: Ledger, text: str, at: str | None = None, *,
+        decision: bool = False) -> tuple[str, bool]:
+    """Record a request or agreed decision verbatim, reusing an identical open entry."""
     words = str(text or "").strip()
     if not words:
         raise Refused("--text is empty: write the person's words")
     with ledger.locked():
         asks = ledger.load()
         for a in asks:
-            if a.get("status") not in CLOSED and str(a.get("text", "")).strip() == words:
+            if (a.get("status") not in CLOSED and a.get("decision", False) == decision
+                    and str(a.get("text", "")).strip() == words):
                 return a["id"], False
         at = at or now_iso()
         entry = {"id": _next_id(asks), "text": words, "at": at, "status": "open", "note": "",
                  "evidence": "", "history": [{"at": at, "status": "open"}]}
+        if decision:
+            entry["decision"] = True
         asks.append(entry)
         ledger.save(asks)
         return entry["id"], True
@@ -104,7 +112,7 @@ def add(ledger: Ledger, text: str, at: str | None = None) -> tuple[str, bool]:
 
 def set_status(ledger: Ledger, ask_id: str, status: str, note: str | None = None,
                evidence: str | None = None, agreed: bool = False,
-               at: str | None = None) -> dict[str, Any]:
+               at: str | None = None, *, replaced_by: str | None = None) -> dict[str, Any]:
     """Change the status of one ask under the ledger rules; returns the updated entry."""
     if status not in STATUSES:
         raise Refused(f"status must be one of {', '.join(STATUSES)}")
@@ -116,14 +124,36 @@ def set_status(ledger: Ledger, ask_id: str, status: str, note: str | None = None
     if status == "dropped" and not agreed:
         raise Refused("dropped needs --agreed: only when the person agreed to drop it "
                       "(say so in --note)")
+    if status == "superseded" and not _clean(replaced_by):
+        raise Refused("superseded needs --replaced-by with the replacement ask id")
+    if status != "superseded" and replaced_by is not None:
+        raise Refused("--replaced-by is only for superseded asks")
     with ledger.locked():
         asks = ledger.load()
+        by_id = {a.get("id"): a for a in asks}
         ask_id = str(ask_id).strip().upper()
-        entry = next((a for a in asks if a.get("id") == ask_id), None)
+        entry = by_id.get(ask_id)
         if entry is None:
             known = ", ".join(str(a.get("id")) for a in asks) or "-"
             raise Refused(f"unknown ask {ask_id!r}; asks: {known}")
         change: dict[str, Any] = {"at": at or now_iso(), "status": status}
+        if status == "superseded":
+            replacement = _clean(replaced_by).upper()
+            if replacement not in by_id:
+                raise Refused(f"unknown replacement ask {replacement!r}")
+            seen = {ask_id}
+            current = replacement
+            while current in by_id:
+                if current in seen:
+                    raise Refused("the replacement would create an ask cycle")
+                seen.add(current)
+                next_id = by_id[current].get("replaced_by")
+                if not next_id:
+                    break
+                current = next_id
+            entry["replaced_by"] = change["replaced_by"] = replacement
+        else:
+            entry.pop("replaced_by", None)
         if note:
             entry["note"] = change["note"] = note
         if evidence:
@@ -154,6 +184,10 @@ def render_md(title: str, asks: list[dict[str, Any]]) -> str:
             lines.append(f"- чем подтверждено: {a['evidence']}")
         if a.get("note"):
             lines.append(f"- пояснение: {a['note']}")
+        if a.get("decision"):
+            lines.append("- согласованное решение")
+        if a.get("replaced_by"):
+            lines.append(f"- заменено поручением {a['replaced_by']}")
         lines.append("")
     if not asks:
         lines += ["Поручений пока нет.", ""]
@@ -169,7 +203,7 @@ def report_lines(job: Job) -> list[str]:
     left = open_asks(asks)
     lines = ["", "## Поручения", ""]
     if not left:
-        return lines + ["- все поручения выполнены"]
+        return lines + ["- открытых поручений нет"]
     for a in left:
         why = f" — {a['note']}" if a.get("note") else ""
         text = " ".join(str(a.get("text", "")).split())
@@ -183,6 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("add")
     s.add_argument("job", help="job folder, or - for requests not tied to a job")
     s.add_argument("--text", required=True, help="the person's words, verbatim")
+    s.add_argument("--decision", action="store_true", help="record an agreed decision as an ask")
     s = sub.add_parser("set")
     s.add_argument("job")
     s.add_argument("id")
@@ -190,9 +225,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--note")
     s.add_argument("--evidence")
     s.add_argument("--agreed", action="store_true", help="the person agreed (needed for dropped)")
+    s.add_argument("--replaced-by", help="replacement ask id (needed for superseded)")
     s = sub.add_parser("list")
     s.add_argument("job")
-    s.add_argument("--open", action="store_true", help="only asks not done and not dropped")
+    s.add_argument("--open", action="store_true", help="only asks still owed")
     return p
 
 
@@ -202,10 +238,11 @@ def main(argv: list[str]) -> int:
     def body() -> int:
         ledger = Ledger(args.job)
         if args.cmd == "add":
-            ask_id, created = add(ledger, args.text)
+            ask_id, created = add(ledger, args.text, decision=args.decision)
             print(ask_id if created else f"{ask_id} (already recorded, still open)")
         elif args.cmd == "set":
-            e = set_status(ledger, args.id, args.status, args.note, args.evidence, args.agreed)
+            e = set_status(ledger, args.id, args.status, args.note, args.evidence, args.agreed,
+                           replaced_by=args.replaced_by)
             print(f"{e['id']}\t{e['status']}\t{' '.join(str(e['text']).split())}")
         else:
             asks = ledger.load()

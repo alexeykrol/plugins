@@ -103,6 +103,15 @@ DEFAULTS: dict[str, Any] = {
         "frozen_share_max": {"reel": 0.99, "long": None, "full": None},
         "silence_db": -40.0, "silence_max_s": {"reel": 10.0, "long": None, "full": None},
     },
+    # Caption gate after S5 (vp.steps.s5_render.CAPTION_QA_DEFAULTS): burned captions against the
+    # voice. `transcribe` says when the finished reel's sound may go to speech recognition for it:
+    #   auto    only for a recording the person already sent to that recogniser (`vp transcribe`)
+    #   always  whenever a key is set (the person's sound leaves the computer for every reel)
+    #   off     never; the check is then reported as not run
+    # `lead_max_ms` / `on_silence_max` are the limits of the local check `caption_voiced`
+    # (captions against the pauses of the sound; nothing leaves the computer for it).
+    "caption_qa": {"transcribe": "auto", "p90_ms": 300, "max_ms": 800,
+                   "lead_max_ms": 1500, "on_silence_max": 0.5},
     # S5v visual check by the model (vp.steps.s5v_visual.DEFAULTS)
     "s5v": {"frames": 6},
     # Remotion design path (vp.adapters.render_remotion.REMOTION_DEFAULTS); used when

@@ -115,9 +115,23 @@ Reached from the `pipeline` skill when an ElevenLabs step has no key (`vp transc
 says `key: false`, `vp keys status` has no `elevenlabs`, or an engine command printed
 `NEED_KEY:elevenlabs`), or when ElevenLabs refused the key (`BAD_KEY:elevenlabs`). One key serves
 all three — recognition, the voice-over and the music — and it is connected **once**, from the
-clipboard: no connector, no Claude restart. Say the road once: «Нужен ключ ElevenLabs — один на
-всё: расшифровка речи, голос диктора и музыка. Три шага, пара минут; у них есть бесплатный тариф
-(музыка — только на платном).» The key NEVER passes through the chat: the person copies it, the
+clipboard: no connector, no Claude restart.
+
+**The plan is named here, before the key — never discovered at the music step.** Say the road
+once, with what their plan gives: «Нужен ключ ElevenLabs — один на всё: расшифровка речи, голос
+диктора и музыка. Три шага, пара минут. Начать можно на бесплатном тарифе: его хватает на голос
+для нескольких коротких роликов или примерно на полчаса расшифровки речи. А музыку через ключ
+ElevenLabs даёт только на платном — примерно от 6 долларов в месяц. Без платного тарифа сделаю
+ролик без музыки или с вашей.» The numbers are approximate (`docs/research/service-costs-2026-11-20.md`
+in the source repository: the free plan is about 10 thousand credits a month, a one-minute voice
+with retakes about 2 thousand, half an hour of recognition about all of it) and theirs to check
+on the ElevenLabs site: say «примерно», never a promise. A long recording without subtitles does
+not fit the free plan — the cost line of `vp transcribe estimate` says what it will take. What a
+tariff allows beyond that (commercial use and the like) you do not assert — «это в условиях
+ElevenLabs, посмотрите у них». When `vp tutorial for --moment elevenlabs_key --json` has an
+`offer`, it is one more button of the first step's form (the `pipeline` skill, "Tutorials").
+
+The key NEVER passes through the chat: the person copies it, the
 engine reads it from the clipboard, clears the clipboard and keeps the key on this computer. If the
 person pastes a key into the chat anyway, do not repeat it, do not use it; say it is safer to
 create a new one later and continue with step 3.
@@ -167,7 +181,8 @@ buttons — if the screen differs from your words, ask for a screenshot and guid
 
 ## The key never goes through the chat
 
-- The person **copies** the key on the site (the site's «Copy» button, or select + Cmd+C) and
+- The person **copies** the key on the site (the site's «Copy» button; where there is none —
+  select it with the mouse, right click → «Скопировать» / "Copy"; never a key combination) and
   presses **«Скопировал(а)»**. You then run `vp keys set <service> --from-clipboard`: the engine
   reads the clipboard, saves the key and clears the clipboard. You never see, print, repeat or
   type the key; never put it on a command line.
@@ -199,7 +214,7 @@ Say the road once: «Три шага: зарегистрироваться на 
    «Generate API Key».» Snag option: **«Просит сайт (URL)»** → «Напишите любой свой сайт или страницу
    в соцсети; если нет — youtube.com/@ваш канал».
 3. «На странице появится длинный ключ из букв и цифр. Нажмите «Copy» рядом с ним (или выделите его
-   и Cmd+C) и нажмите здесь «Скопировал(а)».» → `vp keys set pexels --from-clipboard`, then
+   мышкой, правый щелчок → «Скопировать») и нажмите здесь «Скопировал(а)».» → `vp keys set pexels --from-clipboard`, then
    `vp keys check pexels`.
 
 Done → «Есть! Сток подключён: 200 запросов в час — с запасом.»
@@ -212,8 +227,8 @@ Road: «Два шага: зарегистрироваться на Pixabay и с
    Google. Если аккаунт уже есть — «Log in».» Snag option: **«Просит подтвердить почту»** → «Откройте
    письмо от Pixabay и нажмите ссылку в нём — потом вернитесь сюда».
 2. «Теперь откройте pixabay.com/api/docs/ — уже войдя в аккаунт. В разделе «Parameters» у строки
-   «key (required)» будет ваш ключ, выделенный зелёным. Выделите его мышкой целиком, нажмите Cmd+C
-   и здесь — «Скопировал(а)».» Snag option: **«Ключа нет, написано «Please login»»** → they are not
+   «key (required)» будет ваш ключ, выделенный зелёным. Выделите его мышкой целиком, правый щелчок →
+   «Скопировать» (Copy), и здесь — «Скопировал(а)».» Snag option: **«Ключа нет, написано «Please login»»** → they are not
    logged in on that page: «Нажмите «Log in» вверху этой же страницы, и ключ появится».
    → `vp keys set pixabay --from-clipboard`, `vp keys check pixabay`.
 

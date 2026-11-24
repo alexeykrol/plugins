@@ -43,6 +43,7 @@ from ..core.io import (atomic_write, dump_yaml, now_iso, parse_iso, read_json, r
                        sha256_bytes, sha256_file, sha256_obj, write_yaml)
 from ..core.manifest import read_manifest
 from ..core.paths import Job
+from ..core.srt import read_srt
 from ..core.status import Status
 from ..knowledge.store import KnowledgeStore, verdict_key
 from . import _fragments as F
@@ -146,9 +147,10 @@ def build_script(cues, proposed: dict[str, Any], meaning_risk: list[Any], job_id
     for f in frags:
         starts.setdefault(str(f["first_cue"]), []).append(f"▶ **{f['id']}** {f['type']} «{f['title']}» starts")
         ends.setdefault(str(f["last_cue"]), []).append(f"■ **{f['id']}** ends")
-    out = [f"# Script — {job_id}", "",
-           f"Knowledge version {proposed.get('knowledge_version')} · boundary mode "
-           f"{proposed.get('boundary_mode')} · {len(frags)} proposals", ""]
+    summary = ("Whole recording" if proposed.get("whole_recording") else
+               f"Knowledge version {proposed.get('knowledge_version')} · boundary mode "
+               f"{proposed.get('boundary_mode')} · {len(frags)} proposals")
+    out = [f"# Script — {job_id}", "", summary, ""]
     if frags:
         out += ["## Proposed fragments", "", "| id | type | time | subtitles | duration | title |",
                 "|---|---|---|---|---|---|"]
@@ -373,10 +375,15 @@ class S3bReview(StepSpec):
 
     def inputs(self, ctx: Ctx) -> list[Path]:
         j = ctx.job
-        return [j.fragments_proposed, j.fragments_review, j.subtitles_srt, j.source_words,
-                j.job_yaml, j.s1_report]
+        paths = [j.fragments_proposed, j.fragments_review, j.subtitles_srt, j.source_words,
+                 j.job_yaml, j.s1_report]
+        if ctx.config.get("whole_recording") == "reel":
+            paths.append(j.request_yaml)
+        return paths
 
     def config(self, ctx: Ctx) -> dict:
+        if ctx.config.get("whole_recording"):
+            return {"whole_recording": ctx.config["whole_recording"]}
         p = ctx.profile
         return {"reel": p.get("reel"), "long": p.get("long"),
                 "selection_full_scan": bool(p.get("selection_full_scan", True))}
@@ -401,15 +408,33 @@ class S3bReview(StepSpec):
 
     def run(self, ctx: Ctx) -> dict:
         job = ctx.job
+        report = read_json(job.s1_report, default={}) or {}
+        risk = report.get("meaning_risk") if isinstance(report, dict) else None
+        risk = risk if isinstance(risk, list) else []
+        whole = ctx.config.get("whole_recording")
+        if whole:
+            duration = F._video_end_ms(job)
+            if not duration:
+                raise VPError("data", "the recording duration is missing from intake (S0)")
+            span = {"start_ms": 0, "end_ms": duration, "duration_ms": duration}
+            fragments = []
+            if whole == "reel":
+                request = job.request()
+                fragments.append({"id": "r01", "type": "reel", "origin": "whole_recording",
+                                  "title": str(request.get("title") or ""),
+                                  "thesis": str(request.get("thesis") or ""), **span})
+            atomic_write(job.script_md, build_script(read_srt(job.subtitles_srt),
+                                                     {"whole_recording": whole}, risk, job.job_id))
+            write_yaml(job.fragments_yaml, {
+                "job_id": job.job_id, "fragments": fragments, "whole_recording": {"kind": whole, **span},
+            })
+            return {"fragments": len(fragments), "whole_recording": whole}
         proposed = read_yaml(job.fragments_proposed, default=None)
         if not isinstance(proposed, dict) or "fragments" not in proposed:
             raise VPError("data", "fragments.proposed.yaml missing or malformed")
         proposed_sha = sha256_file(job.fragments_proposed)
         timeline = F.load_timeline(job, proposed.get("boundary_mode"))
-        report = read_json(job.s1_report, default={}) or {}
-        risk = report.get("meaning_risk") if isinstance(report, dict) else None
-        atomic_write(job.script_md, build_script(timeline.cues, proposed,
-                                                 risk if isinstance(risk, list) else [], job.job_id))
+        atomic_write(job.script_md, build_script(timeline.cues, proposed, risk, job.job_id))
         default_full_scan = bool(ctx.profile.get("selection_full_scan", True))
         n = len(proposed.get("fragments") or [])
         if not job.fragments_review.exists():

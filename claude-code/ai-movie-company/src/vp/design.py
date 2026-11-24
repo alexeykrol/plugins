@@ -98,7 +98,23 @@ def _inputs(job: Job, item: str) -> tuple[Path, Path, dict[str, Any]]:
         raise VPError("data", f"{item}: {', '.join(missing)} not ready yet — the run makes them "
                               f"after the fragments are approved (S4)")
     texts = read_yaml(job.design_texts(item), default=None)
+    _word_times(job, item, cut, srt)
     return cut, srt, texts if isinstance(texts, dict) else {}
+
+
+def _word_times(job: Job, item: str, cut: Path, srt: Path) -> None:
+    """A reel's look rendered before S5 ran gets the same word times S5 gives its captions
+    (`clip.words.json` next to clip.srt, see vp.steps.s5_render). A file made for the present
+    text of clip.srt is left alone; one made for another text is made again (the renderer would
+    refuse it and show every phrase whole)."""
+    from .analysis import align_words
+    if item_kind(job, item) != "reel" or align_words.clip_words_current(srt):
+        return
+    from .core.ctx import Ctx
+    from .steps import s4_cut, s5_render
+    ctx = Ctx(job, item, job_config(job))
+    clip_ms = video_info(cut)["video_ms"] or media.duration_ms(cut)
+    s5_render.prepare_clip_words(ctx, s4_cut.fragment_record(ctx), clip_ms)
 
 
 def preview(job: Job, item: str, captions: str | None = None, cards: bool = True) -> dict[str, Any]:
@@ -125,6 +141,9 @@ def preview(job: Job, item: str, captions: str | None = None, cards: bool = True
     return {"item": item, "kind": kind, "preview": str(out), "poster": str(poster),
             "duration_ms": res["duration_ms"], "width": info["width"], "height": info["height"],
             "captions": r.rs["captions"]["highlight"] if kind == "reel" else "youtube-track",
+            # aligned = the words light up by the voice; estimated_voiced = phrases whole, words by
+            # the pauses of the sound where that is safe; estimated = every phrase whole
+            "word_times": r.caption_info.get("word_times") if kind == "reel" else None,
             "seconds": r.timings.get("total")}
 
 

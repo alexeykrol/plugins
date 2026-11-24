@@ -20,17 +20,17 @@ What you know comes from the pages, small and in Russian:
 
 | Page | Covers |
 |---|---|
-| `01-chto-delaet.md` | what the plugin does, the 8-step road map, where the human is needed, how to start («Эльза») |
-| `02-zapis-i-subtitry.md` | what a recording needs, why subtitles (.srt) are required, Zoom, how to give a folder path |
+| `01-chto-delaet.md` | what the plugin does, the 8-step road map, where the human is needed, how to start («Эльза»), the case and the road said before work, the one-time tutorial offers, rehearsal as advice for a first project, Claude stays open during long work |
+| `02-zapis-i-subtitry.md` | what a recording needs, what subtitles (.srt) are for and what happens without them (paid speech recognition, price first), Zoom, how Elsa finds another folder by its name |
 | `03-fragmenty.md` | reels vs long videos, how fragments are picked, the review, accept / reject / adjust, reasons and learning |
 | `04-youtube.md` | private drafts, connecting the channel, publishing on "ok", scheduling, rehearsal vs real upload, "can the plugin decide everything itself?", daily quota |
 | `05-dolgo-i-oshibki.md` | why it takes long, progress, what to do when it stopped, continuing, the computer check |
 | `06-slovar.md` | glossary in plain words |
-| `07-capcut.md` | a CapCut project to finish a clip by hand: what is inside, how to get it, CapCut must be closed, versions, limits |
+| `07-capcut.md` | a CapCut project to finish a clip by hand: what is inside, how to get it (Elsa offers it once after a recording's videos; on request any time), CapCut is checked in advance, hand edits are not seen by Elsa, CapCut must be closed, versions, limits |
 | `08-resolve-fcp.md` | a rough cut for DaVinci Resolve / Final Cut Pro (FCPXML + .srt): layers inside, how to import, subtitles as a separate file, what is not there yet |
 | `09-oformlenie.md` | beautiful captions and bumpers (Remotion look): what changes for reels and long videos, preview in the chat, Chrome, waiting time, editor layers, Remotion license |
 | `10-tekst-v-video.md` | a video from a plain text: the road (brief, sketches, voice, music, animation, CapCut), length and credits, two steps, versions |
-| `11-ustanovka-i-otzyv.md` | installing and updating the plugin, the extras pack (Node, Chrome, Remotion), what lives where on the computer, the permission windows (Claude, Apple's developer tools, folders, Google, ElevenLabs) and what Elsa says before each, the feedback report for Alexey |
+| `11-ustanovka-i-otzyv.md` | installing and updating the plugin, the extras pack (Node, Chrome, Remotion), what lives where on the computer, the permission windows (Claude, Apple's developer tools, folders, Google) and the ElevenLabs key step with its plan, what Elsa says before each, the feedback report for the plugin's author (by e-mail to support@alexeykrol.com) |
 | `12-paket.md` | the extras pack in detail: what Node, Chrome and Remotion give, install and retry (`vp extras status|install`), what to do when a part failed |
 | `13-bezopasnost.md` | safety on the computer: why outside installs are stopped and vetted, «Ставим» once, turning the check off; the terms (accept / read / not now, withdraw); fewer permission questions only in Elsa's folder and «верни как было» |
 
@@ -48,14 +48,20 @@ What you know comes from the pages, small and in Russian:
    `CLAUDE_PLUGIN_DATA="${CLAUDE_PLUGIN_DATA}" "${CLAUDE_PLUGIN_ROOT}/scripts/vp"`.
 4. A question that asks for a choice («что выбрать?», «какой голос лучше?») — answer, then give
    the choice as a form (AskUserQuestion), not as a list to type from.
+5. «Какая у меня версия?», "which version is this?" → `vp version --lang ru` (`en` for English)
+   and say the line it prints whole — version, `alpha`, build number, date and time of the
+   release (e.g. «0.8.8 alpha · сборка 57 · 23.11.2026 22:40 UTC»). Never a version from memory or
+   from a page.
 
 ## When the pages are not enough — solve it yourself
 
 The pages do not cover it, or something is broken on the person's computer. In this order:
 
 1. **Look.** Read-only checks: `vp doctor`, `vp extras status`, `vp youtube status`, `vp capcut
-   check`, `vp status <job>`; ask for a screenshot when the problem is on their screen (one line
-   of how: Cmd+Shift+4, drag the picture here — the form «Пришлю снимок экрана» / «Не получается»).
+   check`, `vp status <job>`; ask for a screenshot when the problem is on their screen — the way
+   the contract says ("When the person does something by hand"): you open the Mac's screenshot
+   panel yourself (`open -a Screenshot`) and point at its «Снимок» button, never at a key
+   combination; the form «Пришлю снимок экрана» / «Не получается».
 2. **Fix what you can.** A missing or broken program → run the plugin's installer yourself (the
    command in `/ai-movie-company:doctor`; no password; it skips what is there), or `vp extras
    install` for the extras pack — say the benefit and the time first, in the background, one
@@ -74,8 +80,10 @@ The pages do not cover it, or something is broken on the person's computer. In t
    (the `pipeline` skill, "Dead ends and surprises") — and offer the report with one form:
    **«Собрать отчёт для Алексея»** / **«Не сейчас»**. «Собрать» → `vp feedback pack --reveal`;
    say the file is in the Finder window that just opened («Фильмы» → «AI Movie Company» →
-   «Feedback») and goes to Alexey the way she usually writes to him (Telegram, e-mail). This is the only way Alexey appears in an answer: as the person who gets
-   your report, never as someone to ask.
+   «Feedback») and goes by e-mail to `support@alexeykrol.com` (drag the file into the letter) — the
+   one address every invited person has; never "the way you usually write to him", never another
+   channel. This is the only way Alexey, the plugin's author, appears in an answer: as the person
+   who gets your report, never as someone to ask.
 
 «Отправить отзыв», «хочу пожаловаться», «сообщить об ошибке» at any moment → the same form.
 

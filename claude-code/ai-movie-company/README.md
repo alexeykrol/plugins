@@ -30,8 +30,8 @@ The last line says what comes next:
 
 Everything else on this page is for those who are curious.
 
-**A video production team inside Claude Code.** Give it a recorded lecture or interview with
-subtitles — it returns a reviewed series for YouTube: reels and long fragments with burned-in
+**A video production team inside Claude Code.** Give it a recorded lecture or interview (with
+subtitles or without) — it returns a reviewed series for YouTube: reels and long fragments with burned-in
 captions, intro and outro cards, thumbnails, titles, descriptions with chapters and cross-links.
 Everything is uploaded as **private** drafts; nothing is published until you approve each video
 in the chat.
@@ -42,11 +42,13 @@ proposal is weak. The decisions and the channel stay yours.
 
 ## Quick start (after the install)
 
-Whatever did not work, Elsa writes down and puts together a report — one file you can forward to the author.
+Whatever did not work, Elsa writes down and puts together a report — one file you can send to the
+author at support@alexeykrol.com. Stuck anywhere — ask Elsa right in the chat, in words or with a screenshot.
 
 1. Open the Claude app → **Code**, start a new conversation.
-2. For a video from a recording, put the recording in a folder together with its subtitles: a video
-   (`.mp4`, `.mov`, `.mkv`) and an `.srt` file (the plugin does not transcribe: no `.srt` — no run).
+2. For a video from a recording, put the recording in a folder: a video (`.mp4`, `.mov`, `.mkv`)
+   and, if you have them, its subtitles — an `.srt` file. No subtitles — Elsa transcribes the speech
+   first (a paid outside service, ElevenLabs, with your own key; she names the price in advance).
    For a video from a text, the text is enough.
 3. Write **"Elsa"** (or `/elsa`).
 4. The editing director looks for your recordings herself and asks which one to take. She reads

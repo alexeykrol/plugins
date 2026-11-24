@@ -272,7 +272,14 @@ export CLAUDE_PLUGIN_DATA="$HOME/.claude/plugins/data/$(echo "$PLUGIN_ID" | sed 
   fail engine "the plugin's engine did not start (see above)"
 }
 log_file "$TMP/engine.log" "engine:"
-step 6 "engine: ready"
+# The release line from the engine itself (`vp version`: version, stage, build, release time). An
+# engine older than that command answers nothing: the plain version from Claude's list stands.
+RELEASE="$("$VP" version 2>/dev/null | head -1 || true)"
+case "$RELEASE" in
+  [0-9]*.[0-9]*.[0-9]*) ;;
+  *) RELEASE="$PLUGIN_VER" ;;
+esac
+step 6 "engine: ready — ai-movie-company $RELEASE"
 
 # 7. The add-ons for the design look. A failure here does not fail the install: the plugin works in
 #    the plain look, `vp doctor` says what is missing, Elsa retries with `vp extras install`.

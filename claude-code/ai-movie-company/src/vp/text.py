@@ -29,7 +29,10 @@ Job folder of a text job (the contract the dialog writes against):
   renders/vN*.mp4     stage "render" by `vp text render` (vN.mp4 = sound baked in, loudness
                       mastered; vN-picture.mp4 = picture only; vN-chat.mp4 = the copy small
                       enough for the chat, only when vN.mp4 is too big)
+  renders/vN.timing.json  when the version first finished mastering (`vp text timing`)
   capcut/vN/          stage "capcut": one folder per exported CapCut version (vp capcut)
+  run.json            the run signal's state (vp.runsignal): the job's random run number, the
+                      scenario letter, the stages already reported; written only by the engine
 
 scenes.json (written in the dialog; texts only — no times, the times come from the voice):
   {"fps": 30, "scenes": [{"id": "S1", "cues": ["subtitle line", ...],
@@ -45,10 +48,11 @@ ElevenLabs <break time="Xs"/> tags. Credits: voice 1 per character (v4); voice t
 × one line of up to 200 characters (the choice form holds 3 voices + «other voices»); music 900
 per minute = 15 per second (elevenlabs.io/pricing; measured 2026-11-19: 945 credits for 63 s).
 
-CLI:  vp text new <job> --file <text.md> [--title T] [--json]
+CLI:  vp text new <job> --file <text.md> [--title T] [--scenario <letter>] [--json]
       vp text status <job> [--json]          stages, the next step and its exact command
       vp text approve <job> sketches|… [--note T]
       vp text estimate <job> [--json]
+      vp text timing <job> [--json]          time from job creation to each finished render
       vp text timeline <job> [--json]
       vp text render <job> --composition <Id> [--version vN] [--project DIR] [--entry F]
                      [--no-props] [--force] [--json]
@@ -61,6 +65,7 @@ CLI:  vp text new <job> --file <text.md> [--title T] [--json]
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import math
 import os
@@ -71,7 +76,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .core.errors import VPError
-from .core.io import now_iso, read_json, read_yaml, write_json, write_yaml
+from .core.io import now_iso, parse_iso, read_json, read_yaml, write_json, write_yaml
 
 KIND = "text"
 STAGES = ("brief", "script", "sketches", "voice", "music", "animation", "render", "capcut")
@@ -697,6 +702,22 @@ def next_render_version(folder: Path) -> str:
     return f"v{max(nums, default=0) + 1}"
 
 
+def timing(folder: str | Path) -> dict[str, Any]:
+    """Wall-clock time from text job creation to the first successful master of each version."""
+    folder = _text_folder(folder)
+    req = read_yaml(folder / "request.yaml")
+    started_at = req.get("created_at")
+    start = parse_iso(str(started_at)) if started_at else None
+    versions = []
+    for version in render_versions(folder):
+        stamp = read_json(folder / "renders" / f"{version}.timing.json", default={})
+        finished_at = stamp.get("finished_at")
+        elapsed = (int((parse_iso(finished_at) - start).total_seconds())
+                   if start is not None and finished_at else None)
+        versions.append({"version": version, "finished_at": finished_at, "elapsed_s": elapsed})
+    return {"started_at": str(started_at) if started_at else None, "versions": versions}
+
+
 def chat_copy(src: Path, out: Path, max_bytes: int = CHAT_MAX_BYTES,
               info: dict[str, Any] | None = None) -> tuple[Path, bool]:
     """A copy small enough to send into the chat: H.264 at a bitrate that fits `max_bytes`, short
@@ -729,9 +750,24 @@ def master(folder: str | Path, version: str | None = None,
     """Finish a text-path render renders/<v>.mp4: loudness to −14 LUFS (two-pass loudnorm, the
     picture is copied, nothing re-rendered), the picture-only file <v>-picture.mp4 for CapCut when
     missing, and the chat copy <v>-chat.mp4 when <v>.mp4 is bigger than the chat takes.
-    Returns the measured loudness and the file to send into the chat (`chat`)."""
-    from .adapters import media
+    Returns the measured loudness and the file to send into the chat (`chat`).
+    Run signal (vp.runsignal): step `master`, then `video_ready` — the finished video exists."""
+    from . import runsignal
+    from .asks import VERSION_REMINDER
     folder = _text_folder(folder)
+    with runsignal.step(folder, "master"):
+        res = _master(folder, version, chat_max_bytes)
+        done = res.get("version") or version
+        if done:                      # first successful master of this version = its finish time
+            stamp = folder / "renders" / f"{done}.timing.json"
+            if not stamp.exists():
+                write_json(stamp, {"finished_at": now_iso()})
+    runsignal.video_ready(folder)
+    return {**res, "asks_reminder": VERSION_REMINDER}
+
+
+def _master(folder: Path, version: str | None, chat_max_bytes: int) -> dict[str, Any]:
+    from .adapters import media
     have = render_versions(folder)
     version = version or (have[-1] if have else None)
     if not version:
@@ -813,36 +849,38 @@ def render(folder: str | Path, composition: str, version: str | None = None,
     if not (proj / entry).is_file():
         raise VPError("data", f"no Remotion project: {proj / entry} is missing (write the "
                               f"compositions there; src/index.ts calls registerRoot)")
-    if workspace is None:
-        from .adapters.render_remotion import RemotionWorkspace
-        from .core.config import load_config
-        workspace = RemotionWorkspace(load_config())
-    workspace.ensure(log=lambda s: print(s, file=sys.stderr))      # stdout stays the result
-    link_node_modules(proj, Path(workspace.dir) / "node_modules")
-    tmp = folder / "renders" / f".{version}.rendering.mp4"
-    settings = getattr(workspace, "settings", {}) or {}
-    args = ["render", entry, composition, str(tmp), "--log=info",
-            f"--crf={int(settings.get('crf') or 16)}", "--enforce-audio-track"]
-    frames = None
-    tl = folder / "timeline.json"
-    if props and tl.is_file():
-        args.append(f"--props={tl}")
-        frames = (read_json(tl) or {}).get("durationInFrames")
-    if settings.get("concurrency"):
-        args.append(f"--concurrency={settings['concurrency']}")
-    if settings.get("gl"):
-        args.append(f"--gl={settings['gl']}")
-    tmp.parent.mkdir(parents=True, exist_ok=True)
+    from . import runsignal
     from .core import progress
-    try:
-        with progress.tracking(folder, "render", version, total=float(frames or 1),
-                               unit="frames"):
-            workspace.run(args, frames=int(frames) if frames else None, cwd=proj)
-        if not tmp.is_file():
-            raise VPError("data", f"remotion wrote no {out.name}")
-        os.replace(tmp, out)
-    finally:
-        tmp.unlink(missing_ok=True)
+    with runsignal.step(folder, "render"):      # run signal: the engine's part of the stage
+        if workspace is None:
+            from .adapters.render_remotion import RemotionWorkspace
+            from .core.config import load_config
+            workspace = RemotionWorkspace(load_config())
+        workspace.ensure(log=lambda s: print(s, file=sys.stderr))      # stdout stays the result
+        link_node_modules(proj, Path(workspace.dir) / "node_modules")
+        tmp = folder / "renders" / f".{version}.rendering.mp4"
+        settings = getattr(workspace, "settings", {}) or {}
+        args = ["render", entry, composition, str(tmp), "--log=info",
+                f"--crf={int(settings.get('crf') or 16)}", "--enforce-audio-track"]
+        frames = None
+        tl = folder / "timeline.json"
+        if props and tl.is_file():
+            args.append(f"--props={tl}")
+            frames = (read_json(tl) or {}).get("durationInFrames")
+        if settings.get("concurrency"):
+            args.append(f"--concurrency={settings['concurrency']}")
+        if settings.get("gl"):
+            args.append(f"--gl={settings['gl']}")
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with progress.tracking(folder, "render", version, total=float(frames or 1),
+                                   unit="frames"):
+                workspace.run(args, frames=int(frames) if frames else None, cwd=proj)
+            if not tmp.is_file():
+                raise VPError("data", f"remotion wrote no {out.name}")
+            os.replace(tmp, out)
+        finally:
+            tmp.unlink(missing_ok=True)
     for stale in (f"{version}-picture.mp4", f"{version}-chat.mp4"):   # of an earlier take
         (folder / "renders" / stale).unlink(missing_ok=True)
     with progress.tracking(folder, "master", version, total=1, unit="files"):
@@ -859,9 +897,12 @@ def main(argv: list[str]) -> int:
     n.add_argument("job")
     n.add_argument("--file", required=True)
     n.add_argument("--title")
+    n.add_argument("--scenario", help="the scenario letter of the route (vp scenario plan), "
+                                      "remembered for the job")
     n.add_argument("--json", action="store_true")
     for name, hlp in (("status", "where the text path stands"),
                       ("estimate", "length and ElevenLabs credits before generation"),
+                      ("timing", "time from job creation to each finished render"),
                       ("timeline", "measure the voice files, write timeline.json")):
         s = sub.add_parser(name, help=hlp)
         s.add_argument("job")
@@ -886,6 +927,29 @@ def main(argv: list[str]) -> int:
     m.add_argument("--version", help="vN (default: the newest render)")
     m.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
+    if a.cmd == "timing":
+        res = timing(a.job)
+        if a.json:
+            print(json.dumps(res, ensure_ascii=False, indent=1))
+        else:
+            print(f"started: {res['started_at'] or 'not recorded'}")
+            if not res["versions"]:
+                print("no render versions yet")
+            for row in res["versions"]:
+                elapsed = row["elapsed_s"]
+                duration = f"{elapsed} s ({_mmss(elapsed)})" if elapsed is not None else "unknown"
+                print(f"{row['version']}: {row['finished_at'] or 'finish not recorded'}"
+                      f" — elapsed: {duration}")
+        return 0
+    from . import runsignal
+    try:
+        return _main(a)
+    finally:
+        runsignal.observe_text(a.job)       # run signal: the stages that appeared on disk
+
+
+def _main(a: argparse.Namespace) -> int:
+    from . import runsignal
     if a.cmd in ("render", "master"):
         if a.cmd == "render":
             res = render(a.job, a.composition, a.version, a.project, a.entry,
@@ -902,14 +966,19 @@ def main(argv: list[str]) -> int:
             print(f"send into the chat: {res['chat']} ({res['chat_mb']:g} MB"
                   + ("" if res["fits_chat"] else ", STILL TOO BIG for the chat: open it instead")
                   + ")")
+            print(res["asks_reminder"])
         return 0
     if a.cmd == "approve":
-        res = approve(a.job, a.what, a.note)
+        with runsignal.step(a.job, "approve_sketches") if a.what == "sketches" \
+                else contextlib.nullcontext():
+            res = approve(a.job, a.what, a.note)
         print(json.dumps(res, ensure_ascii=False) if a.json else f"APPROVED {a.what}")
         return 0
 
     if a.cmd == "new":
         res = new_job(a.job, a.file, a.title)
+        if a.scenario:
+            res["scenario_stored"] = runsignal.set_scenario(res["folder"], a.scenario)
         if a.json:
             print(json.dumps(res, ensure_ascii=False, indent=1))
         else:
@@ -946,7 +1015,8 @@ def main(argv: list[str]) -> int:
             for line in estimate_lines(res):
                 print(line)
         return 0
-    tl = make_timeline(a.job)
+    with runsignal.step(a.job, "animation"):
+        tl = make_timeline(a.job)
     if a.json:
         print(json.dumps(tl, ensure_ascii=False, indent=1))
     else:

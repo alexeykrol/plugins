@@ -26,6 +26,14 @@ durations, counts, cost numbers, version, OS and Python versions, error class; t
 id goes in a header. No paths, no messages or tracebacks, no free text. The sanitizer runs when an
 event is recorded and again on every line right before it is sent.
 
+The run signal (roadmap 1.1, vp.runsignal): `step` events of every route carry a step name from
+the closed vocabulary ROUTE_STEPS, the `route` (a key of ROUTE_STEPS) and the `scenario` letter
+(an id of knowledge/scenarios.json). Anything else in these fields is dropped. The random run
+number of a job (`run`), the `route` and the `scenario` are in the allowlist but leave the
+machine only when the ACCEPTED terms version is in TERMS_ALLOWING_RUN — empty today: the
+published privacy policy names step names and the install id, not the run, the route or the
+scenario a person chose.
+
 Consent: nothing is recorded or sent before the person accepted the current terms (vp.safety
 consent.json); events of that time are dropped, not queued; lines older than the acceptance are
 never sent.
@@ -226,8 +234,8 @@ def why_not() -> str | None:
 
 ALLOWED_KINDS = frozenset({"command", "engine_error", "step", "cost", "auto_update",
                            "update_reminder_shown", "message_shown", "feedback_pack"})
-# short machine words: a command, a step, a state, an error class — never a path or a sentence
-IDENT_FIELDS = frozenset({"where", "error", "step", "event", "outcome", "state", "error_kind",
+# short machine words: a command, a state, an error class — never a path or a sentence
+IDENT_FIELDS = frozenset({"where", "error", "event", "outcome", "state", "error_kind",
                           "gate", "cost_kind", "op", "model", "provider", "marketplace"})
 VOCAB_FIELDS = frozenset({"command", "sub"})          # only known words, else "other"
 PREFIX_FIELDS = frozenset({"task"})                   # only the family before the first dot
@@ -235,9 +243,37 @@ NUMBER_FIELDS = frozenset({"rc", "duration_s", "input_tokens", "output_tokens", 
                            "cache_write_tokens", "usd", "units", "credits", "bytes", "days",
                            "number", "id"})
 BOOL_FIELDS = frozenset({"on", "revealed", "estimate"})
+# the run signal (roadmap 1.1): a value outside its closed set is dropped, never sent as text
+CLOSED_FIELDS = frozenset({"step", "route", "scenario"})
+RUN_FIELD = "run"                                     # gated by the accepted terms, see run_allowed
+# Also gated by the accepted terms (same gate as the run number): which route and which scenario
+# a person chose is not named by the published privacy policy, which names step names only. The
+# receiver's funnel derives the route from the step name when the field is absent.
+TERMS_GATED_FIELDS = frozenset({"route", "scenario"})
 BASE_FIELDS = ("ts", "kind", "version", "os", "python")
 ALLOWED_FIELDS = (frozenset(BASE_FIELDS) | IDENT_FIELDS | VOCAB_FIELDS | PREFIX_FIELDS
-                  | NUMBER_FIELDS | BOOL_FIELDS)
+                  | NUMBER_FIELDS | BOOL_FIELDS | CLOSED_FIELDS | {RUN_FIELD})
+
+# The steps of each route in funnel order: the ONLY step names that ever leave the machine and
+# the only routes. Recording: the step ids of vp.steps.GRAPH; text: the stages of vp.text.STAGES
+# (+ the sketches approval and the mastering); both: the exports and the moment the video is
+# ready. services/telemetry/admin.py keeps a copy for the funnel (a test compares the two).
+READY_STEP = "video_ready"
+ROUTE_STEPS: dict[str, tuple[str, ...]] = {
+    "recording": ("S0", "S1", "S2", "S3a", "S3b", "S4", "S6a", "S5", "S5v", READY_STEP,
+                  "S7", "S6b", "S8", "S10", "S9", "PUB", "S11", "capcut_export", "fcpxml_export"),
+    "text": ("brief", "script", "sketches", "approve_sketches", "voice", "music", "animation",
+             "render", "master", READY_STEP, "capcut_export", "fcpxml_export"),
+}
+ROUTES = frozenset(ROUTE_STEPS)
+STEPS = frozenset(s for steps in ROUTE_STEPS.values() for s in steps)
+
+# Accepted terms versions under which the run number, the route and the scenario letter may leave
+# the machine. EMPTY: the published privacy policy names only step names and the install id; the
+# next terms version (roadmap 1.2) is added here once it exists and names them. Never add the
+# current version without that text.
+TERMS_ALLOWING_RUN: frozenset[str] = frozenset()
+RUN_RE = re.compile(r"[0-9a-f]{16}")                  # secrets.token_hex(8); used with fullmatch
 
 _IDENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:+-]{0,63}$")
 _TS = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,6})?Z$")
@@ -285,9 +321,47 @@ def _leaks(s: str, marks: tuple[str, ...]) -> bool:
     return any(m.lower() in low for m in marks)
 
 
-def sanitize_event(rec: Any) -> dict[str, Any] | None:
+_SCENARIOS: frozenset[str] | None = None
+
+
+def known_scenarios() -> frozenset[str]:
+    """The scenario letters of knowledge/scenarios.json (the closed set of `scenario`)."""
+    global _SCENARIOS
+    if _SCENARIOS is None:
+        try:
+            from .scenarios import scenario_list
+            _SCENARIOS = frozenset(sid for sid in (str(s.get("id") or "") for s in scenario_list())
+                                   if re.fullmatch(r"[A-Z]", sid))
+        except Exception:  # noqa: BLE001 - unreadable data: no scenario is sent
+            return frozenset()
+    return _SCENARIOS
+
+
+def run_allowed() -> bool:
+    """May the run number leave the machine: only when the terms the person ACCEPTED are a
+    version that names it (TERMS_ALLOWING_RUN)."""
+    if not TERMS_ALLOWING_RUN:
+        return False
+    try:
+        from .safety import consent_state
+        st = consent_state()
+        return bool(st["accepted"]) and st.get("accepted_version") in TERMS_ALLOWING_RUN
+    except Exception:  # noqa: BLE001 - unreadable consent = not allowed
+        return False
+
+
+def _closed_ok(key: str, v: str) -> bool:
+    if key == "step":
+        return v in STEPS
+    if key == "route":
+        return v in ROUTES
+    return v in known_scenarios()
+
+
+def sanitize_event(rec: Any, allow_run: bool | None = None) -> dict[str, Any] | None:
     """The single gate of what is sent: a new dict with allowlisted fields of the right shape only;
-    None when the event's kind is not allowlisted (the whole event is dropped)."""
+    None when the event's kind is not allowlisted (the whole event is dropped). `allow_run`:
+    whether the run number may stay (default: asked from the accepted terms, `run_allowed`)."""
     if not isinstance(rec, dict):
         return None
     kind = rec.get("kind")
@@ -314,6 +388,20 @@ def sanitize_event(rec: Any) -> dict[str, Any] | None:
                 out[key] = v
         elif not isinstance(v, str):
             continue
+        elif key in CLOSED_FIELDS:
+            if key in TERMS_GATED_FIELDS:
+                if allow_run is None:
+                    allow_run = run_allowed()
+                if not allow_run:
+                    continue
+            if _closed_ok(key, v):
+                out[key] = v
+        elif key == RUN_FIELD:
+            if RUN_RE.fullmatch(v):
+                if allow_run is None:
+                    allow_run = run_allowed()
+                if allow_run:
+                    out[key] = v
         elif key in VOCAB_FIELDS:
             if key == "command":
                 commands = commands or _known_commands()
@@ -501,9 +589,10 @@ def outgoing(lines: list[str], since: datetime | None) -> list[str]:
     last step before the network); events of unknown kinds, unreadable lines and events recorded
     before the terms were accepted (`since`) are dropped."""
     out = []
+    allow_run = run_allowed()
     for ln in lines:
         try:
-            ev = sanitize_event(json.loads(ln))
+            ev = sanitize_event(json.loads(ln), allow_run)
         except ValueError:
             continue
         if ev is None:
@@ -759,10 +848,15 @@ def preview() -> dict[str, Any]:
     lines = pending_lines()
     sample = not lines
     if sample:
-        ev = make_event("command", {"command": "run", "sub": None, "rc": 0, "duration_s": 12.5})
-        lines = [_line(ev)] if ev else []
+        evs = [make_event("command", {"command": "run", "sub": None, "rc": 0, "duration_s": 12.5}),
+               # a step of a job: the run number is in it only when the accepted terms allow it
+               make_event("step", {"event": "end", "step": "render", "route": "text",
+                                   "scenario": "D", "outcome": "done", "duration_s": 95.0,
+                                   RUN_FIELD: "0" * 16})]
+        lines = [_line(ev) for ev in evs if ev]
     iid = install_id(create=False)
     return {"would_send_now": can_send(), "why_not": why_not(), "sample": sample,
+            "run_number_sent": run_allowed(),
             "url": base_url() + "/telemetry",
             "headers": {"X-Elsa-Install": iid or "(created when the first event is recorded)",
                         "X-Elsa-Version": plugin_version(), "X-Elsa-Batch": "(a random id per batch)",
@@ -812,7 +906,10 @@ def main(argv: list[str]) -> int:
         print(f"POST {pv['url']}")
         for k, v in pv["headers"].items():
             print(f"{k}: {v}")
-        print("(a sample event: nothing is waiting)" if pv["sample"]
+        print("run number of a job, route and scenario: "
+              + ("sent with its step events" if pv["run_number_sent"]
+                 else "NOT sent (the accepted terms do not name them)"))
+        print("(sample events: nothing is waiting)" if pv["sample"]
               else f"{len(pv['events'])} event(s) waiting:")
         for ev in pv["events"]:
             print(json.dumps(ev, ensure_ascii=False))

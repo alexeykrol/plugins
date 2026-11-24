@@ -79,6 +79,7 @@ import {
   BAND_INK,
   BAND_INK_SOFT,
   bandColor,
+  buildInfoOf,
   CALLED_NOTE,
   CONTINUE,
   continueText,
@@ -103,8 +104,9 @@ import {
   NAME_CALL_NOTE,
   NOT_ON_STAGE_TEXT,
   NOTICE_DISMISS,
+  NO_BUILD,
   ON_STAGE,
-  releasedText,
+  releaseLabel,
   REMINDER_LATER,
   REMINDER_ON,
   REMINDER_TEXT,
@@ -112,7 +114,6 @@ import {
   RESTART_NOW,
   restartAskNote,
   resumeNote,
-  ROLE,
   SPINNER_WORDS,
   STAGE_COMMANDS,
   START_FALLBACK,
@@ -127,6 +128,7 @@ import {
   WARM_HUES,
   WELCOME_BACK,
 } from './persona'
+import type { BuildInfo } from './persona'
 import { SPLASH, SPLASH_ALT, SPLASH_HEIGHT, SPLASH_WIDTH } from './splash'
 
 const IDLE_WORK: TurnWork = { isRunning: false, startedAt: null, label: null, tasks: [] }
@@ -161,6 +163,7 @@ const LOOK: ThemeSetArgs = { colors: makeColors(LOOK_INPUT).theme }
 // This process's own notes; a hot reload starts them over, which costs at most one more
 // copy of the contract in the conversation (and one more splash).
 let contractText: string | undefined
+let buildHeld: BuildInfo | undefined
 let isContractSent = false
 /** False until the words' language came from the store, the system or the conversation. */
 let isLangKnown = false
@@ -383,6 +386,22 @@ async function isSwitchedOff($: EngineInterface): Promise<boolean> {
   const value = (await $.env.get('AI_MOVIE_COMPANY_DIRECTOR'))?.trim().toLowerCase()
 
   return value === 'off' || value === '0' || value === 'false'
+}
+
+/**
+ * The plugin's build.json (stage, build number, release time), read once. No file, a broken one or
+ * an install older than build.json: the release line is the version and "alpha" alone.
+ */
+async function buildOf($: EngineInterface): Promise<BuildInfo> {
+  if (buildHeld === undefined) {
+    try {
+      buildHeld = buildInfoOf(JSON.parse(await $.fs.read(`${$.plugin.root}/build.json`)))
+    } catch {
+      buildHeld = NO_BUILD
+    }
+  }
+
+  return buildHeld
 }
 
 /** The contract page, read once; empty when the file is not there. */
@@ -1367,7 +1386,10 @@ function noticesOf(answer: unknown, words: DirectorLang, restartShown: unknown):
 
   if (update && update.restart_needed === true && typeof update.installed_newest === 'string' &&
       update.installed_newest !== restartShown) {
-    out.push({ source: 'restart', id: 0, kind: update.installed_newest, text: updateReadyText(words, update.installed_newest), lang: words })
+    // The new release's whole line: its build.json was read by the engine (`vp update check`).
+    const line = releaseLabel(words, update.installed_newest, buildInfoOf(update.installed_newest_build))
+
+    out.push({ source: 'restart', id: 0, kind: update.installed_newest, text: updateReadyText(words, line), lang: words })
   }
 
   for (const one of Array.isArray(rec.messages) ? rec.messages : []) {
@@ -2309,7 +2331,7 @@ export const register: Register = on => {
     const turn = workBar(words, await read($, work), e.props.isWorking, clockNow)
     // The engine's bar leads; a turn's bar next; work left running after the turn only when neither shows.
     const behind = running === null && turn === null ? backgroundBar(words, await read($, background), clockNow) : null
-    const release = `· v${VERSION} · ${releasedText(words)}`
+    const release = `· v${releaseLabel(words, VERSION, await buildOf($))}`
     const { Progress, Text: LiveText } = $.ui.resolve(e)
     const engineBar =
       running === null ? null : (
@@ -2357,7 +2379,7 @@ export const register: Register = on => {
               {AVATAR_TEXT} {NAME[words]}
             </Text>
             <Text color={BAND_INK_SOFT}>
-              {ROLE[words]} {ON_STAGE[words]} {release}
+              {ON_STAGE[words]} {release}
             </Text>
             <Button key="leave" label={LEAVE[words]} onPress={() => leaveByButton($)} />
           </Box>
@@ -2395,7 +2417,7 @@ export const register: Register = on => {
             {NAME[words]}
           </Text>
           <Text color={BAND_INK_SOFT}>
-            {ROLE[words]} {ON_STAGE[words]}
+            {ON_STAGE[words]}
           </Text>
           <Text color={BAND_INK_SOFT}>{release}</Text>
           <Button key="leave" label={LEAVE[words]} onPress={() => leaveByButton($)} />
